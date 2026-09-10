@@ -124,7 +124,11 @@ export const TRANSITIONS: readonly TransitionRule[] = [
   },
   {
     event: 'ISSUE_RESPONDENT_NOTICE',
-    from: ['under_scrutiny'],
+    // Also allowed from `awaiting_respondent_reply`, and that is not a convenience: it is
+    // how reminders 2 and 3 go to the same dentist, and how a first notice reaches a
+    // co-respondent named later on a chain-clinic complaint. Restricting it to
+    // `under_scrutiny` would make the three-notice ladder unreachable.
+    from: ['under_scrutiny', 'awaiting_respondent_reply'],
     to: 'awaiting_respondent_reply',
     scope: 'case',
     phase: 1,
@@ -132,8 +136,8 @@ export const TRANSITIONS: readonly TransitionRule[] = [
     opens: ['await_respondent_explanation'],
     supersedes: ['no_next_step'],
     description:
-      'The first notice to a respondent. Increments that respondent’s notice count — but ' +
-      'only because the officer confirmed a despatch. A timer never does this.',
+      'A notice to one respondent. Increments that respondent’s notice count — but only ' +
+      'because the officer confirmed a despatch. A timer never does this.',
   },
   {
     event: 'RECORD_RESPONDENT_REPLY',
