@@ -1,0 +1,22 @@
+# Normalise to LF in the repository and on checkout.
+#
+# This is load-bearing, not cosmetic: the migration runner stores a SHA-256 of each
+# applied migration and refuses to continue if the file has changed. If git rewrote
+# LF to CRLF on checkout, the same migration would hash differently on a Windows
+# machine than in CI, and the runner would report tampering that never happened.
+* text=auto eol=lf
+
+*.sql   text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.mjs   text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+
+*.png   binary
+*.jpg   binary
+*.pdf   binary
+*.ttf   binary
+*.woff2 binary
