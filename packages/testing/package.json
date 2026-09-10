@@ -1,0 +1,20 @@
+{
+  "name": "@ksdc/testing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "build": "echo 'testing: source-only package'",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "echo 'lint: testing ok'",
+    "test": "echo 'testing: no tests of its own'"
+  },
+  "dependencies": {
+    "embedded-postgres": "17.10.0-beta.17",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": { "@types/pg": "^8.11.10", "typescript": "^5.7.3" }
+}

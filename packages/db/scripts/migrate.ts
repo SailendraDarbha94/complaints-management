@@ -8,13 +8,29 @@
  *
  * In production this runs as a Cloud Run job before traffic shifts, never at boot.
  */
+import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 
-const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
+/**
+ * Walk up from this module until we find the migrations directory. The same file runs
+ * from `scripts/` in development and from `dist/scripts/` once compiled, so a fixed
+ * relative path is wrong in one of the two.
+ */
+function findMigrationsDir(): string {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 5; i++) {
+    const candidate = join(dir, 'migrations');
+    if (existsSync(join(candidate, '0000_init.sql'))) return candidate;
+    dir = dirname(dir);
+  }
+  throw new Error('Could not locate the migrations directory from ' + fileURLToPath(import.meta.url));
+}
+
+const MIGRATIONS_DIR = findMigrationsDir();
 
 // Statements drizzle-kit separates with this marker; we apply each file whole instead,
 // so the marker is stripped rather than split on.

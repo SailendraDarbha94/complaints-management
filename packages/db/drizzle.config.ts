@@ -3,7 +3,7 @@ import type { Config } from 'drizzle-kit';
 export default {
   // drizzle-kit resolves via CJS and cannot follow NodeNext '.js' specifiers in TS source,
   // so it reads the compiled schema instead. `pnpm generate` builds first.
-  schema: './dist/schema/index.js',
+  schema: './dist/src/schema/index.js',
   out: './migrations',
   dialect: 'postgresql',
   dbCredentials: {
