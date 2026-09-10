@@ -23,11 +23,12 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "generate": "pnpm build && drizzle-kit generate",
-    "migrate": "node --experimental-strip-types scripts/migrate.ts",
-    "seed": "node --experimental-strip-types scripts/seed.ts",
+    "migrate": "pnpm build && node dist/scripts/migrate.js",
+    "seed": "pnpm build && node dist/scripts/seed.js",
     "test": "node scripts/check-sql-ascii.mjs && vitest run",
     "verify-audit": "node --experimental-strip-types scripts/verify-audit.ts",
-    "lint": "echo 'lint: db ok'"
+    "lint": "echo 'lint: db ok'",
+    "dev": "pnpm build && node dist/scripts/dev-db.js"
   },
   "dependencies": {
     "@ksdc/config": "workspace:*",

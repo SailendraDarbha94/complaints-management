@@ -2,7 +2,7 @@
   "name": "ksdc-complaints-management",
   "version": "0.1.0",
   "private": true,
-  "description": "Karnataka State Dental Council — complaints register and follow-up engine",
+  "description": "Karnataka State Dental Council \u2014 complaints register and follow-up engine",
   "packageManager": "pnpm@9.15.4",
   "engines": {
     "node": ">=22.12.0"
@@ -18,7 +18,8 @@
     "db:seed": "pnpm --filter @ksdc/db seed",
     "db:reset": "pnpm --filter @ksdc/db reset",
     "check:vocabulary": "node scripts/check-vocabulary.mjs",
-    "check:schema-rls": "pnpm --filter @ksdc/db check:rls"
+    "check:schema-rls": "pnpm --filter @ksdc/db check:rls",
+    "db:dev": "pnpm --filter @ksdc/db dev"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

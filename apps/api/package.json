@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "node --watch --experimental-strip-types src/main.ts",
-    "start": "node dist/main.js",
+    "dev": "pnpm build && node dist/src/main.js",
+    "start": "node dist/src/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "lint": "echo 'lint: api ok'"
+    "lint": "echo 'lint: api ok'",
+    "demo": "pnpm build && node dist/scripts/demo.js"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

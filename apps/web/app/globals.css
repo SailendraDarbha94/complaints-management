@@ -1,0 +1,353 @@
+/*
+ * The register's own palette: the violet-blue of the council's rubber stamp for anything
+ * structural, and a seal red reserved strictly for lateness. Semantic colour is never
+ * decorative here — if something is red, a party is overdue.
+ */
+:root {
+  --paper: #f6f5f2;
+  --surface: #ffffff;
+  --surface-sunk: #efeeea;
+  --ink: #191e2b;
+  --ink-2: #4a5163;
+  --ink-3: #767d8e;
+  --rule: #d8d5cd;
+  --rule-soft: #e7e4dd;
+  --stamp: #2f3e8c;
+  --stamp-soft: #e6e8f4;
+  --seal: #a82820;
+  --seal-soft: #f6e5e3;
+  --amber: #8a5a00;
+  --amber-soft: #f6ecd9;
+  --moss: #1f6042;
+  --moss-soft: #e2efe8;
+
+  --f-body: "Public Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #14161c;
+    --surface: #1b1e26;
+    --surface-sunk: #23262f;
+    --ink: #e8e7e3;
+    --ink-2: #a7acb9;
+    --ink-3: #7b808d;
+    --rule: #333741;
+    --rule-soft: #282c35;
+    --stamp: #93a2e8;
+    --stamp-soft: #232842;
+    --seal: #e8837a;
+    --seal-soft: #33211f;
+    --amber: #d9a54b;
+    --amber-soft: #2e2718;
+    --moss: #6fbf95;
+    --moss-soft: #17281f;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--f-body);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.shell {
+  max-width: 940px;
+  margin: 0 auto;
+  padding: 28px 20px 80px;
+}
+
+/* ── Masthead ─────────────────────────────────────────────────────────── */
+
+.masthead {
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 14px;
+  margin-bottom: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 20px;
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  letter-spacing: -0.015em;
+  font-weight: 700;
+}
+
+.masthead .council {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--stamp);
+  display: block;
+  margin-bottom: 4px;
+}
+
+.masthead .date {
+  font-family: var(--f-mono);
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+/* ── Banners ──────────────────────────────────────────────────────────── */
+
+.banner {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  margin-bottom: 10px;
+  border: 1px solid transparent;
+}
+
+.banner .tag {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.banner-ok {
+  background: var(--moss-soft);
+  border-color: var(--moss);
+  color: var(--ink-2);
+}
+.banner-ok .tag {
+  color: var(--moss);
+}
+
+.banner-bad {
+  background: var(--seal-soft);
+  border-color: var(--seal);
+  color: var(--ink-2);
+}
+.banner-bad .tag {
+  color: var(--seal);
+}
+
+.banner-demo {
+  background: var(--amber-soft);
+  border-color: var(--amber);
+  color: var(--ink-2);
+}
+.banner-demo .tag {
+  color: var(--amber);
+}
+
+/* ── Summary strip ────────────────────────────────────────────────────── */
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface);
+  margin: 14px 0 26px;
+}
+
+.summary .cell {
+  padding: 12px 14px;
+  border-right: 1px solid var(--rule-soft);
+}
+.summary .cell:last-child {
+  border-right: none;
+}
+
+.summary .v {
+  font-family: var(--f-mono);
+  font-size: 1.3rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  display: block;
+  line-height: 1.15;
+}
+.summary .k {
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  display: block;
+  margin-top: 4px;
+}
+.v-decision {
+  color: var(--stamp);
+}
+.v-overdue {
+  color: var(--seal);
+}
+.v-today {
+  color: var(--amber);
+}
+
+/* ── Groups ───────────────────────────────────────────────────────────── */
+
+.group {
+  margin-bottom: 22px;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 15px;
+  background: var(--surface-sunk);
+  border-bottom: 1px solid var(--rule);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.group-head .n {
+  font-family: var(--f-mono);
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--ink-3);
+  text-transform: none;
+}
+
+.g-needs_decision {
+  color: var(--stamp);
+}
+.g-overdue {
+  color: var(--seal);
+}
+.g-due_today {
+  color: var(--amber);
+}
+.g-this_week,
+.g-later,
+.g-snoozed {
+  color: var(--ink-3);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 14px;
+  align-items: baseline;
+  padding: 10px 15px;
+}
+.row + .row {
+  border-top: 1px dotted var(--rule-soft);
+}
+
+.row .t {
+  font-size: 14px;
+  line-height: 1.45;
+}
+.row .meta {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  display: block;
+  margin-top: 3px;
+}
+.row .meta a {
+  color: var(--ink-3);
+}
+
+.age {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 3px;
+  align-self: start;
+}
+.age-overdue {
+  color: var(--seal);
+  background: var(--seal-soft);
+}
+.age-due_today {
+  color: var(--amber);
+  background: var(--amber-soft);
+}
+.age-needs_decision {
+  color: var(--stamp);
+  background: var(--stamp-soft);
+}
+.age-this_week,
+.age-later,
+.age-snoozed {
+  color: var(--ink-3);
+  background: var(--surface-sunk);
+}
+
+.statutory {
+  color: var(--seal);
+  font-weight: 600;
+}
+
+/* ── Empty and error states ───────────────────────────────────────────── */
+
+.empty {
+  border: 1px dashed var(--rule);
+  border-radius: 5px;
+  padding: 34px 20px;
+  text-align: center;
+  color: var(--ink-2);
+  background: var(--surface);
+}
+.empty strong {
+  display: block;
+  font-size: 1.05rem;
+  margin-bottom: 6px;
+  color: var(--ink);
+}
+
+.error {
+  border: 1px solid var(--seal);
+  border-left-width: 3px;
+  background: var(--surface);
+  border-radius: 0 4px 4px 0;
+  padding: 16px 18px;
+}
+.error h2 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  color: var(--seal);
+}
+.error pre {
+  font-family: var(--f-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  color: var(--ink-2);
+  margin: 8px 0 0;
+}
+
+.section-label {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 30px 0 10px;
+}

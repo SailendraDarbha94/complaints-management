@@ -197,7 +197,7 @@ export class QueueService {
     return overdueIn <= 7 ? 'this_week' : 'later';
   }
 
-  private group<K extends string>(
+  private group<K extends Urgency | WaitingOn>(
     items: QueueItem[],
     keyOf: (i: QueueItem) => K,
     labelOf: (k: K) => string,

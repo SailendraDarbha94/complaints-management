@@ -46,8 +46,14 @@ export type FollowupRule = z.infer<typeof followupRuleSchema>;
 export const councilConfigSchema = z.object({
   schemaVersion: z.literal(1),
 
-  /** Highest build phase enabled. Gates Phase 3+ events out of the UI. */
-  buildPhase: z.number().int().min(1).max(6).default(1),
+  /**
+   * Highest build phase enabled. Gates Phase 3+ events out of the UI.
+   * A literal union rather than a bare number, so it satisfies BuildPhase in
+   * @ksdc/contracts without a cast at every call site.
+   */
+  buildPhase: z
+    .union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6)])
+    .default(1),
 
   numbering: z.object({
     /** Prefix in every case number: KSDC/COMP/2026-27/0042. */

@@ -6,7 +6,7 @@
   },
   "include": [
     "src/**/*.ts",
-    "scripts/migrate.ts"
+    "scripts/*.ts"
   ],
   "exclude": [
     "src/**/*.test.ts"

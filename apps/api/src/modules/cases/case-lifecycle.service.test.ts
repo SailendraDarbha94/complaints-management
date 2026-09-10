@@ -232,6 +232,95 @@ describe('walking a complaint end to end', () => {
   });
 });
 
+describe('per-respondent follow-ups', () => {
+  it('stops chasing a dentist who has replied, while still chasing the other', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const { caseFileId } = await newComplaint(tx, 'Chain clinic, two dentists');
+      await lifecycle.apply(tx, ctx, { caseFileId, event: 'MARK_COMPLETE_ON_ARRIVAL' });
+
+      const a = await makeRespondent(tx, { councilId, caseFileId, name: 'Dr A. Rao' });
+      const b = await makeRespondent(tx, { councilId, caseFileId, name: 'Dr S. Kamath' });
+      for (const r of [a, b]) {
+        await lifecycle.apply(tx, ctx, {
+          caseFileId,
+          event: 'ISSUE_RESPONDENT_NOTICE',
+          caseRespondentId: r.caseRespondentId,
+          notice: { serviceMode: 'email', sentAt: new Date('2026-09-20T05:00:00Z') },
+        });
+      }
+
+      // Both rows name their own dentist. Two identical rows would be useless.
+      const before = await followups.liveForCase(tx, ctx, caseFileId);
+      const chasing = before.filter((f) => f.stage === 'await_respondent_explanation');
+      expect(chasing).toHaveLength(2);
+      expect(chasing.map((f) => f.title).sort()).toEqual([
+        'Dr A. Rao to send an explanation',
+        'Dr S. Kamath to send an explanation',
+      ]);
+
+      await lifecycle.apply(tx, ctx, {
+        caseFileId,
+        event: 'RECORD_RESPONDENT_REPLY',
+        caseRespondentId: a.caseRespondentId,
+      });
+
+      // A dentist who replied is not chased again, but the other one still is.
+      const after = await followups.liveForCase(tx, ctx, caseFileId);
+      const stillChasing = after.filter((f) => f.stage === 'await_respondent_explanation');
+      expect(stillChasing).toHaveLength(1);
+      expect(stillChasing[0]!.title).toBe('Dr S. Kamath to send an explanation');
+    });
+  });
+
+  it('carries the dentist’s party id so the queue can show their phone number', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const { caseFileId } = await newComplaint(tx);
+      await lifecycle.apply(tx, ctx, { caseFileId, event: 'MARK_COMPLETE_ON_ARRIVAL' });
+      const r = await makeRespondent(tx, { councilId, caseFileId, name: 'Dr N. Bhat' });
+      await lifecycle.apply(tx, ctx, {
+        caseFileId,
+        event: 'ISSUE_RESPONDENT_NOTICE',
+        caseRespondentId: r.caseRespondentId,
+        notice: { serviceMode: 'email', sentAt: new Date() },
+      });
+
+      const row = await tx.execute<{ waiting_on_party_id: string | null }>(sql`
+        SELECT waiting_on_party_id FROM follow_up
+        WHERE case_file_id = ${caseFileId}::uuid
+          AND stage = 'await_respondent_explanation' AND status = 'open'
+      `);
+      expect(row.rows[0]!.waiting_on_party_id).toBe(r.partyId);
+    });
+  });
+
+  it('stops chasing a respondent who is dropped or declared ex parte', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const { caseFileId } = await newComplaint(tx);
+      await lifecycle.apply(tx, ctx, { caseFileId, event: 'MARK_COMPLETE_ON_ARRIVAL' });
+      const a = await makeRespondent(tx, { councilId, caseFileId, name: 'Dr A' });
+      const b = await makeRespondent(tx, { councilId, caseFileId, name: 'Dr B' });
+      for (const r of [a, b]) {
+        await lifecycle.apply(tx, ctx, {
+          caseFileId,
+          event: 'ISSUE_RESPONDENT_NOTICE',
+          caseRespondentId: r.caseRespondentId,
+          notice: { serviceMode: 'email', sentAt: new Date() },
+        });
+      }
+
+      await lifecycle.apply(tx, ctx, {
+        caseFileId,
+        event: 'DROP_RESPONDENT',
+        caseRespondentId: a.caseRespondentId,
+        reason: 'Named in error; did not treat this patient',
+      });
+
+      const live = await followups.liveForCase(tx, ctx, caseFileId);
+      expect(live.filter((f) => f.stage === 'await_respondent_explanation')).toHaveLength(1);
+    });
+  });
+});
+
 describe('the guards', () => {
   it('refuses an event the case cannot take, and says what it can', async () => {
     await withCouncil({ councilId, userId: officer }, async (tx) => {

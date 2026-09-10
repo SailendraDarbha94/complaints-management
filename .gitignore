@@ -27,3 +27,7 @@ docs/authorisation/*
 
 # embedded Postgres test data
 packages/db/.pgdata-test/
+packages/db/.pgdata-dev/
+apps/web/.next/
+apps/api/.pgdata-test/
+next-env.d.ts

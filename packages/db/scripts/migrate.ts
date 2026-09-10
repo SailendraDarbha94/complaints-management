@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+import { isMainModule } from './is-main.js';
 
 /**
  * Walk up from this module until we find the migrations directory. The same file runs

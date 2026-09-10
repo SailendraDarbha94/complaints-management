@@ -140,6 +140,23 @@ export class CaseLifecycleService {
       stages: rule.supersedes ?? [],
     });
 
+    // "Which doctor has not replied?" is one of the four questions the dashboard exists
+    // to answer, so a respondent-scoped follow-up carries the dentist's party id and
+    // their name. Two identical rows on a chain-clinic case are useless.
+    let respondentPartyId: string | null = null;
+    let respondentName: string | null = null;
+    if (input.caseRespondentId) {
+      const named = await tx.execute<{ party_id: string; full_name: string }>(sql`
+        SELECT p.id AS party_id, p.full_name
+        FROM case_respondent cr
+        JOIN case_party cp ON cp.id = cr.case_party_id
+        JOIN party p ON p.id = cp.party_id
+        WHERE cr.id = ${input.caseRespondentId}::uuid
+      `);
+      respondentPartyId = named.rows[0]?.party_id ?? null;
+      respondentName = named.rows[0]?.full_name ?? null;
+    }
+
     const opened: FollowupStage[] = [];
     for (const stage of rule.opens ?? []) {
       // A follow-up opened by a transition waits on whoever the new state waits on, and
@@ -154,6 +171,8 @@ export class CaseLifecycleService {
           caseFileId: input.caseFileId,
           caseRespondentId: input.caseRespondentId ?? null,
           waitingOnKind: waitingOnFor(target),
+          waitingOnPartyId: respondentPartyId,
+          ...(respondentName ? { title: `${respondentName} to send an explanation` } : {}),
         },
         occurredAt,
       );
@@ -280,6 +299,13 @@ export class CaseLifecycleService {
             firstReplyAt: respondent.firstReplyAt ?? occurredAt,
           })
           .where(eq(caseRespondent.id, respondentId));
+        // Stop chasing this one. The case may still wait on a co-respondent.
+        await this.followups.closeForRespondent(tx, ctx, {
+          caseRespondentId: respondentId,
+          stages: ['await_respondent_explanation', 'propose_ex_parte'],
+          outcome: 'satisfied',
+          note: 'Explanation received',
+        });
         await tx
           .update(respondentNotice)
           .set({ replyReceivedAt: occurredAt })
@@ -300,6 +326,12 @@ export class CaseLifecycleService {
             exParteReason: input.reason!,
           })
           .where(eq(caseRespondent.id, respondentId));
+        await this.followups.closeForRespondent(tx, ctx, {
+          caseRespondentId: respondentId,
+          stages: ['await_respondent_explanation', 'propose_ex_parte'],
+          outcome: 'superseded',
+          note: 'Declared ex parte',
+        });
         break;
 
       case 'DROP_RESPONDENT':
@@ -307,6 +339,12 @@ export class CaseLifecycleService {
           .update(caseRespondent)
           .set({ noticeState: 'dropped', droppedAt: occurredAt, droppedReason: input.reason! })
           .where(eq(caseRespondent.id, respondentId));
+        await this.followups.closeForRespondent(tx, ctx, {
+          caseRespondentId: respondentId,
+          stages: ['await_respondent_explanation', 'propose_ex_parte'],
+          outcome: 'superseded',
+          note: 'Respondent dropped from the case',
+        });
         break;
 
       default:

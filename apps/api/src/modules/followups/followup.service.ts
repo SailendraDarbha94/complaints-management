@@ -176,6 +176,44 @@ export class FollowupService {
   }
 
   /**
+   * Retire the live follow-ups belonging to ONE respondent on a case.
+   *
+   * Without this, a dentist who replies is still chased every week while the case waits
+   * on their co-respondent — which teaches the officer that the list lies, and a list
+   * that lies stops being read.
+   */
+  async closeForRespondent(
+    tx: Tx,
+    ctx: EngineContext,
+    args: {
+      caseRespondentId: string;
+      stages: readonly FollowupStage[];
+      outcome: 'satisfied' | 'superseded';
+      note?: string;
+    },
+  ): Promise<number> {
+    if (args.stages.length === 0) return 0;
+    const rows = await tx
+      .update(followUp)
+      .set({
+        status: args.outcome,
+        satisfiedAt: args.outcome === 'satisfied' ? new Date() : null,
+        satisfiedBy: args.outcome === 'satisfied' ? (ctx.userId ?? null) : null,
+        resolutionNote: args.note ?? null,
+      })
+      .where(
+        and(
+          eq(followUp.councilId, ctx.councilId),
+          eq(followUp.caseRespondentId, args.caseRespondentId),
+          inArray(followUp.stage, [...args.stages]),
+          inArray(followUp.status, [...LIVE]),
+        ),
+      )
+      .returning({ id: followUp.id });
+    return rows.length;
+  }
+
+  /**
    * The waiting party did the thing. Normally driven by an inbound contact event, which
    * is why the contact event id is recorded — "how do we know?" has an answer.
    */
