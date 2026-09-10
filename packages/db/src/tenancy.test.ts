@@ -139,6 +139,68 @@ describe('row-level security', () => {
   });
 });
 
+describe('the sign-in lookup exception', () => {
+  // Migration 0003 adds a second policy on council_membership and council keyed on
+  // app.auth_subject, because sign-in must discover a user's councils before it knows
+  // which council to scope to. These tests hold that hole to the size it was cut.
+
+  it('shows a signing-in user their own memberships and nothing else', async () => {
+    const userId = crypto.randomUUID();
+    const email = `probe-${userId.slice(0, 8)}@auth.test`;
+
+    await withCouncil({ councilId: councilA }, async (tx) => {
+      await tx.execute(sql`
+        INSERT INTO app_user (id, email, full_name) VALUES (${userId}::uuid, ${email}, 'Probe')
+      `);
+      await tx.execute(sql`
+        INSERT INTO council_membership (council_id, app_user_id, role, starts_on)
+        VALUES (${councilA}::uuid, ${userId}::uuid, 'officer'::council_role, '2026-04-01')
+      `);
+    });
+
+    // No council scope at all - exactly the state sign-in is in.
+    const found = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.auth_subject', ${email}, true)`);
+      return tx.execute<{ council_id: string }>(
+        sql`SELECT council_id FROM council_membership`,
+      );
+    });
+
+    expect(found.rows.map((r) => r.council_id)).toEqual([councilA]);
+  });
+
+  it('opens no path to case data', async () => {
+    // The claim in 0003 is that the exception grants SELECT on two tables and nothing
+    // else. If this ever returns a row, the hole has grown.
+    const email = 'probe-not-a-real-user@auth.test';
+    const leaked = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.auth_subject', ${email}, true)`);
+      return tx.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM case_file`);
+    });
+    expect(leaked.rows[0]!.n).toBe(0);
+  });
+
+  it('shows nothing at all when the setting names nobody', async () => {
+    const none = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.auth_subject', 'nobody@nowhere.test', true)`);
+      return tx.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM council_membership`);
+    });
+    expect(none.rows[0]!.n).toBe(0);
+  });
+
+  it('does not survive the transaction that set it', async () => {
+    // set_config(..., true) is transaction-local, so a pooled connection cannot carry one
+    // request's sign-in subject into the next request.
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.auth_subject', 'someone@auth.test', true)`);
+    });
+    const after = await db.execute<{ v: string | null }>(
+      sql`SELECT nullif(current_setting('app.auth_subject', true), '') AS v`,
+    );
+    expect(after.rows[0]!.v).toBeNull();
+  });
+});
+
 describe('the generated waiting_on column', () => {
   it('agrees with WAITING_ON_BY_STATE for every state', async () => {
     // The Postgres CASE expression and the TypeScript mirror must never drift — the

@@ -4,6 +4,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -123,6 +124,12 @@ export const notificationLog = pgTable(
     logicalDate: date('logical_date').notNull(),
     subject: text('subject'),
     itemCount: integer('item_count'),
+    /**
+     * What the digest actually reported. "Why did it not tell me about
+     * KSDC/COMP/2026-27/0004?" then has an answer that does not require re-deriving the
+     * queue as it stood at 09:00 last Tuesday.
+     */
+    payload: jsonb('payload').$type<Record<string, unknown>>(),
     sentAt: timestamp('sent_at', { withTimezone: true }),
     error: text('error'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

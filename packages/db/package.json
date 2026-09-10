@@ -25,10 +25,11 @@
     "generate": "pnpm build && drizzle-kit generate",
     "migrate": "pnpm build && node dist/scripts/migrate.js",
     "seed": "pnpm build && node dist/scripts/seed.js",
-    "test": "node scripts/check-sql-ascii.mjs && vitest run",
+    "test": "node scripts/check-migrations.mjs && vitest run",
     "verify-audit": "node --experimental-strip-types scripts/verify-audit.ts",
     "lint": "echo 'lint: db ok'",
-    "dev": "pnpm build && node dist/scripts/dev-db.js"
+    "dev": "pnpm build && node dist/scripts/dev-db.js",
+    "check:migrations": "node scripts/check-migrations.mjs"
   },
   "dependencies": {
     "@ksdc/config": "workspace:*",

@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { getDb, withCouncil, type Tx } from '@ksdc/db';
 import { parseCouncilConfig } from '@ksdc/config';
 import { FollowupService } from '../followups/followup.service.js';
+import { DigestService } from '../notifications/digest.service.js';
 import { todayIn } from '../../common/working-days.js';
 
 /**
@@ -20,7 +21,10 @@ import { todayIn } from '../../common/working-days.js';
 export class SchedulerService {
   private readonly log = new Logger('scheduler');
 
-  constructor(private readonly followups: FollowupService) {}
+  constructor(
+    private readonly followups: FollowupService,
+    private readonly digest: DigestService,
+  ) {}
 
   /**
    * `(job_name, logical_date)` is unique, so a retried Cloud Scheduler delivery cannot
@@ -34,10 +38,18 @@ export class SchedulerService {
   ): Promise<{ status: 'ok' | 'skipped' | 'failed'; result?: T; error?: string }> {
     const db = getDb();
 
+    // Claim the day, but let a FAILED run be re-claimed.
+    //
+    // A plain DO NOTHING would make a failed job unretryable: the row already holds the
+    // day, and the application role has no DELETE grant anywhere, so nothing can release
+    // it. A day whose escalations silently never happened, and cannot be made to happen,
+    // is precisely the failure this system exists to prevent.
     const claimed = await db.execute<{ id: string }>(sql`
-      INSERT INTO job_run (job_name, logical_date, status)
-      VALUES (${jobName}, ${logicalDate}::date, 'running')
-      ON CONFLICT (job_name, logical_date) DO NOTHING
+      INSERT INTO job_run (job_name, logical_date, status, started_at)
+      VALUES (${jobName}, ${logicalDate}::date, 'running', now())
+      ON CONFLICT (job_name, logical_date) DO UPDATE
+        SET status = 'running', started_at = now(), error = NULL
+        WHERE job_run.status = 'failed'
       RETURNING id
     `);
 
@@ -67,14 +79,34 @@ export class SchedulerService {
     }
   }
 
-  /** Every council with a configuration row. One today; the loop costs nothing. */
+  /**
+   * Every council with a configuration row. One today; the loop costs nothing.
+   *
+   * This is the one place the scheduler reads across councils, and it must: choosing a
+   * council scope is what the query is for. `app.scheduler_scan` unlocks an additive
+   * SELECT policy on council_config and nothing else (migration 0004), set
+   * transaction-locally so a pooled connection cannot carry it anywhere.
+   *
+   * Without it this returned zero rows and the whole daily job did nothing while
+   * reporting success -- see the migration for the full account.
+   */
   private async councils(): Promise<Array<{ id: string; config: ReturnType<typeof parseCouncilConfig> }>> {
     const db = getDb();
-    // Reads across councils deliberately, as the scheduler must. Row-level security is
-    // re-applied per council inside the loop below.
-    const rows = await db.execute<{ council_id: string; config: unknown }>(
-      sql`SELECT council_id, config FROM council_config`,
-    );
+    const rows = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.scheduler_scan', 'on', true)`);
+      return tx.execute<{ council_id: string; config: unknown }>(
+        sql`SELECT council_id, config FROM council_config`,
+      );
+    });
+
+    if (rows.rows.length === 0) {
+      // Silence here would mean silence everywhere. Say so loudly rather than returning
+      // a cheerful zero.
+      this.log.error(
+        'No councils found to process. Either none is configured, or the scheduler scan ' +
+          'policy is missing (migration 0004).',
+      );
+    }
     return rows.rows.map((r) => ({ id: r.council_id, config: parseCouncilConfig(r.config) }));
   }
 
@@ -83,12 +115,25 @@ export class SchedulerService {
    * case that nobody is chasing.
    */
   async daily(now: Date = new Date()): Promise<Record<string, number>> {
-    const totals = { woken: 0, escalated: 0, proposals: 0, flagged: 0, cleared: 0 };
+    const totals = {
+      woken: 0,
+      escalated: 0,
+      proposals: 0,
+      flagged: 0,
+      cleared: 0,
+      digestsSent: 0,
+      digestsSkipped: 0,
+      digestsFailed: 0,
+    };
 
     for (const council of await this.councils()) {
       const logicalDate = todayIn(council.config.calendar.timezone, now);
+
       await withCouncil({ councilId: council.id }, async (tx: Tx) => {
         const ctx = { councilId: council.id, userId: null, config: council.config };
+
+        // Order matters: escalate and sweep first, so the digest reports the queue as it
+        // stands after the engine has run, not as it stood yesterday evening.
         const tick = await this.followups.tick(tx, ctx, now);
         const sweep = await this.followups.sweepNoNextStep(tx, ctx, now);
         totals.woken += tick.woken;
@@ -96,8 +141,15 @@ export class SchedulerService {
         totals.proposals += tick.proposals;
         totals.flagged += sweep.flagged;
         totals.cleared += sweep.cleared;
+
+        // A send failure is recorded against the recipient and counted, not thrown: one
+        // officer's bouncing address must not roll back another council's escalations.
+        // `digestsFailed` reaching the structured log line is what the alert watches.
+        const digest = await this.digest.sendDaily(tx, ctx, logicalDate);
+        totals.digestsSent += digest.sent;
+        totals.digestsSkipped += digest.skipped;
+        totals.digestsFailed += digest.failed;
       });
-      void logicalDate;
     }
 
     return totals;

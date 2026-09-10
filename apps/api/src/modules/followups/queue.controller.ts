@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
-import { inCouncilScope, resolveIdentity } from '../../context/council-context.js';
+import { inCouncilScope } from '../../context/council-context.js';
+import { requireIdentity } from '../auth/auth.guard.js';
 import { FollowupService } from './followup.service.js';
 import { QueueService } from './queue.service.js';
 
@@ -14,7 +15,7 @@ export class QueueController {
 
   @Get('queue')
   async today(@Req() req: FastifyRequest) {
-    const identity = resolveIdentity(req);
+    const identity = requireIdentity(req);
     return inCouncilScope(identity, req.id as string, async (tx, ctx) => {
       const today = this.followups.today(ctx.config);
       const [queue, ticker] = await Promise.all([
@@ -33,7 +34,7 @@ export class QueueController {
     @Param('id') id: string,
     @Body() body: { until: string },
   ) {
-    const identity = resolveIdentity(req);
+    const identity = requireIdentity(req);
     return inCouncilScope(identity, req.id as string, async (tx, ctx) => {
       await this.followups.snooze(tx, ctx, { followUpId: id, until: body.until });
       return { ok: true };
@@ -46,7 +47,7 @@ export class QueueController {
     @Param('id') id: string,
     @Body() body: { note?: string; contactEventId?: string },
   ) {
-    const identity = resolveIdentity(req);
+    const identity = requireIdentity(req);
     return inCouncilScope(identity, req.id as string, async (tx, ctx) => {
       await this.followups.satisfy(tx, ctx, {
         followUpId: id,
@@ -63,7 +64,7 @@ export class QueueController {
     @Param('id') id: string,
     @Body() body: { reason: string },
   ) {
-    const identity = resolveIdentity(req);
+    const identity = requireIdentity(req);
     return inCouncilScope(identity, req.id as string, async (tx, ctx) => {
       // The reason is mandatory in the service; the API does not offer a way round it.
       await this.followups.dismiss(tx, ctx, { followUpId: id, reason: body.reason });

@@ -2,6 +2,7 @@ import { Controller, ForbiddenException, Post, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { todayIn } from '../../common/working-days.js';
 import { isProduction } from '../../context/council-context.js';
+import { Public } from '../auth/auth.guard.js';
 import { SchedulerService } from './scheduler.service.js';
 
 /**
@@ -12,6 +13,8 @@ import { SchedulerService } from './scheduler.service.js';
 export class JobsController {
   constructor(private readonly scheduler: SchedulerService) {}
 
+  // Called by Cloud Scheduler with an OIDC token, not by a signed-in person.
+  @Public()
   @Post('daily')
   async daily(@Req() req: FastifyRequest) {
     this.assertScheduler(req);

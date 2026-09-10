@@ -3,6 +3,7 @@ import {
   boolean,
   date,
   index,
+  integer,
   jsonb,
   pgTable,
   text,
@@ -138,16 +139,27 @@ export const councilOfficeHolder = pgTable(
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
-/** Passwordless email OTP: 6 digits, 10 minutes, argon2id-hashed, rate limited. */
+/**
+ * Passwordless email sign-in: a 6-digit code, ten minutes, hashed, rate limited.
+ *
+ * Hashed with scrypt from `node:crypto` rather than argon2id as the build plan proposed.
+ * The hash's only job is that someone who reads the table cannot use an in-flight code;
+ * brute force is answered by the ten-minute expiry, the attempt counter and the rate
+ * limit, not by hash hardness. scrypt is memory-hard, built in, and adds no native
+ * dependency - which matters when the only maintainer builds on Windows and deploys to
+ * Cloud Run.
+ */
 export const authOtp = pgTable(
   'auth_otp',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     email: text('email').notNull(),
     codeHash: text('code_hash').notNull(),
+    /** 'sign_in' creates a session; 'step_up' confirms a consequential action. */
+    purpose: text('purpose').notNull().default('sign_in'),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     consumedAt: timestamp('consumed_at', { withTimezone: true }),
-    attempts: text('attempts').notNull().default('0'),
+    attempts: integer('attempts').notNull().default(0),
     requestIp: text('request_ip'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

@@ -1,17 +1,17 @@
+import { cookies } from 'next/headers';
+
 /**
  * The web app is a thin client over the Nest API (build plan D7/§12). It holds no
  * database credentials and does no data access of its own: one place enforces row-level
  * security, and it is not this one.
+ *
+ * Session tokens live in HttpOnly cookies set by the API. In production both apps sit
+ * under ksdc.in, so the browser treats them as same-site; in development both are on
+ * localhost, which is same-site too (cookies ignore the port). Server-rendered requests
+ * do not carry the browser's cookies automatically, so they are forwarded here.
  */
 
-const API_URL = process.env.API_URL ?? 'http://localhost:8080';
-
-/**
- * Development identity. Passwordless email OTP is the next piece of Phase 1; until it
- * lands the API accepts these headers, and only when NODE_ENV is not production.
- */
-const DEV_COUNCIL_ID = process.env.DEV_COUNCIL_ID ?? '';
-const DEV_USER_ID = process.env.DEV_USER_ID ?? '';
+export const API_URL = process.env.API_URL ?? 'http://localhost:8080';
 
 export type Urgency =
   | 'needs_decision'
@@ -65,6 +65,11 @@ export interface TodayResponse {
   ticker: { lastSuccessAt: string | null; stale: boolean; hoursSince: number | null };
 }
 
+export interface Session {
+  user: { id: string; email: string; name: string };
+  council: { councilId: string; role: string };
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -75,11 +80,14 @@ export class ApiError extends Error {
 }
 
 async function get<T>(path: string): Promise<T> {
+  const jar = await cookies();
+  const forwarded = jar
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
   const res = await fetch(`${API_URL}/v1${path}`, {
-    headers: {
-      'x-dev-council-id': DEV_COUNCIL_ID,
-      'x-dev-user-id': DEV_USER_ID,
-    },
+    headers: forwarded ? { cookie: forwarded } : {},
     // The register changes as the officer works; never serve a stale queue.
     cache: 'no-store',
   });
@@ -93,4 +101,13 @@ async function get<T>(path: string): Promise<T> {
 
 export function fetchToday(): Promise<TodayResponse> {
   return get<TodayResponse>('/queue');
+}
+
+export function fetchSession(): Promise<Session> {
+  return get<Session>('/auth/me');
+}
+
+/** True when the failure is "sign in", rather than "something broke". */
+export function isUnauthorized(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 401;
 }

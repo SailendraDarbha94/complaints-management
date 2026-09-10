@@ -31,3 +31,4 @@ packages/db/.pgdata-dev/
 apps/web/.next/
 apps/api/.pgdata-test/
 next-env.d.ts
+apps/api/var/

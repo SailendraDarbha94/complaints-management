@@ -351,3 +351,103 @@ body {
   color: var(--ink-3);
   margin: 30px 0 10px;
 }
+
+/* ── Sign in ──────────────────────────────────────────────────────────── */
+
+.signin-shell {
+  max-width: 420px;
+}
+
+.signin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--surface);
+  padding: 22px;
+}
+
+.signin-form label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.signin-form input {
+  font-family: var(--f-body);
+  font-size: 15px;
+  padding: 9px 11px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.signin-form input:focus-visible {
+  outline: 2px solid var(--stamp);
+  outline-offset: 1px;
+}
+
+/* A six-digit code is read back digit by digit; monospace and wide tracking make that
+   possible without counting characters. */
+.code-input {
+  font-family: var(--f-mono) !important;
+  font-size: 1.6rem !important;
+  letter-spacing: 0.4em;
+  text-align: center;
+}
+
+.signin-form button[type='submit'] {
+  font-family: var(--f-body);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 14px;
+  border: 1px solid var(--stamp);
+  border-radius: 4px;
+  background: var(--stamp);
+  color: #fff;
+  cursor: pointer;
+}
+
+.signin-form button[type='submit']:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--stamp);
+  font-family: var(--f-body);
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-button.inline {
+  font-family: var(--f-mono);
+  font-size: 11px;
+}
+
+.form-error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--seal);
+  background: var(--seal-soft);
+  border-radius: 3px;
+  padding: 8px 10px;
+}
+
+.form-note {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+
+.whoami {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+}

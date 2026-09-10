@@ -2,7 +2,8 @@ import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import type { FastifyRequest } from 'fastify';
 import type { CaseEvent, CaseState } from '@ksdc/contracts';
-import { inCouncilScope, resolveIdentity } from '../../context/council-context.js';
+import { inCouncilScope } from '../../context/council-context.js';
+import { requireIdentity } from '../auth/auth.guard.js';
 import { CaseIntakeService, type IntakeInput } from './case-intake.service.js';
 import { CaseLifecycleService, type ApplyEventInput } from './case-lifecycle.service.js';
 import { FollowupService } from '../followups/followup.service.js';
@@ -18,7 +19,7 @@ export class CasesController {
   /** The register view: one row per case, the columns proposed in the build plan. */
   @Get()
   async list(@Req() req: FastifyRequest) {
-    const identity = resolveIdentity(req);
+    const identity = requireIdentity(req);
     return inCouncilScope(identity, req.id as string, async (tx) => {
       const rows = await tx.execute(sql`
         SELECT c.register_sl_no, c.case_number, c.case_kind, c.state, c.waiting_on,
@@ -39,7 +40,7 @@ export class CasesController {
 
   @Get(':id')
   async detail(@Req() req: FastifyRequest, @Param('id') id: string) {
-    const identity = resolveIdentity(req);
+    const identity = requireIdentity(req);
     return inCouncilScope(identity, req.id as string, async (tx, ctx) => {
       const caseRows = await tx.execute<{ state: CaseState }>(
         sql`SELECT * FROM case_file WHERE id = ${id}::uuid`,
@@ -75,7 +76,7 @@ export class CasesController {
 
   @Post()
   async create(@Req() req: FastifyRequest, @Body() body: IntakeInput) {
-    const identity = resolveIdentity(req);
+    const identity = requireIdentity(req);
     return inCouncilScope(identity, req.id as string, (tx, ctx) =>
       this.intake.create(tx, ctx, { ...body, receivedAt: new Date(body.receivedAt) }),
     );
@@ -88,7 +89,7 @@ export class CasesController {
     @Param('event') event: CaseEvent,
     @Body() body: Omit<ApplyEventInput, 'caseFileId' | 'event'>,
   ) {
-    const identity = resolveIdentity(req);
+    const identity = requireIdentity(req);
     return inCouncilScope(identity, req.id as string, (tx, ctx) =>
       this.lifecycle.apply(tx, ctx, {
         ...body,

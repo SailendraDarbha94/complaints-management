@@ -1,4 +1,15 @@
-import { ApiError, fetchToday, type QueueGroup, type QueueItem, type TodayResponse } from '@/lib/api';
+import { redirect } from 'next/navigation';
+import {
+  API_URL,
+  fetchSession,
+  fetchToday,
+  isUnauthorized,
+  type QueueGroup,
+  type QueueItem,
+  type Session,
+  type TodayResponse,
+} from '@/lib/api';
+import { SignOutButton } from '../components/sign-out';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,9 +22,12 @@ export const dynamic = 'force-dynamic';
  */
 export default async function TodayPage() {
   let data: TodayResponse;
+  let session: Session;
   try {
-    data = await fetchToday();
+    [session, data] = await Promise.all([fetchSession(), fetchToday()]);
   } catch (err) {
+    // An expired session is not an error to show the officer; it is a sign-in page.
+    if (isUnauthorized(err)) redirect('/signin');
     return <ErrorState error={err} />;
   }
 
@@ -27,7 +41,14 @@ export default async function TodayPage() {
           <span className="council">Karnataka State Dental Council</span>
           <h1>Today</h1>
         </div>
-        <span className="date">{formatLongDate(summary.today)}</span>
+        <span className="date">
+          {formatLongDate(summary.today)}
+          <br />
+          <SignOutButton
+            apiUrl={process.env.NEXT_PUBLIC_API_URL ?? API_URL}
+            name={session.user.name}
+          />
+        </span>
       </header>
 
       <TickerBanner ticker={ticker} />
@@ -167,7 +188,6 @@ function ageLabel(item: QueueItem): string {
 }
 
 function ErrorState({ error }: { error: unknown }) {
-  const isAuth = error instanceof ApiError && error.status === 401;
   return (
     <main className="shell">
       <header className="masthead">
@@ -177,19 +197,10 @@ function ErrorState({ error }: { error: unknown }) {
         </div>
       </header>
       <div className="error">
-        <h2>{isAuth ? 'Not signed in' : 'The queue could not be loaded'}</h2>
-        {isAuth ? (
-          <p>
-            Email sign-in is the next piece of Phase 1. Until it lands, set{' '}
-            <code>DEV_COUNCIL_ID</code> and <code>DEV_USER_ID</code> in the web app’s
-            environment — <code>pnpm db:dev</code> prints both.
-          </p>
-        ) : (
-          <p>
-            The API did not answer. Check that it is running on{' '}
-            <code>{process.env.API_URL ?? 'http://localhost:8080'}</code>.
-          </p>
-        )}
+        <h2>The queue could not be loaded</h2>
+        <p>
+          The API did not answer. Check that it is running on <code>{API_URL}</code>.
+        </p>
         <pre>{error instanceof Error ? error.message : String(error)}</pre>
       </div>
     </main>

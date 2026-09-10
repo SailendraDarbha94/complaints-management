@@ -3,44 +3,36 @@ import { UnauthorizedException } from '@nestjs/common';
 import { parseCouncilConfig, type CouncilConfig } from '@ksdc/config';
 import { getDb, withCouncil, type Tx } from '@ksdc/db';
 import { sql } from 'drizzle-orm';
+import type { Role } from '@ksdc/contracts';
 import type { EngineContext } from '../modules/followups/followup.service.js';
 
 /**
- * Resolves the council and user for a request.
+ * The council and user for a request.
  *
- * Phase 1 has one operator, and passwordless email OTP is the next piece of work. Until
- * it lands, the API accepts a development identity from headers — but ONLY outside
- * production, and it says so loudly at boot. A convenience that silently survives into
- * production is how a legal register ends up with no access control at all.
+ * Populated by AuthGuard from a verified access token. There is no development bypass:
+ * a convenience that survives quietly into production is how a legal register ends up
+ * with no access control at all.
  */
 
 export interface RequestIdentity {
   councilId: string;
   userId: string;
-  role: string;
+  role: Role;
+  sessionId: string;
+  email: string;
+  name: string;
 }
-
-const DEV_COUNCIL_HEADER = 'x-dev-council-id';
-const DEV_USER_HEADER = 'x-dev-user-id';
 
 export function isProduction(): boolean {
   return process.env.NODE_ENV === 'production';
 }
 
 export function resolveIdentity(req: FastifyRequest): RequestIdentity {
-  // TODO(phase-1): replace with the session cookie minted by the email-OTP flow.
-  if (!isProduction()) {
-    const councilId = req.headers[DEV_COUNCIL_HEADER] as string | undefined;
-    const userId = req.headers[DEV_USER_HEADER] as string | undefined;
-    if (councilId && userId) return { councilId, userId, role: 'officer' };
-  }
-  throw new UnauthorizedException(
-    'Not signed in. Email-OTP sign-in is the next piece of Phase 1; until then the API ' +
-      'accepts a development identity in headers, and only outside production.',
-  );
+  if (!req.identity) throw new UnauthorizedException('Not signed in.');
+  return req.identity;
 }
 
-/** Cache of council configuration. One tenant today, and it changes by pull request. */
+/** Council configuration. One tenant today, and it changes by pull request. */
 const configCache = new Map<string, CouncilConfig>();
 
 export async function loadConfig(tx: Tx, councilId: string): Promise<CouncilConfig> {
