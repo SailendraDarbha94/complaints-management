@@ -1,0 +1,29 @@
+node_modules/
+dist/
+.next/
+out/
+build/
+coverage/
+*.tsbuildinfo
+.turbo/
+
+.env
+.env.*
+!.env.example
+
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+.pnpm-debug.log*
+
+# Never commit council authorisation artefacts or real case data
+docs/authorisation/*
+!docs/authorisation/README.md
+/tmp/
+/scratch/
+*.dump
+*.sql.gz
+
+# embedded Postgres test data
+packages/db/.pgdata-test/

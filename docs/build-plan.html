@@ -1,0 +1,888 @@
+<title>KSDC Complaints Register</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+:root {
+  --paper:        #F6F5F2;
+  --surface:      #FFFFFF;
+  --surface-sunk: #EFEEEA;
+  --ink:          #191E2B;
+  --ink-2:        #4A5163;
+  --ink-3:        #767D8E;
+  --rule:         #D8D5CD;
+  --rule-soft:    #E7E4DD;
+  --stamp:        #2F3E8C;
+  --stamp-soft:   #E6E8F4;
+  --seal:         #A82820;
+  --seal-soft:    #F6E5E3;
+  --amber:        #8A5A00;
+  --amber-soft:   #F6ECD9;
+  --moss:         #1F6042;
+  --moss-soft:    #E2EFE8;
+  --shadow:       0 1px 2px rgba(25,30,43,.05), 0 4px 14px rgba(25,30,43,.05);
+
+  --f-display: "Newsreader", ui-serif, Georgia, serif;
+  --f-body:    "Public Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono:    "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:        #14161C;
+    --surface:      #1B1E26;
+    --surface-sunk: #23262F;
+    --ink:          #E8E7E3;
+    --ink-2:        #A7ACB9;
+    --ink-3:        #7B808D;
+    --rule:         #333741;
+    --rule-soft:    #282C35;
+    --stamp:        #93A2E8;
+    --stamp-soft:   #232842;
+    --seal:         #E8837A;
+    --seal-soft:    #33211F;
+    --amber:        #D9A54B;
+    --amber-soft:   #2E2718;
+    --moss:         #6FBF95;
+    --moss-soft:    #17281F;
+    --shadow:       0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
+  }
+}
+:root[data-theme="dark"] {
+  --paper:        #14161C;
+  --surface:      #1B1E26;
+  --surface-sunk: #23262F;
+  --ink:          #E8E7E3;
+  --ink-2:        #A7ACB9;
+  --ink-3:        #7B808D;
+  --rule:         #333741;
+  --rule-soft:    #282C35;
+  --stamp:        #93A2E8;
+  --stamp-soft:   #232842;
+  --seal:         #E8837A;
+  --seal-soft:    #33211F;
+  --amber:        #D9A54B;
+  --amber-soft:   #2E2718;
+  --moss:         #6FBF95;
+  --moss-soft:    #17281F;
+  --shadow:       0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--f-body);
+  font-size: 16px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 24px 96px;
+}
+@media (min-width: 1000px) {
+  .wrap { grid-template-columns: 210px minmax(0,1fr); gap: 56px; padding: 0 40px 120px; }
+}
+
+/* ---------- masthead ---------- */
+.masthead {
+  grid-column: 1 / -1;
+  border-bottom: 2px solid var(--ink);
+  padding: 52px 0 22px;
+  margin-bottom: 44px;
+}
+.eyebrow {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--stamp);
+  margin: 0 0 16px;
+}
+h1 {
+  font-family: var(--f-display);
+  font-weight: 500;
+  font-size: clamp(2.4rem, 6vw, 3.9rem);
+  line-height: 1.02;
+  letter-spacing: -.02em;
+  margin: 0 0 14px;
+  text-wrap: balance;
+}
+.standfirst {
+  font-family: var(--f-display);
+  font-size: clamp(1.05rem, 2vw, 1.28rem);
+  line-height: 1.5;
+  color: var(--ink-2);
+  max-width: 40ch;
+  margin: 0 0 26px;
+}
+.docmeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 26px;
+  font-family: var(--f-mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+  letter-spacing: .02em;
+}
+.docmeta b { color: var(--ink-2); font-weight: 500; }
+
+/* ---------- side nav ---------- */
+nav.toc { display: none; }
+@media (min-width: 1000px) {
+  nav.toc {
+    display: block;
+    grid-column: 1;
+    align-self: start;
+    position: sticky;
+    top: 28px;
+    padding-top: 4px;
+  }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+  nav.toc a {
+    display: block;
+    font-size: 12.5px;
+    line-height: 1.35;
+    color: var(--ink-3);
+    text-decoration: none;
+    padding: 5px 10px 5px 12px;
+    border-left: 2px solid var(--rule-soft);
+    transition: color .12s, border-color .12s;
+  }
+  nav.toc a:hover, nav.toc a:focus-visible { color: var(--stamp); border-left-color: var(--stamp); }
+  nav.toc .n { font-family: var(--f-mono); font-size: 10px; color: var(--ink-3); margin-right: 7px; }
+}
+
+main { grid-column: 1 / -1; min-width: 0; }
+@media (min-width: 1000px) { main { grid-column: 2; } }
+
+/* ---------- typography ---------- */
+section { margin: 0 0 68px; scroll-margin-top: 24px; }
+h2 {
+  font-family: var(--f-display);
+  font-weight: 500;
+  font-size: clamp(1.6rem, 3.2vw, 2.1rem);
+  line-height: 1.14;
+  letter-spacing: -.015em;
+  margin: 0 0 6px;
+  text-wrap: balance;
+}
+.h2rule { display: flex; align-items: baseline; gap: 14px; border-bottom: 1px solid var(--rule); padding-bottom: 12px; margin-bottom: 26px; }
+.h2rule h2 { margin: 0; flex: 1; }
+.h2num { font-family: var(--f-mono); font-size: 11px; color: var(--stamp); letter-spacing: .1em; padding-top: 4px; }
+h3 {
+  font-family: var(--f-body);
+  font-weight: 600;
+  font-size: 1rem;
+  letter-spacing: -.005em;
+  margin: 30px 0 8px;
+}
+p { margin: 0 0 16px; max-width: 68ch; }
+.lede { font-size: 1.05rem; color: var(--ink-2); max-width: 62ch; }
+a { color: var(--stamp); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+code, .mono { font-family: var(--f-mono); font-size: .875em; }
+code {
+  background: var(--surface-sunk);
+  border: 1px solid var(--rule-soft);
+  border-radius: 3px;
+  padding: .08em .34em;
+  color: var(--ink);
+}
+strong { font-weight: 600; }
+ul, ol { margin: 0 0 16px; padding-left: 1.2em; max-width: 68ch; }
+li { margin-bottom: 6px; }
+li::marker { color: var(--ink-3); }
+
+/* ---------- facts strip ---------- */
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 0;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface);
+  margin: 0 0 34px;
+}
+.fact { padding: 15px 17px; border-right: 1px solid var(--rule-soft); }
+.fact:last-child { border-right: none; }
+.fact .v {
+  font-family: var(--f-mono);
+  font-size: 1.28rem;
+  font-weight: 500;
+  letter-spacing: -.02em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  display: block;
+  line-height: 1.2;
+}
+.fact .k {
+  font-size: 10.5px;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-top: 5px;
+  display: block;
+  line-height: 1.3;
+}
+
+/* ---------- today screen mock ---------- */
+.today {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  margin: 0 0 14px;
+}
+.today-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 16px;
+  background: var(--surface-sunk);
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--f-mono);
+  font-size: 11px;
+  letter-spacing: .04em;
+  color: var(--ink-2);
+  flex-wrap: wrap;
+}
+.today-bar .tick { color: var(--moss); }
+.grp { border-bottom: 1px solid var(--rule-soft); }
+.grp:last-child { border-bottom: none; }
+.grp-h {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 12px 16px 7px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+.grp-h .ct { font-family: var(--f-mono); font-weight: 500; letter-spacing: 0; color: var(--ink-3); }
+.g-dec { color: var(--stamp); }
+.g-over { color: var(--seal); }
+.g-due { color: var(--amber); }
+.g-week { color: var(--ink-3); }
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 14px;
+  align-items: baseline;
+  padding: 7px 16px 9px;
+}
+.row + .row { border-top: 1px dotted var(--rule-soft); }
+.row .t { font-size: 13.5px; line-height: 1.4; }
+.row .cn { font-family: var(--f-mono); font-size: 11.5px; color: var(--ink-3); display: block; margin-top: 2px; }
+.age {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding: 2px 7px;
+  border-radius: 3px;
+}
+.age.over { color: var(--seal); background: var(--seal-soft); }
+.age.due  { color: var(--amber); background: var(--amber-soft); }
+.age.dec  { color: var(--stamp); background: var(--stamp-soft); }
+.age.soon { color: var(--ink-3); background: var(--surface-sunk); }
+figcaption { font-size: 12.5px; color: var(--ink-3); max-width: 64ch; margin-top: 10px; }
+figure { margin: 0 0 30px; }
+
+/* ---------- tables ---------- */
+.tw { overflow-x: auto; margin: 0 0 24px; border: 1px solid var(--rule); border-radius: 4px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; min-width: 480px; }
+th {
+  text-align: left;
+  font-size: 10.5px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--ink-3);
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface-sunk);
+  white-space: nowrap;
+}
+td { padding: 9px 14px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; line-height: 1.5; }
+tbody tr:last-child td { border-bottom: none; }
+td.num, th.num { text-align: right; font-family: var(--f-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.mono { font-family: var(--f-mono); font-size: 12px; white-space: nowrap; }
+tr.total td { font-weight: 700; border-top: 2px solid var(--rule); background: var(--surface-sunk); }
+
+/* ---------- decision cards ---------- */
+.decs { display: flex; flex-direction: column; gap: 0; border-top: 1px solid var(--rule); }
+.dec { border-bottom: 1px solid var(--rule-soft); padding: 20px 0; display: grid; grid-template-columns: 40px minmax(0,1fr); gap: 0 16px; }
+.dec .id { font-family: var(--f-mono); font-size: 11.5px; color: var(--stamp); padding-top: 3px; letter-spacing: .04em; }
+.dec .hd { font-weight: 600; font-size: 15px; line-height: 1.45; margin: 0 0 8px; }
+.dec p { font-size: 14px; margin: 0 0 7px; max-width: 66ch; color: var(--ink-2); }
+.dec p:last-child { margin-bottom: 0; }
+.dec .lbl { font-family: var(--f-mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); margin-right: 7px; }
+.dec .rej .lbl { color: var(--seal); }
+
+/* ---------- roadmap ---------- */
+.phases { border-top: 1px solid var(--rule); }
+.phase { display: grid; grid-template-columns: minmax(0,1fr); gap: 0; padding: 24px 0; border-bottom: 1px solid var(--rule-soft); }
+@media (min-width: 720px) { .phase { grid-template-columns: 132px minmax(0,1fr); gap: 0 28px; } }
+.phase-k { padding-bottom: 12px; }
+.phase-n {
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--surface);
+  background: var(--stamp);
+  padding: 2px 8px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.phase-n.gated { background: transparent; color: var(--ink-3); border: 1px dashed var(--rule); }
+.phase-dur { font-family: var(--f-mono); font-size: 11px; color: var(--ink-3); margin-top: 8px; line-height: 1.4; }
+.phase h3 { margin: 0 0 8px; font-size: 15.5px; }
+.phase p { font-size: 14px; color: var(--ink-2); margin-bottom: 12px; }
+.donewhen {
+  font-size: 13px;
+  line-height: 1.55;
+  border-left: 2px solid var(--moss);
+  background: var(--moss-soft);
+  padding: 10px 14px;
+  border-radius: 0 3px 3px 0;
+  color: var(--ink-2);
+  max-width: 68ch;
+}
+.donewhen b { font-family: var(--f-mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--moss); display: block; margin-bottom: 3px; }
+
+/* ---------- callouts ---------- */
+.call {
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--stamp);
+  background: var(--surface);
+  border-radius: 0 4px 4px 0;
+  padding: 18px 20px;
+  margin: 0 0 26px;
+}
+.call.warn { border-left-color: var(--seal); }
+.call .ct {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--stamp);
+  margin: 0 0 8px;
+}
+.call.warn .ct { color: var(--seal); }
+.call p:last-child { margin-bottom: 0; }
+.call p { font-size: 14.5px; }
+
+/* ---------- Q list ---------- */
+.qs { list-style: none; padding: 0; margin: 0; border-top: 1px solid var(--rule); max-width: none; }
+.qs li { display: grid; grid-template-columns: 40px minmax(0,1fr); gap: 0 16px; padding: 16px 0; border-bottom: 1px solid var(--rule-soft); margin: 0; }
+.qs .qn { font-family: var(--f-mono); font-size: 11.5px; color: var(--seal); padding-top: 2px; }
+.qs .qt { font-size: 14px; line-height: 1.55; color: var(--ink-2); }
+.qs .qt b { color: var(--ink); font-weight: 600; }
+
+/* ---------- risk list ---------- */
+.risk { padding: 16px 0; border-bottom: 1px solid var(--rule-soft); }
+.risk:first-child { border-top: 1px solid var(--rule); }
+.risk .r { font-size: 14.5px; font-weight: 500; margin: 0 0 6px; max-width: 68ch; }
+.risk .m { font-size: 13.5px; color: var(--ink-2); margin: 0; padding-left: 15px; border-left: 2px solid var(--rule); max-width: 68ch; }
+
+/* ---------- cut list ---------- */
+.cut { display: grid; gap: 0; border-top: 1px solid var(--rule); margin-bottom: 24px; }
+.cutrow { display: grid; grid-template-columns: minmax(0,1fr) 96px; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--rule-soft); align-items: baseline; font-size: 13.5px; }
+.cutrow .to { font-family: var(--f-mono); font-size: 11px; color: var(--stamp); text-align: right; white-space: nowrap; }
+.cutrow .to.never { color: var(--ink-3); }
+
+footer {
+  grid-column: 1 / -1;
+  border-top: 2px solid var(--ink);
+  padding-top: 20px;
+  margin-top: 20px;
+  font-family: var(--f-mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+  line-height: 1.7;
+}
+
+:focus-visible { outline: 2px solid var(--stamp); outline-offset: 2px; border-radius: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">Karnataka State Dental Council · Build Plan v1.0</p>
+    <h1>The Complaints Register</h1>
+    <p class="standfirst">Replacing a physical book with a system that guarantees no case is ever sitting silently with nobody chasing it.</p>
+    <div class="docmeta">
+      <span><b>Prepared</b> 10 September 2026</span>
+      <span><b>For</b> the Dental Officer &amp; the Registrar</span>
+      <span><b>Basis</b> 39-question requirements interview</span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Contents">
+    <ol>
+      <li><a href="#thesis"><span class="n">01</span>The principle</a></li>
+      <li><a href="#register"><span class="n">02</span>The register</a></li>
+      <li><a href="#lifecycle"><span class="n">03</span>Case lifecycle</a></li>
+      <li><a href="#decisions"><span class="n">04</span>Decisions</a></li>
+      <li><a href="#roadmap"><span class="n">05</span>Roadmap</a></li>
+      <li><a href="#infra"><span class="n">06</span>Infrastructure</a></li>
+      <li><a href="#safety"><span class="n">07</span>Retiring the book</a></li>
+      <li><a href="#notbuilding"><span class="n">08</span>Not building</a></li>
+      <li><a href="#risks"><span class="n">09</span>Risks</a></li>
+      <li><a href="#questions"><span class="n">10</span>Open questions</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <section id="thesis">
+      <div class="facts">
+        <div class="fact"><span class="v">19</span><span class="k">tables in v1</span></div>
+        <div class="fact"><span class="v">8</span><span class="k">case states</span></div>
+        <div class="fact"><span class="v">6 wks</span><span class="k">to phase 1</span></div>
+        <div class="fact"><span class="v">₹6,570</span><span class="k">per month, all in</span></div>
+        <div class="fact"><span class="v">90 d</span><span class="k">dual-run before the book retires</span></div>
+      </div>
+
+      <p class="lede">The design principle is one column: <code>waiting_on</code>. Every open case is always parked against exactly one party — the officer, the complainant, a respondent, the committee, or GDCRI — and the home screen is that list, grouped by who you are chasing, sorted by how late they are. Everything else in the product exists to keep that column honest.</p>
+
+      <figure>
+        <div class="today">
+          <div class="today-bar">
+            <span>TODAY · 10 SEP 2026 · Thu</span>
+            <span class="tick">✓ Reminders last ran 09:02 today</span>
+          </div>
+
+          <div class="grp">
+            <div class="grp-h g-dec">Needs a decision <span class="ct">2</span></div>
+            <div class="row">
+              <div class="t">3 notices lapsed — propose ex parte: Dr S. Kamath<span class="cn">KSDC/COMP/2026-27/0004</span></div>
+              <span class="age dec">decide</span>
+            </div>
+            <div class="row">
+              <div class="t">No next step scheduled — case has gone quiet<span class="cn">KSDC/COMP/2026-27/0009</span></div>
+              <span class="age dec">quiet 34d</span>
+            </div>
+          </div>
+
+          <div class="grp">
+            <div class="grp-h g-over">Overdue <span class="ct">4 · doctor 2 · patient 1 · GDCRI 1</span></div>
+            <div class="row">
+              <div class="t">Dr A. Rao — no reply logged, check the mailbox<span class="cn">KSDC/COMP/2026-27/0007 · notice 2 of 3</span></div>
+              <span class="age over">+9d</span>
+            </div>
+            <div class="row">
+              <div class="t">GDCRI — expert report not received<span class="cn">KSDC/COMP/2026-27/0002 · despatched 04 Aug</span></div>
+              <span class="age over">+16d</span>
+            </div>
+            <div class="row">
+              <div class="t">Complainant — bills and prescriptions outstanding<span class="cn">KSDC/COMP/2026-27/0011</span></div>
+              <span class="age over">+3d</span>
+            </div>
+          </div>
+
+          <div class="grp">
+            <div class="grp-h g-due">Due today <span class="ct">3</span></div>
+            <div class="row">
+              <div class="t">You — draft the GDCRI referral letter<span class="cn">KSDC/COMP/2026-27/0011</span></div>
+              <span class="age due">today</span>
+            </div>
+            <div class="row">
+              <div class="t">You — get the Registrar to sign the GDCRI letter<span class="cn">KSDC/COMP/2026-27/0008</span></div>
+              <span class="age due">today</span>
+            </div>
+          </div>
+
+          <div class="grp">
+            <div class="grp-h g-week">Calls before the 18 Sep sitting <span class="ct">7 of 11 done</span></div>
+            <div class="row">
+              <div class="t">Ring Smt. K. Devi — confirm attendance<span class="cn">KSDC/COMP/2026-27/0003</span></div>
+              <span class="age soon">8d</span>
+            </div>
+          </div>
+        </div>
+        <figcaption>The Today screen, with example cases. This one list is the whole product in Phase 1 — grouped by who you are chasing, not by case number or date opened.</figcaption>
+      </figure>
+
+      <div class="call">
+        <p class="ct">Why this and not the obvious thing</p>
+        <p>The seven design studies behind this plan collectively specified about sixty tables, four hash chains, two PDF engines, a template IDE, a native member app with screenshot detection, and an AI subsystem — roughly a year of solo part-time work with nothing usable until the end. That is cut. Phase 1 is nineteen tables, eight states, one screen, and a daily digest. It is useful alone, and it fixes the stated problem.</p>
+      </div>
+    </section>
+
+    <section id="register">
+      <div class="h2rule"><span class="h2num">02</span><h2>The register</h2></div>
+
+      <p>You asked us to propose the columns. This is one row per case, printable landscape A3 or exportable as CSV, sorted by <code>register_sl_no</code> — per council, per financial year, gapless.</p>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th class="num">#</th><th>Column</th><th>Notes</th><th class="num">Phase</th></tr></thead>
+          <tbody>
+            <tr><td class="num">1</td><td>Sl. No.</td><td>Seeded from the physical book, so the numbers match forever</td><td class="num">1</td></tr>
+            <tr><td class="num">2</td><td>Case No.</td><td class="mono">KSDC/COMP/2026-27/0042</td><td class="num">1</td></tr>
+            <tr><td class="num">3</td><td>Date received</td><td>From the email timestamp or the physical stamp — never when it was typed in</td><td class="num">1</td></tr>
+            <tr><td class="num">4</td><td>Category</td><td>Patient Complaint / Ethical Violation</td><td class="num">1</td></tr>
+            <tr><td class="num">5</td><td>Source &amp; external ref.</td><td>Direct, support@, DCI/NDC, police — with their reference and reply-by date</td><td class="num">1</td></tr>
+            <tr><td class="num">6</td><td>Complainant</td><td>Name, mobile, email</td><td class="num">1</td></tr>
+            <tr><td class="num">7</td><td>Patient</td><td>Name, age/sex — differs from the complainant in legal-heir cases, and the GDCRI letter names the <em>patient</em></td><td class="num">1</td></tr>
+            <tr><td class="num">8</td><td>Respondent(s)</td><td>Name, registration no., establishment — one row per respondent</td><td class="num">1</td></tr>
+            <tr><td class="num">9</td><td>Nature of grievance</td><td>≤200 characters</td><td class="num">1</td></tr>
+            <tr><td class="num">10</td><td>Documents complete on</td><td><strong>Every downstream deadline runs from here, not from receipt</strong></td><td class="num">1</td></tr>
+            <tr><td class="num">11</td><td>Notice 1 / 2 / 3</td><td>Date + despatch no. for each</td><td class="num">1</td></tr>
+            <tr><td class="num">12</td><td>Reply received on</td><td>Per respondent</td><td class="num">1</td></tr>
+            <tr><td class="num">13</td><td>Heard on</td><td>Sitting dates</td><td class="num">4</td></tr>
+            <tr><td class="num">14</td><td>Expert referral</td><td>Despatched / report in / shared with patient</td><td class="num">3</td></tr>
+            <tr><td class="num">15</td><td><strong>Status · Waiting on · Days waiting</strong></td><td><strong>The column the paper book could never have. Sorting by it is the daily to-do list.</strong></td><td class="num">1</td></tr>
+            <tr><td class="num">16</td><td>Decision / outcome</td><td>Per respondent — they genuinely diverge</td><td class="num">4</td></tr>
+            <tr><td class="num">17</td><td>Order despatched on</td><td>+ despatch no.</td><td class="num">4</td></tr>
+            <tr><td class="num">18</td><td>Closed on + reason</td><td>Unresponsive · settlement · committee decision · withdrawn · no jurisdiction · duplicate · court seized · notice complied with</td><td class="num">1</td></tr>
+            <tr><td class="num">19</td><td>Physical originals held</td><td>With return tracking</td><td class="num">3</td></tr>
+            <tr><td class="num">20</td><td>RTI refs.</td><td>Links to RTI requests touching this case</td><td class="num">5</td></tr>
+            <tr><td class="num">21</td><td>Officer</td><td>Owner</td><td class="num">1</td></tr>
+            <tr><td class="num">22</td><td>Remarks</td><td>Free text</td><td class="num">1</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Dates are events, not columns</h3>
+      <p>Each date lives in an append-only <code>case_milestone</code> row, so adding a register column later is a view change rather than a migration. Every milestone carries a mandatory <code>date_source</code>: <code>recorded</code>, <code>from_physical_register</code>, or <code>estimated_by_officer</code>. Anything other than <code>recorded</code> is footnoted in every export and printed case file — which is what stops a reconstructed backlog date from becoming indistinguishable from a recorded fact in an RTI reply or a writ petition.</p>
+
+      <h3>Two numbering series, and only one of them is ours</h3>
+      <p>The software owns the complaint serial (<code class="mono">KSDC/COMP/2026-27/0042</code>) and the RTI serial. It <strong>never</strong> generates an outward despatch number — that book is shared with certificates and circulars issued by people who will never touch this software, and minting numbers would put our 298 against a clerk's handwritten 298. Until a letter is stamped, the despatch field prints as <code>KSDC/____/2026-27</code>, a pen-fillable blank, and a follow-up chases you to type the real number in afterwards. The complaint number always prints on its own reference line under the subject; that line never blanks.</p>
+    </section>
+
+    <section id="lifecycle">
+      <div class="h2rule"><span class="h2num">03</span><h2>Case lifecycle</h2></div>
+
+      <p>Eight states in v1, and <code>waiting_on</code> is <em>derived</em> from the state by the database rather than stored — so it cannot drift, and a dashboard that looks authoritative can never be quietly wrong.</p>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th>State</th><th>Waiting on</th><th>The dashboard question it answers</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">intake_received<br>under_scrutiny<br>ready_for_committee<br>awaiting_order_despatch</td><td class="mono">council_officer</td><td>“What is on my desk?”</td></tr>
+            <tr><td class="mono">awaiting_complainant_documents</td><td class="mono">complainant</td><td>“Who owes me documents?”</td></tr>
+            <tr><td class="mono">awaiting_respondent_reply</td><td class="mono">respondent</td><td>“Which doctor has not replied?”</td></tr>
+            <tr><td class="mono">awaiting_expert_report</td><td class="mono">expert_body</td><td>“What is GDCRI sitting on?”</td></tr>
+            <tr><td class="mono">closed</td><td class="mono">nobody</td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><em>Sub judice</em>, a party indisposed, or awaiting an external authority are handled by an <code>on_hold</code> flag with a reason — not by extra states. It suppresses deadlines and shows in its own dashboard bucket.</p>
+
+      <div class="call warn">
+        <p class="ct">The rule that protects a named dentist</p>
+        <p>The notice counter increments <strong>only</strong> when you confirm a letter actually went out. A timer never touches it. Escalation reminders are titled <em>“no reply logged — check the mailbox”</em>, never <em>“did not respond”</em>, because in Phase 1 the software genuinely cannot know the difference — and the premise of this project is that things get forgotten. Generating notice 2 or 3 shows you the full correspondence log first and asks you to confirm. Ex parte eligibility is computed from real despatched notices with proof of service, never from a reminder counter.</p>
+      </div>
+
+      <h3>Closure is yours</h3>
+      <p>You close a case, with a reason. Committee cover is available and optional, never a gate — a sitting is six to eight weeks away and a closure cannot wait for it. Reopening writes a row with a mandatory reason and returns the case to scrutiny.</p>
+      <p>On appeals: this design lets you <em>reopen</em> a closed case with a recorded reason — say the patient writes back disputing the order, or a court directs a rehearing. It does not model a formal appeal to the NDC as a separate proceeding, because we do not know whether the council receives those. If it does, that becomes a small addition rather than a redesign.</p>
+    </section>
+
+    <section id="decisions">
+      <div class="h2rule"><span class="h2num">04</span><h2>The decisions that shaped it</h2></div>
+      <p class="lede">Each of these was contested during design. The rejected alternative is recorded so the argument is not re-run in three months.</p>
+
+      <div class="decs">
+        <div class="dec"><div class="id">D1</div><div>
+          <p class="hd">v1 is the follow-up engine and nothing else</p>
+          <p>Nineteen tables, eight states, one dashboard, plain-text letters, a register export. Committee, GDC letters, RTI, the dentist registry, AI and the member app are later phases — named and dated, not silently dropped.</p>
+          <p class="rej"><span class="lbl">Rejected</span>Building the full sixty-table design and shipping once, nine to fifteen months from now.</p>
+        </div></div>
+
+        <div class="dec"><div class="id">D2</div><div>
+          <p class="hd">The software never mints an outward despatch number</p>
+          <p>Those fields are blank until you type in what the office stamped, with a follow-up chasing you to do it. The outward register is a physical book shared across the whole council.</p>
+          <p class="rej"><span class="lbl">Rejected</span>Allocating the office-wide serial automatically — which would corrupt the one document the council already produces in court.</p>
+        </div></div>
+
+        <div class="dec"><div class="id">D3</div><div>
+          <p class="hd">Three notices → ex parte is a warning, not a hard block</p>
+          <p>With a typed-reason override, plus fields for the service mode and a scanned acknowledgement-due card. Software that refuses to record what the committee actually decided gets worked around.</p>
+          <p class="rej"><span class="lbl">Rejected</span>Hard-coding the rule as a guard — it came from one sentence in an interview, not from a statute anyone has checked.</p>
+        </div></div>
+
+        <div class="dec"><div class="id">D4</div><div>
+          <p class="hd">No native member app in v1 — despite your answer to Q25</p>
+          <p>Members get the per-sitting case bundle PDF (exactly the printouts they receive today, generated instead of photocopied) plus a read-only mobile-web case sheet behind a one-time-code link, with every document view logged. Usage is instrumented. After three sittings, <strong>two or more active members</strong> is the recorded go/no-go for building the Expo app.</p>
+          <p class="rej"><span class="lbl">Rejected</span>Months of watermarking, screenshot detection and offline bundles resting on three honorary dentists changing their habits — an assumption we can test for free first.</p>
+        </div></div>
+
+        <div class="dec"><div class="id">D5</div><div>
+          <p class="hd">No in-app voting in v1 — despite your answer to Q26</p>
+          <p>A sitting produces one decision row: date, operative text, attendance, whether it was unanimous / majority / consensus, and optional dissent notes, plus a separate outcome per respondent. Quorum is displayed as a warning, never a block.</p>
+          <p class="rej"><span class="lbl">Rejected</span>Vote cards, tallies, casting votes and quorum enforcement. A hard block would refuse to record a decision actually taken after the patient and dentist had travelled to Bengaluru.</p>
+        </div></div>
+
+        <div class="dec"><div class="id">D6</div><div>
+          <p class="hd">Neither the Registrar nor the Chairperson can block anything</p>
+          <p>“Awaiting the Registrar's signature” is not a case state; it is a task on <em>your</em> list titled “Get the Registrar to sign…”. Decision letters unlock per case the moment that case's decision is recorded, never behind sitting-wide minutes.</p>
+          <p class="rej"><span class="lbl">Rejected</span>Gating the pipeline on a tap from someone who, by your own answer, does not log in.</p>
+        </div></div>
+
+        <div class="dec"><div class="id">D7</div><div>
+          <p class="hd">Drop Vercel — deploy Next.js to Cloud Run too</p>
+          <p>Vercel is a USD invoice from a US entity for a council whose procurement has not started. Putting the web app next to the API gives one vendor, one INR invoice, one region, one pipeline.</p>
+          <p class="rej"><span class="lbl">Rejected</span>Vercel Pro at about ₹1,760/month plus a maintained migration path — the maintained escape hatch was itself an admission the choice would be reversed.</p>
+        </div></div>
+
+        <div class="dec"><div class="id">D8</div><div>
+          <p class="hd">Configuration is one row of JSON and a seed file, not fifteen tables</p>
+          <p>Deadlines, the notice ladder, working days, holidays, outcome lists and closure reasons live in one validated document with no settings screens in v1. Onboarding council number two is a second seed file.</p>
+          <p class="rej"><span class="lbl">Rejected</span>Fifteen configuration tables each implying a CRUD screen — four to six weeks of work for a single tenant with a single set of values.</p>
+        </div></div>
+
+        <div class="dec"><div class="id">D9</div><div>
+          <p class="hd">Multi-tenancy is in the schema from day one; multi-tenant <em>features</em> are not</p>
+          <p>A <code>council_id</code> on every table, enforced by the database itself rather than by application code, plus a test that fails the build if council B can see one row of council A. The council picker works from day one even with one council. That part is genuinely irreversible; editable-by-UI settings are not.</p>
+        </div></div>
+
+        <div class="dec"><div class="id">D10</div><div>
+          <p class="hd">AI ships switched off</p>
+          <p>No API key is provisioned. Every intake and drafting form works fully manually first. The gate to turn it on is a signed one-page note to the Registrar stating plainly what leaves India.</p>
+          <p class="rej"><span class="lbl">Rejected</span>Shipping AI-assisted intake in v1 with the disclosure deferred. At two to four complaints a month, typing one in by hand takes ten minutes.</p>
+        </div></div>
+      </div>
+    </section>
+
+    <section id="roadmap">
+      <div class="h2rule"><span class="h2num">05</span><h2>Roadmap</h2></div>
+      <p class="lede">Every phase is shippable and useful on its own. Phase 1 fixes the stated pain even if the project stops there.</p>
+
+      <div class="phases">
+
+        <div class="phase">
+          <div class="phase-k">
+            <span class="phase-n">Phase 0</span>
+            <div class="phase-dur">2 weeks elapsed<br>~6 hrs of your time</div>
+          </div>
+          <div>
+            <h3>Authorisation, accounts and facts</h3>
+            <p>Runs in parallel with the Phase 1 build; it only gates real case data. Remove the four unknowns that can invalidate months of work: transfer the repo to a council GitHub org with the Registrar as second owner, register the domain in the council's name, open the GCP billing account under the council's PAN/GST, and file the signed authorisation letter. Plus two five-minute checks that settle a fortnight of later work — call the mail host about IMAP, and paste a formatted test letter into the actual council webmail to see what survives.</p>
+            <div class="donewhen"><b>Done when</b>All four authorisation artefacts exist on file, and the mail-host and webmail questions have written answers.</div>
+          </div>
+        </div>
+
+        <div class="phase">
+          <div class="phase-k">
+            <span class="phase-n">Phase 1</span>
+            <div class="phase-dur">6 weeks part-time<br>~5–6 weekends</div>
+          </div>
+          <div>
+            <h3>The follow-up engine</h3>
+            <p>Fix “I keep forgetting to reach out”. Nothing else. Nineteen tables with database-level tenant isolation and the audit chain; the eight-state lifecycle with one test per transition; the follow-up engine where escalation creates a new row and snoozing can never launder an overdue case into a clean one; the Today screen; a 09:00 IST digest to your own address; manual case intake with documents; plain-text templates with a copy panel and an “I have sent this” button that starts the clock; register CSV export. The reminder alarms are wired <em>before</em> the reminder logic.</p>
+            <div class="donewhen"><b>Done when</b>You run one real case end to end from the Today screen — intake, document request, respondent notice, reply logged, closed — without touching the paper book for that case, and get the right digest on three consecutive mornings.</div>
+          </div>
+        </div>
+
+        <div class="phase">
+          <div class="phase-k">
+            <span class="phase-n">Phase 2</span>
+            <div class="phase-dur">4 weeks part-time</div>
+          </div>
+          <div>
+            <h3>Mail in, register out, dual-running starts</h3>
+            <p>Read-only mailbox ingestion that never marks mail read and never moves it, an unfiled queue with a four-rung matching ladder, and forwarded-message unwrapping so a DCI/NDC forward matches on the original sender rather than the forwarder. Web push. The ten open cases backfilled with source-tagged dates and photographs of the register page. The weekly reconciliation screen and the nightly signed register export — plus your first restore drill, run by you.</p>
+            <div class="donewhen"><b>Done when</b>A doctor's reply lands in the mailbox, appears in the unfiled queue within ten minutes, files to the right case in one click and satisfies its follow-up — and the 90-day dual-running clock has started.</div>
+          </div>
+        </div>
+
+        <div class="phase">
+          <div class="phase-k">
+            <span class="phase-n">Phase 3</span>
+            <div class="phase-dur">4 weeks part-time</div>
+          </div>
+          <div>
+            <h3>Letters, the GDCRI referral, the printable case file</h3>
+            <p>Real PDFs on the letterhead, in both rendered and pre-printed-stationery modes, with Kannada fonts already baked in. The template editor. The full referral flow — draft, print, wet signature and seal, scan back, mark despatched — where the generated PDF and the signed scan are two distinct records and the scan is the one the register cites. The share-with-patient gate is a database constraint, not a convention: the report reaches the patient only after the committee has annotated it and agreed to share.</p>
+            <div class="donewhen"><b>Done when</b>One real GDCRI referral goes out end to end and the register shows all three dates without anyone typing them twice.</div>
+          </div>
+        </div>
+
+        <div class="phase">
+          <div class="phase-k">
+            <span class="phase-n">Phase 4</span>
+            <div class="phase-dur">4 weeks part-time</div>
+          </div>
+          <div>
+            <h3>Committee sittings and member access</h3>
+            <p>The agenda builder suggests ripe cases and shows non-ripe ones <em>with their blockers</em>, so a forgotten tick is visible rather than invisible. Publishing an agenda generates the pre-sitting call checklist — ticking a call writes a real contact record, because “telephoned twice, no answer” is half of an ex parte justification. Attendance, decisions, per-respondent outcomes, the minutes composer, and the member bundle PDF that retires the photocopier.</p>
+            <div class="donewhen"><b>Done when</b>A full sitting runs inside the software from agenda to despatched decision letters, no member receives a photocopy, and the Heard-on and Outcome columns populate themselves.</div>
+          </div>
+        </div>
+
+        <div class="phase">
+          <div class="phase-k">
+            <span class="phase-n">Phase 5</span>
+            <div class="phase-dur">4 weeks part-time</div>
+          </div>
+          <div>
+            <h3>Ethics notices, RTI, registry, and retiring the book</h3>
+            <p>The ethics-notice category with its own numbering series and its shorter lifecycle. The RTI module with days-remaining chips and a statutory clock that cannot be snoozed past its due date, because missing thirty days is a personal penalty on a named officer. The dentist registry by Excel import — map columns, preview the diff, commit — after which respondent history and active-suspension banners light up across every case. Then the gated retirement of the physical register.</p>
+            <div class="donewhen"><b>Done when</b>All four retirement conditions are satisfied and you take the retirement action.</div>
+          </div>
+        </div>
+
+        <div class="phase">
+          <div class="phase-k">
+            <span class="phase-n gated">Phase 6</span>
+            <div class="phase-dur">conditional<br>2–4 wks per item</div>
+          </div>
+          <div>
+            <h3>Only what the first five phases prove is wanted</h3>
+            <p>Four items, each behind its own gate, none automatic. <strong>AI assist</strong> — gated on the signed disclosure note. <strong>The native Expo app</strong> — gated on two or more members actually using the web case sheet across three sittings. <strong>In-app voting</strong> — gated on the council's rules of procedure actually requiring a recorded division. <strong>Sending mail directly</strong> — gated on the mail host supporting it and on you wanting it, and still behind a human click.</p>
+            <div class="donewhen"><b>Done when</b>Each gate is either passed and the item shipped, or failed and formally closed with the evidence — so nobody rebuilds the argument in six months.</div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <section id="infra">
+      <div class="h2rule"><span class="h2num">06</span><h2>Infrastructure and cost</h2></div>
+
+      <p>You asked for a database and storage recommendation. The answer is shaped by one fact that outranks the technical comparison: this goes through council procurement, so <strong>one vendor, one INR invoice with GST, all data in India</strong> beats a marginally better component on a second invoice from a US entity.</p>
+
+      <p>Everything sits in one Google Cloud project in <strong>asia-south1 (Mumbai)</strong>, billed by Google Cloud India Pvt Ltd — one purchase order, one line item.</p>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th>Component</th><th>Choice</th><th class="num">₹/month</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Database</strong></td><td>Cloud SQL for PostgreSQL 16 · <code>db-g1-small</code> · 20 GB SSD · 30-day backups · 7-day point-in-time recovery · IAM auth, so no password exists to leak</td><td class="num">3,960</td></tr>
+            <tr><td><strong>Documents</strong></td><td>Cloud Storage, dual-region Mumbai + Delhi · versioning on · keys are UUIDs only, never patient names · time-limited signed links</td><td class="num">520</td></tr>
+            <tr><td>API</td><td>Cloud Run — NestJS + Fastify, one instance always warm</td><td class="num">1,230</td></tr>
+            <tr><td>Web + PDF renderer + staging</td><td>Cloud Run — Next.js and Gotenberg, both scale to zero</td><td class="num">550</td></tr>
+            <tr><td>Scheduler, registry, secrets</td><td>Four scheduled jobs, container registry, Secret Manager</td><td class="num">310</td></tr>
+            <tr><td>Error tracking, uptime, logs</td><td>Free tiers</td><td class="num">0</td></tr>
+            <tr class="total"><td>Total</td><td>≈ ₹79,000 per year</td><td class="num">≈ 6,570</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><strong>Why Cloud SQL over Supabase or Neon:</strong> both are second invoices in USD from US entities with reverse-charge GST, which is a procurement problem rather than a technical one. AlloyDB is roughly ₹28,000/month — four times the price for a workload of four complaints a month. The shared-core tier carries no SLA; at this volume that is the right trade, and upgrading is a one-line change.</p>
+
+      <p><strong>Vercel is dropped</strong> for the same reason (D7). The three-app split you asked for is kept — the API is a real API from day one, and the mobile app when it comes consumes it — but the web app deploys next to it instead of on a second vendor.</p>
+
+      <h3>The one that matters most</h3>
+      <p>A <strong>nightly signed register export</strong>: a CSV of every case, every milestone date and every outcome, plus a manifest listing each document with its checksum. That protects against the project ending, not just against the infrastructure failing. Any competent person with a laptop can rebuild the register from it.</p>
+
+      <p>And the reminder ticker gets <strong>three independent alarms</strong>, because a silently dead ticker recreates the exact pain this product exists to remove: a cloud alert if no successful run in 26 hours; an outside-the-cloud heartbeat, so a project-wide failure still reaches a phone; and an always-visible “Reminders last ran 09:02 today” banner that turns red — visible to the person most harmed, depending on no alerting infrastructure at all.</p>
+    </section>
+
+    <section id="safety">
+      <div class="h2rule"><span class="h2num">07</span><h2>Retiring the physical register</h2></div>
+
+      <p class="lede">This is the single most likely way this project harms you, so it is designed rather than left to drift.</p>
+
+      <p>The failure mode: you enter the ten open cases, stop writing in the book by week two, then hit a bug or an outage in month three — and have neither a working system nor a maintained register, for a quasi-judicial body.</p>
+
+      <p><strong>The paper register stays authoritative until an explicit, one-time, audited retirement action.</strong> Until then the dashboard carries a persistent banner: <em>“Paper register still authoritative — day 41 of 90.”</em> Four conditions must all be true before that action is even available:</p>
+
+      <ol>
+        <li><strong>90 consecutive days</strong> of dual-running, from the start of Phase 2.</li>
+        <li><strong>90 consecutive verified nightly exports</strong>, checked automatically.</li>
+        <li>You have <strong>personally executed the restore runbook end to end</strong> and recorded how long it took. A runbook never run by the person who will need it is not a runbook.</li>
+        <li><strong>Four consecutive clean weekly reconciliations</strong> — the screen prints that week's software register beside blank tick columns, you tick against the book, and each one is recorded.</li>
+      </ol>
+
+      <p>On backfilling the ten open cases: no special mode, no skipped guards. Cases are entered normally, flagged as backfilled, with a mandatory source on every date and a photograph of the register page attached. <strong>Serial numbers are seeded from the book</strong> and new cases start after the highest — renumbering a legal register is worse than a gap.</p>
+    </section>
+
+    <section id="notbuilding">
+      <div class="h2rule"><span class="h2num">08</span><h2>What we are deliberately not building</h2></div>
+      <p>Named here so they are visibly deferred rather than quietly lost. This list is the answer to every mid-build “while we're in here…”.</p>
+
+      <div class="cut">
+        <div class="cutrow"><span>Web push notifications (Phase 1 uses the in-app queue and one daily digest)</span><span class="to">Phase 2</span></div>
+        <div class="cutrow"><span>Mailbox reading, the unfiled queue, thread matching</span><span class="to">Phase 2</span></div>
+        <div class="cutrow"><span>PDF letters on letterhead, the printable case file</span><span class="to">Phase 3</span></div>
+        <div class="cutrow"><span>The GDCRI referral flow and despatch-number capture</span><span class="to">Phase 3</span></div>
+        <div class="cutrow"><span>Committee sittings, agenda, attendance, decisions, minutes</span><span class="to">Phase 4</span></div>
+        <div class="cutrow"><span>Member access — bundle PDF plus the read-only case sheet</span><span class="to">Phase 4</span></div>
+        <div class="cutrow"><span>Ethics notices, RTI, the dentist registry, suspension tracking</span><span class="to">Phase 5</span></div>
+        <div class="cutrow"><span>AI assist · the native app · in-app voting · direct sending</span><span class="to">Phase 6</span></div>
+        <div class="cutrow"><span>The software minting outward despatch numbers</span><span class="to never">never</span></div>
+        <div class="cutrow"><span>Blockchain anchoring of the audit trail</span><span class="to never">never</span></div>
+        <div class="cutrow"><span>Automated redaction of documents — including on X-rays</span><span class="to never">never</span></div>
+        <div class="cutrow"><span>Any autonomous send, to anyone, ever</span><span class="to never">never</span></div>
+      </div>
+
+      <p>Several things were not postponed but <em>replaced with something simpler</em>: sixteen states became eight plus a flag; sixty tables became nineteen; seven roles became three; fifteen configuration tables became one JSON row; a template IDE became a textarea with a field picker; per-respondent voting with tallies and casting votes became one decision row.</p>
+    </section>
+
+    <section id="risks">
+      <div class="h2rule"><span class="h2num">09</span><h2>Risks</h2></div>
+
+      <div class="risk">
+        <p class="r">Phase 1 slips and you start entering real cases into a half-built system before the dual-running discipline exists — the classic way a register migration destroys evidence.</p>
+        <p class="m">The system refuses to create a real (non-demo) case until the four authorisation artefacts exist, and the reconciliation banner appears the moment the first real case is created, not at some later “go-live”. Build and demo against a synthetic council.</p>
+      </div>
+      <div class="risk">
+        <p class="r">You stop logging inbound replies — which is the whole premise of the project, since things get forgotten — so reminders escalate against parties who did in fact respond.</p>
+        <p class="m">Notice counts never move on a timer; reminders say “no reply logged”, not “did not respond”; notices 2 and 3 show you the correspondence log first. Phase 2's mailbox reader closes the gap structurally, which is exactly why it is scheduled second rather than deferred.</p>
+      </div>
+      <div class="risk">
+        <p class="r">The mail host turns out to offer POP3 only, or refuse app passwords — invalidating Phase 2's design after it has been scheduled.</p>
+        <p class="m">One phone call in Phase 0, with the answer written down. The preferred fallback is a forwarding rule into a council-owned mailbox: easier to get approved, and it cannot lock anyone out of registrar@.</p>
+      </div>
+      <div class="risk">
+        <p class="r">Committee members never open the case-sheet link, so half of Phase 4 is dead weight and you keep photocopying.</p>
+        <p class="m">Phase 4 ships the bundle PDF first — that retires the photocopier regardless of what members do — and the link is instrumented. Two or more active members across three sittings is the recorded gate for any further member investment. Failing it costs nothing already spent.</p>
+      </div>
+      <div class="risk">
+        <p class="r">Members browsing every complaint — your explicit requirement — widens exposure: three external dentists can reach every patient's documents, not only the cases they are hearing.</p>
+        <p class="m">Complainant contact details masked, no download and no offline caching, every view logged with a visible banner, access ending at case closure and at term end, and a confidentiality undertaking at first login. The setting defaults to your requirement, so it can be narrowed after a word with the Registrar rather than argued about now.</p>
+      </div>
+      <div class="risk">
+        <p class="r">One person holds every account, every runbook and every alert channel — and is also the only user.</p>
+        <p class="m">A second GitHub owner and a sealed break-glass envelope with the Registrar; a named second recipient on the three alerts that matter; a handover runbook written for a competent stranger; and the nightly export as the artefact anyone can rebuild from.</p>
+      </div>
+      <div class="risk">
+        <p class="r">Procurement rejects cloud spend, or the council cannot open a billing account under its own PAN/GST.</p>
+        <p class="m">Phase 0 hands the Registrar a one-page cost sheet before any infrastructure exists. One Indian vendor, one invoice; an austerity variant halves the bill; and the nightly export means the register survives a project that has to move hosts.</p>
+      </div>
+    </section>
+
+    <section id="questions">
+      <div class="h2rule"><span class="h2num">10</span><h2>Open questions</h2></div>
+      <p>None of these block starting Phase 1. Each names what it does block.</p>
+
+      <ul class="qs">
+        <li><span class="qn">Q1</span><span class="qt"><b>Mail host — blocks Phase 2 planning.</b> Does ksdc.in offer IMAP over TLS with an app password? Or, easier to approve: can IT set a forwarding rule from the Complaints folder into a new council-owned mailbox? One call settles a two-day task versus a redesign.</span></li>
+        <li><span class="qn">Q2</span><span class="qt"><b>Domain and billing — blocks Phase 0 sign-off.</b> Can the council issue <code>complaints.ksdc.in</code> with DNS records, and open a Google Cloud billing account under its own PAN/GST? If cloud spend is impossible we need to know before any infrastructure exists.</span></li>
+        <li><span class="qn">Q3</span><span class="qt"><b>Serial numbers for the ten backlog cases.</b> We recommend seeding from the physical book and starting new cases after the highest, so the software's numbers match the book's forever. Starting at 1 with a cross-reference column leaves two numbering systems in circulation. Please confirm.</span></li>
+        <li><span class="qn">Q4</span><span class="qt"><b>The ex parte rule.</b> Is “three notices, then proceed ex parte” written anywhere — the Dentists Act, NDC regulations, the council's rules of procedure? And must the third notice go by registered post with acknowledgement due? It is built as an override-able warning either way, but the seed value should match reality.</span></li>
+        <li><span class="qn">Q5</span><span class="qt"><b>What does the Registrar actually wet-sign?</b> We have assumed the GDCRI referral only. Do cease-and-desist notices, suspension orders and RTI reply covers also go out under his signature? Each one adds a print-and-scan loop.</span></li>
+        <li><span class="qn">Q6</span><span class="qt"><b>Committee procedure — needed before Phase 4.</b> Must the President personally preside for a decision to be valid? Is the majority one of those present, or of the full committee of four? And does the committee record a formal division, or simply a consensus you minute?</span></li>
+        <li><span class="qn">Q7</span><span class="qt"><b>Retention.</b> Does any rule prescribe how long ethics-committee proceedings must be kept? Our default is permanent retention with eight years of backups, pending a one-page schedule signed by the Registrar.</span></li>
+        <li><span class="qn">Q8</span><span class="qt"><b>Cross-border AI processing — gates Phase 6 only.</b> There is no India-resident inference region today. The choice is: enable AI with a disclosure in the DPDP notice, or run a fully manual — still very useful — system. This needs an explicit yes from the Registrar before anything is built, not after.</span></li>
+      </ul>
+    </section>
+
+    <footer>
+      KSDC Complaints Register · Build Plan v1.0 · 10 September 2026<br>
+      Full specification, schema and roadmap: <code>docs/00-build-plan.md</code> · Requirements interview: <code>docs/requirements.md</code>
+    </footer>
+
+  </main>
+</div>
