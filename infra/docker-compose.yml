@@ -1,0 +1,27 @@
+# For anyone who has Docker and prefers it. The default local database is
+# `pnpm db:dev`, which unpacks Postgres 17 into node_modules and needs no Docker,
+# no system service and no admin rights - see packages/db/scripts/dev-db.ts.
+#
+# Either way it is PostgreSQL 17 with UTF-8, matching the Cloud SQL target.
+services:
+  postgres:
+    image: postgres:17
+    container_name: ksdc-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ksdc_dev
+      # Kannada is a requirement; a WIN1252 or LATIN1 cluster cannot store it.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "55432:5432"
+    volumes:
+      - ksdc-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ksdc_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  ksdc-pgdata:

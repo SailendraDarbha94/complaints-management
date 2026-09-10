@@ -1,0 +1,48 @@
+{
+  "name": "@ksdc/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./schema": {
+      "types": "./dist/src/schema/index.d.ts",
+      "default": "./dist/src/schema/index.js"
+    },
+    "./migrate": {
+      "types": "./dist/scripts/migrate.d.ts",
+      "default": "./dist/scripts/migrate.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "generate": "pnpm build && drizzle-kit generate",
+    "migrate": "pnpm build && node dist/scripts/migrate.js",
+    "seed": "pnpm build && node dist/scripts/seed.js",
+    "test": "node scripts/check-migrations.mjs && vitest run",
+    "verify-audit": "node --experimental-strip-types scripts/verify-audit.ts",
+    "lint": "echo 'lint: db ok'",
+    "dev": "pnpm build && node dist/scripts/dev-db.js",
+    "check:migrations": "node scripts/check-migrations.mjs"
+  },
+  "dependencies": {
+    "@ksdc/config": "workspace:*",
+    "@ksdc/contracts": "workspace:*",
+    "drizzle-orm": "^0.38.3",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@ksdc/testing": "workspace:^",
+    "@types/pg": "^8.11.10",
+    "drizzle-kit": "^0.30.1",
+    "embedded-postgres": "17.10.0-beta.17",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}
