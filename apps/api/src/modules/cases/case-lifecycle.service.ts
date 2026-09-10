@@ -13,6 +13,7 @@ import type {
 } from '@ksdc/contracts';
 import { availableEvents, resolveTarget, transitionFor, waitingOnFor } from '@ksdc/contracts';
 import type { EngineContext, FollowupService } from '../followups/followup.service.js';
+import { ConflictError, DomainError } from '../../common/domain-error.js';
 
 /**
  * Applies case transitions.
@@ -24,7 +25,7 @@ import type { EngineContext, FollowupService } from '../followups/followup.servi
  * state nobody is chasing.
  */
 
-export class TransitionNotAllowedError extends Error {
+export class TransitionNotAllowedError extends ConflictError {
   constructor(
     readonly from: CaseState,
     readonly event: CaseEvent,
@@ -81,21 +82,21 @@ export class CaseLifecycleService {
       .from(caseFile)
       .where(and(eq(caseFile.councilId, ctx.councilId), eq(caseFile.id, input.caseFileId)))
       .limit(1);
-    if (!current) throw new Error(`Case ${input.caseFileId} not found`);
+    if (!current) throw new DomainError(`Case ${input.caseFileId} not found`);
 
     if (!rule.from.includes(current.state)) {
       throw new TransitionNotAllowedError(current.state, input.event);
     }
     if (rule.phase > ctx.config.buildPhase) {
-      throw new Error(
+      throw new DomainError(
         `${input.event} arrives in Phase ${rule.phase}; this council is on Phase ${ctx.config.buildPhase}.`,
       );
     }
     if (rule.requiresReason && !input.reason?.trim()) {
-      throw new Error(`${input.event} requires a reason. It becomes part of the record.`);
+      throw new DomainError(`${input.event} requires a reason. It becomes part of the record.`);
     }
     if (rule.scope === 'respondent' && !input.caseRespondentId) {
-      throw new Error(`${input.event} applies to one respondent; caseRespondentId is required.`);
+      throw new DomainError(`${input.event} applies to one respondent; caseRespondentId is required.`);
     }
 
     const occurredAt = input.occurredAt ?? new Date();
@@ -256,12 +257,12 @@ export class CaseLifecycleService {
       .from(caseRespondent)
       .where(and(eq(caseRespondent.councilId, ctx.councilId), eq(caseRespondent.id, respondentId)))
       .limit(1);
-    if (!respondent) throw new Error(`Respondent ${respondentId} not found`);
+    if (!respondent) throw new DomainError(`Respondent ${respondentId} not found`);
 
     switch (input.event) {
       case 'ISSUE_RESPONDENT_NOTICE': {
         if (!input.notice) {
-          throw new Error(
+          throw new DomainError(
             'Issuing a notice requires confirmation that it was despatched: the service ' +
               'mode and the date it went out. The counter never moves on a draft.',
           );
@@ -407,7 +408,7 @@ export class CaseLifecycleService {
       case 'MARK_COMPLAINANT_UNRESPONSIVE':
         return 'complainant_unresponsive';
       default:
-        throw new Error(
+        throw new DomainError(
           `Closing a case with ${input.event} requires an explicit closureReason. ` +
             'The register never records a bare closure.',
         );

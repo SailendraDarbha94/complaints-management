@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@fastify/cookie": "^9.4.0",
+    "@google-cloud/storage": "^8.1.0",
     "@ksdc/config": "workspace:*",
     "@ksdc/contracts": "workspace:*",
     "@ksdc/db": "workspace:*",

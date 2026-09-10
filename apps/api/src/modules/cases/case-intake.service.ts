@@ -12,6 +12,7 @@ import {
 import type { CaseKind, DateSource, IntakeSource, PartyRole } from '@ksdc/contracts';
 import { formatCaseNumber, fiscalYearOf, type CaseSeries } from '@ksdc/contracts';
 import type { EngineContext, FollowupService } from '../followups/followup.service.js';
+import { DomainError } from '../../common/domain-error.js';
 
 /**
  * Case intake: the only place a case is created, and the only place a serial is issued.
@@ -70,7 +71,7 @@ export class CaseIntakeService {
     // system holds demo data only. The legal register of a statutory body must never end
     // up inside one individual's personal cloud account by drift.
     if (!councilRow.productionAuthorisedAt && !councilRow.isSynthetic) {
-      throw new Error(
+      throw new DomainError(
         'This council is not authorised for production data yet. Four artefacts must be ' +
           'filed in docs/authorisation/ first: the signed letterhead authorisation, the ' +
           "Registrar's email to the project account, proof the domain is registered to " +

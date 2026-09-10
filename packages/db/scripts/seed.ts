@@ -11,7 +11,7 @@
  */
 import { sql } from 'drizzle-orm';
 import { createDb, withCouncil } from '../src/index.js';
-import { KSDC_CONFIG, KSDC_COUNCIL } from '@ksdc/config';
+import { KSDC_CONFIG, KSDC_COUNCIL, KSDC_TEMPLATES } from '@ksdc/config';
 import { isMainModule } from './is-main.js';
 
 const COUNCIL_ID = '0197f9c2-0000-4000-8000-000000000001';
@@ -73,11 +73,50 @@ export async function seed(connectionString: string, withDemo = false): Promise<
       );
     }
 
+    // The letter catalogue. Never overwritten: once the officer has edited a letter, the
+    // shipped wording is not the council's wording any more.
+    let templates = 0;
+    for (const t of KSDC_TEMPLATES) {
+      const inserted = await withCouncil(
+        { councilId: COUNCIL_ID },
+        async (tx) => {
+          const existing = await tx.execute(sql`
+            SELECT id FROM template
+            WHERE council_id = ${COUNCIL_ID}::uuid AND kind = ${t.kind}::correspondence_kind
+          `);
+          if (existing.rows.length > 0) return 0;
+
+          const template = await tx.execute<{ id: string }>(sql`
+            INSERT INTO template (council_id, kind, name, is_system, requires_registrar_signature)
+            VALUES (${COUNCIL_ID}::uuid, ${t.kind}::correspondence_kind, ${t.name},
+                    ${t.isSystem}, ${t.requiresRegistrarSignature})
+            RETURNING id
+          `);
+          const version = await tx.execute<{ id: string }>(sql`
+            INSERT INTO template_version (council_id, template_id, version_no, subject_tpl,
+                                          body, published_at)
+            VALUES (${COUNCIL_ID}::uuid, ${template.rows[0]!.id}::uuid, 1, ${t.subject},
+                    ${t.body}, now())
+            RETURNING id
+          `);
+          await tx.execute(sql`
+            UPDATE template SET current_version_id = ${version.rows[0]!.id}::uuid
+            WHERE id = ${template.rows[0]!.id}::uuid
+          `);
+          return 1;
+        },
+        db,
+      );
+      templates += inserted;
+    }
+    if (templates > 0) console.log(`  ${templates} letter template(s) installed`);
+
     console.log(`  council ${KSDC_COUNCIL.code} seeded (synthetic — not authorised for real data)`);
     console.log(`  officer ${OFFICER_EMAIL}`);
-    console.log(`\n  Development identity headers:`);
-    console.log(`    x-dev-council-id: ${COUNCIL_ID}`);
-    console.log(`    x-dev-user-id:    ${OFFICER_ID}`);
+    console.log('');
+    console.log('  Sign in at the web app with that address. There is no password: the API');
+    console.log('  emails a six-digit code, and in development that means it is printed in');
+    console.log('  the API log and appended to apps/api/var/mail/outbox.log.');
 
     if (withDemo) {
       // Demo cases are created by apps/api's demo script, through the real services, so

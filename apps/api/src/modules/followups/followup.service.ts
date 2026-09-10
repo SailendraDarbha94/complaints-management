@@ -12,6 +12,7 @@ import {
   type Calendar,
   type IsoDate,
 } from '../../common/working-days.js';
+import { DomainError } from '../../common/domain-error.js';
 
 /**
  * The follow-up engine.
@@ -253,9 +254,9 @@ export class FollowupService {
       .where(and(eq(followUp.councilId, ctx.councilId), eq(followUp.id, args.followUpId)))
       .limit(1);
 
-    if (!row) throw new Error(`Follow-up ${args.followUpId} not found`);
+    if (!row) throw new DomainError(`Follow-up ${args.followUpId} not found`);
     if (row.isStatutory && isBefore(row.dueOn, args.until)) {
-      throw new Error(
+      throw new DomainError(
         `This is a statutory deadline (due ${row.dueOn}). It cannot be snoozed past its due date.`,
       );
     }
@@ -277,7 +278,7 @@ export class FollowupService {
     args: { followUpId: string; reason: string },
   ): Promise<void> {
     if (!args.reason?.trim()) {
-      throw new Error('Dismissing a follow-up requires a reason.');
+      throw new DomainError('Dismissing a follow-up requires a reason.');
     }
     await tx
       .update(followUp)
