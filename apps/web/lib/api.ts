@@ -13,6 +13,9 @@ import { cookies } from 'next/headers';
 
 export const API_URL = process.env.API_URL ?? 'http://localhost:8080';
 
+/** What the browser talks to directly, for uploads and form posts. */
+export { PUBLIC_API_URL } from './public-api';
+
 export type Urgency =
   | 'needs_decision'
   | 'overdue'
@@ -70,6 +73,154 @@ export interface Session {
   council: { councilId: string; role: string };
 }
 
+export interface CaseListRow {
+  id: string;
+  register_sl_no: number;
+  case_number: string;
+  case_kind: string;
+  state: string;
+  waiting_on: string;
+  on_hold: boolean;
+  summary: string;
+  intake_source: string;
+  days_waiting: number | null;
+  closed_at: string | null;
+  closure_reason: string | null;
+  is_backfilled: boolean;
+  complainant_name: string | null;
+}
+
+export interface CaseParty {
+  role: string;
+  full_name: string;
+  mobile: string | null;
+  email: string | null;
+  age_years: number | null;
+  sex: string | null;
+}
+
+export interface CaseRespondent {
+  id: string;
+  full_name: string;
+  notice_state: string;
+  notice_count: number;
+  ex_parte_eligible: boolean;
+  ex_parte_at: string | null;
+  dropped_at: string | null;
+  registration_no: string | null;
+  clinic_name: string | null;
+  last_notice_at: string | null;
+  replied_at: string | null;
+}
+
+export interface CaseMilestone {
+  milestone: string;
+  occurred_at: string;
+  date_source: string;
+  note: string | null;
+}
+
+export interface CaseHistoryEntry {
+  event: string;
+  from_state: string | null;
+  to_state: string;
+  reason: string | null;
+  occurred_at: string;
+  is_system: boolean;
+}
+
+export interface CaseLetter {
+  id: string;
+  kind: string;
+  direction: 'in' | 'out';
+  subject: string;
+  to_name: string | null;
+  from_email: string | null;
+  sent_at: string | null;
+  received_at: string | null;
+  despatch_no: string | null;
+  despatch_date: string | null;
+  created_at: string;
+}
+
+export interface CaseDocument {
+  id: string;
+  title: string;
+  documentClass: string;
+  status: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  versionNo: number;
+  physicalOriginalHeld: boolean;
+  physicalReturnedAt: string | null;
+  mayBeSummarised: boolean;
+}
+
+export interface AvailableEvent {
+  event: string;
+  to: string;
+  scope: 'case' | 'respondent' | 'hold';
+  requiresReason: boolean;
+  description: string;
+}
+
+export interface CaseDetail {
+  case: {
+    id: string;
+    case_number: string;
+    case_kind: string;
+    state: string;
+    waiting_on: string;
+    waiting_since: string;
+    on_hold: boolean;
+    hold_reason: string | null;
+    summary: string;
+    remarks: string | null;
+    intake_source: string;
+    external_ref_no: string | null;
+    external_authority_name: string | null;
+    documents_complete_at: string | null;
+    closed_at: string | null;
+    closure_reason: string | null;
+    is_backfilled: boolean;
+    legacy_register_ref: string | null;
+    register_sl_no: number;
+    fiscal_year: string;
+  } | null;
+  parties: CaseParty[];
+  respondents: CaseRespondent[];
+  milestones: CaseMilestone[];
+  history: CaseHistoryEntry[];
+  letters: CaseLetter[];
+  documents: CaseDocument[];
+  followups: Array<{
+    id: string;
+    stage: string;
+    status: string;
+    dueOn: string;
+    escalationLevel: number;
+    snoozedUntil: string | null;
+    title: string;
+  }>;
+  availableEvents: AvailableEvent[];
+}
+
+export interface TemplateRow {
+  kind: string;
+  name: string;
+  is_system: boolean;
+  requires_registrar_signature: boolean;
+  version_no: number;
+  subject_tpl: string;
+  body: string;
+  published_at: string;
+  availableFields: string[];
+}
+
+export type RegisterRow = Record<string, string | number | boolean | null>;
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -79,15 +230,18 @@ export class ApiError extends Error {
   }
 }
 
-async function get<T>(path: string): Promise<T> {
+async function forwardedCookies(): Promise<string> {
   const jar = await cookies();
-  const forwarded = jar
+  return jar
     .getAll()
     .map((c) => `${c.name}=${c.value}`)
     .join('; ');
+}
 
+async function get<T>(path: string): Promise<T> {
+  const cookie = await forwardedCookies();
   const res = await fetch(`${API_URL}/v1${path}`, {
-    headers: forwarded ? { cookie: forwarded } : {},
+    headers: cookie ? { cookie } : {},
     // The register changes as the officer works; never serve a stale queue.
     cache: 'no-store',
   });
@@ -105,6 +259,23 @@ export function fetchToday(): Promise<TodayResponse> {
 
 export function fetchSession(): Promise<Session> {
   return get<Session>('/auth/me');
+}
+
+export function fetchCases(): Promise<{ cases: CaseListRow[] }> {
+  return get<{ cases: CaseListRow[] }>('/cases');
+}
+
+export function fetchCase(id: string): Promise<CaseDetail> {
+  return get<CaseDetail>(`/cases/${id}`);
+}
+
+export function fetchTemplates(): Promise<{ templates: TemplateRow[] }> {
+  return get<{ templates: TemplateRow[] }>('/templates');
+}
+
+export function fetchRegister(fiscalYear?: string): Promise<{ rows: RegisterRow[] }> {
+  const q = fiscalYear ? `?fiscalYear=${encodeURIComponent(fiscalYear)}` : '';
+  return get<{ rows: RegisterRow[] }>(`/register${q}`);
 }
 
 /** True when the failure is "sign in", rather than "something broke". */

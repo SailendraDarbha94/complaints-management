@@ -60,8 +60,8 @@ export class TokenService {
   private async loadKeys() {
     if (this.keys) return this.keys;
 
-    const priv = process.env.JWT_PRIVATE_KEY;
-    const pub = process.env.JWT_PUBLIC_KEY;
+    const priv = normalisePem(process.env.JWT_PRIVATE_KEY);
+    const pub = normalisePem(process.env.JWT_PUBLIC_KEY);
 
     if (priv && pub) {
       this.keys = {
@@ -145,6 +145,16 @@ export class TokenService {
 
 export function hashRefreshToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
+}
+
+/**
+ * A PEM that has been through a .env file, a shell variable or Secret Manager arrives with
+ * its line breaks written as a literal backslash-n more often than not - that is how the
+ * keys script prints them, so that they survive being pasted into any of the three. Undo
+ * it here rather than making every caller remember.
+ */
+function normalisePem(value: string | undefined): string | undefined {
+  return value?.replace(/\\n/g, '\n').trim();
 }
 
 /** Generates a key pair for JWT_PRIVATE_KEY / JWT_PUBLIC_KEY. */

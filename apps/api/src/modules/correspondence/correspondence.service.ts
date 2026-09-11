@@ -204,16 +204,50 @@ export class CorrespondenceService {
 
     const recipient = this.recipientFor(args.kind, merge);
 
+    // Drafting the same letter twice - because the officer added a missing detail and came
+    // back, or simply clicked again - rewrites the draft rather than leaving a second one
+    // behind. Nothing has been sent, so there is no record to preserve, and a letters table
+    // that fills with abandoned drafts stops being readable within a week. A row that has
+    // been despatched is never touched: sent_at IS NULL is what makes this safe.
     const inserted = await tx.execute<{ id: string }>(sql`
-      INSERT INTO correspondence (council_id, case_file_id, kind, direction, to_party_id,
-                                  to_name, to_email, subject, body, template_version_id,
-                                  merge_context, created_by)
-      VALUES (${ctx.councilId}::uuid, ${args.caseFileId}::uuid,
-              ${args.kind}::correspondence_kind, 'out'::contact_direction, NULL,
-              ${recipient.name}, ${recipient.email}, ${subject}, ${body},
-              ${chosen.version_id}::uuid, ${JSON.stringify(merge)}::jsonb,
-              ${ctx.userId ?? null})
-      RETURNING id
+      WITH existing AS (
+        SELECT id FROM correspondence
+        WHERE council_id = ${ctx.councilId}::uuid
+          AND case_file_id = ${args.caseFileId}::uuid
+          AND kind = ${args.kind}::correspondence_kind
+          AND direction = 'out'::contact_direction
+          AND sent_at IS NULL
+          AND to_name IS NOT DISTINCT FROM ${recipient.name}
+        ORDER BY created_at
+        LIMIT 1
+      ),
+      rewritten AS (
+        UPDATE correspondence SET
+          to_email = ${recipient.email},
+          subject = ${subject},
+          body = ${body},
+          template_version_id = ${chosen.version_id}::uuid,
+          merge_context = ${JSON.stringify(merge)}::jsonb,
+          created_by = ${ctx.userId ?? null},
+          created_at = now()
+        WHERE id IN (SELECT id FROM existing)
+        RETURNING id
+      ),
+      created AS (
+        INSERT INTO correspondence (council_id, case_file_id, kind, direction, to_party_id,
+                                    to_name, to_email, subject, body, template_version_id,
+                                    merge_context, created_by)
+        SELECT ${ctx.councilId}::uuid, ${args.caseFileId}::uuid,
+               ${args.kind}::correspondence_kind, 'out'::contact_direction, NULL,
+               ${recipient.name}, ${recipient.email}, ${subject}, ${body},
+               ${chosen.version_id}::uuid, ${JSON.stringify(merge)}::jsonb,
+               ${ctx.userId ?? null}
+        WHERE NOT EXISTS (SELECT 1 FROM existing)
+        RETURNING id
+      )
+      SELECT id FROM rewritten
+      UNION ALL
+      SELECT id FROM created
     `);
 
     const attachments = await tx.execute<{ id: string; title: string; filename: string }>(sql`

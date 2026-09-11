@@ -1,0 +1,763 @@
+/*
+ * Screens beyond Today: the case file, the composer, the case list and the register.
+ *
+ * Same tokens as globals.css — the stamp indigo for structure, seal red kept strictly
+ * for lateness and for the two actions that end a case.
+ */
+
+/* ── Breadcrumbs ──────────────────────────────────────────────────────── */
+
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  margin-bottom: 14px;
+}
+
+.crumbs a {
+  color: var(--stamp);
+  text-decoration: none;
+}
+.crumbs a:hover,
+.crumbs a:focus-visible {
+  text-decoration: underline;
+}
+.crumbs .here {
+  color: var(--ink-2);
+}
+
+.shell-wide {
+  max-width: 1400px;
+}
+
+/* ── Case header ──────────────────────────────────────────────────────── */
+
+.case-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px 28px;
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 16px;
+  margin-bottom: 18px;
+}
+
+.case-head h1 {
+  margin: 0 0 4px;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+  font-family: var(--f-mono);
+  font-weight: 500;
+}
+
+.case-summary {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 14.5px;
+  max-width: 62ch;
+}
+.case-summary a {
+  color: var(--stamp);
+}
+
+.case-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 26px;
+  margin: 0;
+}
+.case-status > div {
+  min-width: 96px;
+}
+.case-status dt {
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 2px;
+}
+.case-status dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* ── Two-column case layout ───────────────────────────────────────────── */
+
+.case-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0 26px;
+}
+@media (min-width: 940px) {
+  .case-grid {
+    grid-template-columns: minmax(0, 1fr) 300px;
+  }
+}
+
+.case-main,
+.case-side {
+  min-width: 0;
+}
+
+/* ── Panels ───────────────────────────────────────────────────────────── */
+
+.panel {
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--surface);
+  margin-bottom: 18px;
+  overflow: hidden;
+}
+
+/* The panel that starts the clock. It is not one card among several. */
+.panel-consequential {
+  border-color: var(--stamp);
+  border-left-width: 3px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 15px;
+  background: var(--surface-sunk);
+  border-bottom: 1px solid var(--rule);
+}
+
+.panel-head h2 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.panel-head .n {
+  font-family: var(--f-mono);
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--ink-3);
+  text-transform: none;
+}
+
+.panel-body {
+  padding: 14px 15px;
+}
+
+.muted {
+  color: var(--ink-3);
+  font-size: 13.5px;
+  margin: 0;
+}
+
+.mono {
+  font-family: var(--f-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.wrap {
+  overflow-wrap: anywhere;
+}
+
+/* ── Lists and pairs ──────────────────────────────────────────────────── */
+
+ul.plain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+ul.plain > li + li {
+  border-top: 1px dotted var(--rule-soft);
+  padding-top: 9px;
+  margin-top: 9px;
+}
+
+.followup-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 14px;
+  font-size: 14px;
+}
+
+.respondent {
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.respondent strong {
+  display: block;
+}
+
+.pairs {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.pairs dt {
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.pairs dd {
+  margin: 0;
+  font-size: 14px;
+}
+.pairs dd a {
+  color: var(--stamp);
+}
+
+.meta {
+  display: block;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  margin-top: 2px;
+  line-height: 1.45;
+}
+.meta.warn {
+  color: var(--seal);
+}
+
+/* ── Chips ────────────────────────────────────────────────────────────── */
+
+.chip {
+  display: inline-block;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: 6px;
+  vertical-align: middle;
+  white-space: nowrap;
+  background: var(--surface-sunk);
+  color: var(--ink-3);
+}
+.chip-awaiting_reply {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+.chip-replied {
+  background: var(--moss-soft);
+  color: var(--moss);
+}
+.chip-ex_parte,
+.chip-hold {
+  background: var(--seal-soft);
+  color: var(--seal);
+}
+.chip-reconstructed,
+.chip-draft {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+.chip-verbatim {
+  background: var(--stamp-soft);
+  color: var(--stamp);
+}
+.chip-in {
+  background: var(--moss-soft);
+  color: var(--moss);
+}
+
+/* ── Inner tables ─────────────────────────────────────────────────────── */
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.inner-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13.5px;
+}
+.inner-table th {
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--ink-3);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+.inner-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--rule-soft);
+  vertical-align: top;
+  line-height: 1.45;
+}
+.inner-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.inner-table .num {
+  text-align: right;
+}
+.inner-table tr.withdrawn td {
+  opacity: 0.55;
+}
+.inner-table tr.withdrawn td:first-child {
+  text-decoration: line-through;
+}
+
+.case-link {
+  font-family: var(--f-mono);
+  color: var(--stamp);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.case-link:hover,
+.case-link:focus-visible {
+  text-decoration: underline;
+}
+
+.grievance {
+  max-width: 34ch;
+}
+
+.link-like {
+  color: var(--stamp);
+  font-size: 13px;
+}
+
+/* ── Timeline ─────────────────────────────────────────────────────────── */
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.timeline li {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 2px 14px;
+  padding: 7px 0;
+  font-size: 13.5px;
+  border-bottom: 1px dotted var(--rule-soft);
+}
+.timeline li:last-child {
+  border-bottom: none;
+}
+@media (max-width: 620px) {
+  .timeline li {
+    grid-template-columns: 1fr;
+  }
+}
+.timeline .when {
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.timeline li.system .what {
+  color: var(--ink-2);
+  font-style: italic;
+}
+
+/* ── Actions and forms ────────────────────────────────────────────────── */
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.action,
+.compose-pick button,
+.compose-sent button,
+.upload button,
+.action-buttons button[type='submit'] {
+  font-family: var(--f-body);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+}
+.action:hover,
+.action:focus-visible {
+  border-color: var(--stamp);
+  color: var(--stamp);
+}
+
+/* Closing and reopening a case are not routine, so they do not look routine. */
+.action-grave {
+  border-color: var(--seal);
+  color: var(--seal);
+}
+.action-grave:hover,
+.action-grave:focus-visible {
+  background: var(--seal-soft);
+}
+
+.compose-pick button[type='submit'],
+.compose-sent button[type='submit'],
+.upload button[type='submit'],
+.action-buttons button[type='submit'] {
+  background: var(--stamp);
+  border-color: var(--stamp);
+  color: #fff;
+}
+button[type='submit']:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.action-form,
+.compose-sent {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule-soft);
+  max-width: 44rem;
+}
+
+.compose-pick,
+.upload-details {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  max-width: 44rem;
+}
+.upload-details {
+  margin-top: 12px;
+}
+
+.action-form label,
+.compose-pick label,
+.compose-sent label,
+.upload-details label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.action-form select,
+.action-form textarea,
+.action-form input,
+.compose-pick select,
+.compose-sent select,
+.compose-sent input,
+.upload-details input[type='text'],
+.upload-details input:not([type]),
+.upload-details select {
+  font-family: var(--f-body);
+  font-size: 14px;
+  font-weight: 400;
+  padding: 7px 9px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
+}
+.action-form textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+label.checkbox {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 7px;
+  font-weight: 400;
+  font-size: 13.5px;
+  color: var(--ink);
+}
+
+.action-why {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+  line-height: 1.55;
+  max-width: 64ch;
+}
+
+.action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.button-link {
+  font-family: var(--f-body);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 11px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--stamp);
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.button-strong {
+  background: var(--stamp);
+  border-color: var(--stamp);
+  color: #fff;
+  font-size: 13px;
+  padding: 8px 14px;
+}
+
+.form-note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-3);
+  line-height: 1.55;
+  max-width: 64ch;
+}
+.form-note.warn {
+  color: var(--seal);
+  font-weight: 500;
+}
+
+/* ── Composer ─────────────────────────────────────────────────────────── */
+
+.copy-block {
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  margin: 12px 0;
+  overflow: hidden;
+}
+.copy-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 11px;
+  background: var(--surface-sunk);
+  border-bottom: 1px solid var(--rule-soft);
+}
+.copy-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--ink-3);
+  margin: 0;
+}
+.copy-text {
+  margin: 0;
+  padding: 12px 14px;
+  font-family: var(--f-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--paper);
+  color: var(--ink);
+  max-height: 460px;
+  overflow-y: auto;
+}
+.copy-text.subject {
+  max-height: none;
+  font-weight: 500;
+}
+
+.attachments {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule-soft);
+}
+.attachments li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.done-message {
+  margin: 0 0 14px;
+  font-size: 15px;
+  color: var(--ink-2);
+}
+.done-message strong {
+  color: var(--moss);
+}
+
+.upload {
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.upload input[type='file'] {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+/* ── Register ─────────────────────────────────────────────────────────── */
+
+.register-scroll {
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--surface);
+  max-height: 74vh;
+  overflow: auto;
+}
+
+.register-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.register-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--ink-3);
+  background: var(--surface-sunk);
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--rule);
+}
+.register-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--rule-soft);
+  vertical-align: top;
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.register-table .num {
+  text-align: right;
+}
+.register-table tbody tr:hover td {
+  background: var(--surface-sunk);
+}
+
+/*
+ * These forms are column flexboxes, so a submit button stretches to the full width of the
+ * widest field unless told otherwise. A button the width of the page reads as a banner.
+ */
+.compose-pick > button,
+.compose-sent > button,
+.upload-details > button,
+.action-form > button,
+.action-form .action-buttons {
+  align-self: flex-start;
+}
+
+/* ── Today: acting on a row without leaving the queue ─────────────────── */
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: start;
+}
+
+.row-actions button {
+  font-family: var(--f-body);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: none;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.row-actions button:hover,
+.row-actions button:focus-visible {
+  border-color: var(--rule);
+  background: var(--surface);
+  color: var(--stamp);
+}
+.row-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* The confirm steps take the whole row: a date field does not belong in a gutter. */
+.row-form {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px dotted var(--rule-soft);
+}
+.row-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-2);
+  flex: 1 1 16rem;
+}
+.row-form input {
+  font-family: var(--f-body);
+  font-size: 13px;
+  font-weight: 400;
+  padding: 5px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
+}
+.row-form button[type='submit'] {
+  font-family: var(--f-body);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border: 1px solid var(--stamp);
+  border-radius: 4px;
+  background: var(--stamp);
+  color: #fff;
+  cursor: pointer;
+}
+.row-form button[type='submit']:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (max-width: 760px) {
+  .row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .row-actions {
+    grid-column: 1 / -1;
+    margin-top: 6px;
+  }
+}
+
+.row-decide {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border: 1px solid var(--stamp);
+  border-radius: 3px;
+  color: var(--stamp);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.row-decide:hover,
+.row-decide:focus-visible {
+  background: var(--stamp-soft);
+}
