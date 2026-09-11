@@ -67,6 +67,10 @@ export {
   identityFromSupabaseToken,
   resetSupabaseKeyCache,
 } from './modules/auth/supabase-jwt.js';
+export {
+  SupabaseAuthService,
+  type SupabaseSession,
+} from './modules/auth/supabase-auth.service.js';
 export { TokenService, generateSigningKeys, type AccessClaims } from './modules/auth/token.service.js';
 
 // The domain.
