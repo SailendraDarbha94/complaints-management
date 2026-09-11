@@ -1,0 +1,12 @@
+# Expo build output and native projects. The repo's root .gitignore covers
+# node_modules, .env* and the rest.
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native directories, when `expo prebuild` generates them. They are derived from
+# app.json and regenerating is the supported path; checking them in means merge
+# conflicts in files nobody reads.
+/ios
+/android

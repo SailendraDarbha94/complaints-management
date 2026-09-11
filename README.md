@@ -71,6 +71,9 @@ curl -X POST http://localhost:3000/v1/internal/jobs/daily -H 'x-dev-scheduler: 1
 ```
 apps/
   web/          Next.js. The UI in app/, and the whole API in app/v1/ as route handlers.
+  mobile/       Expo (SDK 57) + expo-router. For committee members, reading case files.
+                Talks to Supabase directly for auth and reads; writes go through web's
+                /v1 so audit.append() has an actor to attribute them to.
 packages/
   core/         The register itself: services, the follow-up engine, auth, documents.
                 No web framework — everything takes (tx, ctx, args) and returns data.
