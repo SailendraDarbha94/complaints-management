@@ -6,7 +6,7 @@ import { FollowupService, type EngineContext } from '../followups/followup.servi
 import { QueueService } from '../followups/queue.service.js';
 import { CaseIntakeService } from '../cases/case-intake.service.js';
 import { CaseLifecycleService } from '../cases/case-lifecycle.service.js';
-import { DigestService, digestSubject, renderDigest } from './digest.service.js';
+import { DigestService, digestSubject, renderDigest, renderNudge, onCouncilDomain } from './digest.service.js';
 import { MailerPort, assertSendable, type OutboundMessage } from './mailer.js';
 import { seedCouncilAndOfficer } from '../../test-support/fixtures.js';
 
@@ -251,5 +251,106 @@ describe('what the digest says', () => {
     const body = renderDigest(emptyQueue, { councilName: 'KSDC', officerName: 'Officer' });
     // The officer must never mistake a reminder for something a party was sent.
     expect(body).toMatch(/not council correspondence/i);
+  });
+});
+
+describe('where the reminder goes, and what it may carry', () => {
+  /**
+   * KSDC's officer has no council mailbox that reaches them. The only inbox they read is
+   * registrar@ksdc.in - the one address this system refuses to write to, because it is
+   * where complaints land and it is the pile the digest exists to help them escape.
+   *
+   * So the digest was sending, every morning, to an address nobody reads, and reporting
+   * success. The single reminder this product exists to deliver was going nowhere.
+   *
+   * The answer is not to relax the refusal, and not to post complaint content to a
+   * personal Gmail. It is to separate the notification from its content: counts and a link
+   * can travel anywhere, case details stay on council infrastructure.
+   */
+  it('sends the full digest to an address on the council domain', () => {
+    expect(onCouncilDomain('officer@ksdc.in', 'ksdc.in')).toBe(true);
+    expect(onCouncilDomain('Officer@KSDC.IN', 'ksdc.in')).toBe(true);
+  });
+
+  it('treats anything else as outside, including lookalike domains', () => {
+    expect(onCouncilDomain('officer@gmail.com', 'ksdc.in')).toBe(false);
+    // The one that would actually be attempted by a careless config.
+    expect(onCouncilDomain('officer@ksdc.in.example.com', 'ksdc.in')).toBe(false);
+    expect(onCouncilDomain('officer@notksdc.in', 'ksdc.in')).toBe(false);
+    // No council domain known: refuse to assume anything is inside.
+    expect(onCouncilDomain('officer@ksdc.in', '')).toBe(false);
+  });
+
+  it('puts NO case detail in a reminder bound for a personal inbox', () => {
+    const queue = {
+      summary: {
+        today: '2026-09-11',
+        total: 3,
+        needsDecision: 1,
+        overdue: 2,
+        dueToday: 0,
+        thisWeek: 0,
+        snoozed: 0,
+        snoozedOverdue: 0,
+      },
+      byUrgency: [
+        {
+          key: 'overdue',
+          label: 'Overdue',
+          count: 1,
+          overdueCount: 1,
+          items: [
+            {
+              followUpId: 'f1',
+              stage: 'await_respondent_reply',
+              urgency: 'overdue',
+              title: 'Dr N. Bhat to send an explanation',
+              detail: null,
+              dueOn: '2026-09-04',
+              daysOverdue: 7,
+              snoozedUntil: null,
+              escalationLevel: 1,
+              waitingOnKind: 'respondent',
+              caseFileId: 'c1',
+              caseNumber: 'KSDC/COMP/2026-27/0010',
+              caseSummary: 'Implant failure at a chain clinic; two dentists treated the patient',
+              caseQuietDays: 23,
+              partyName: 'Sri Prakash Shetty',
+              partyMobile: '9741100220',
+              isStatutory: false,
+            },
+          ],
+        },
+      ],
+      byWaitingOn: [],
+    } as unknown as Parameters<typeof renderNudge>[0];
+
+    const nudge = renderNudge(queue, { councilName: 'KSDC', officerName: 'Dental Officer' });
+
+    // The counts are the point, and they are there.
+    expect(nudge).toContain('3 items need attention');
+    expect(nudge).toContain('2 overdue');
+    expect(nudge).toContain('/today');
+
+    // None of this may appear in a personal inbox.
+    for (const secret of [
+      'KSDC/COMP/2026-27/0010',
+      'Implant failure',
+      'Dr N. Bhat',
+      'Sri Prakash Shetty',
+      '9741100220',
+    ]) {
+      expect(nudge, `"${secret}" leaked into a reminder sent outside the council`).not.toContain(
+        secret,
+      );
+    }
+  });
+
+  it('still says something useful on a quiet day', () => {
+    const empty = { summary: { total: 0 }, byUrgency: [], byWaitingOn: [] } as unknown as Parameters<
+      typeof renderNudge
+    >[0];
+    const nudge = renderNudge(empty, { councilName: 'KSDC', officerName: 'Dental Officer' });
+    expect(nudge).toContain('Nothing needs you today');
   });
 });

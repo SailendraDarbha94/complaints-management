@@ -56,8 +56,13 @@ export class DigestService {
 
     // Officers only. A committee member does not want the officer's chase list, and
     // sending it to them would put every complainant's name in their inbox weekly.
-    const officers = await tx.execute<{ id: string; email: string; full_name: string }>(sql`
-      SELECT u.id, u.email, u.full_name
+    const officers = await tx.execute<{
+      id: string;
+      email: string;
+      notify_email: string | null;
+      full_name: string;
+    }>(sql`
+      SELECT u.id, u.email, u.notify_email, u.full_name
       FROM council_membership m
       JOIN app_user u ON u.id = m.app_user_id
       WHERE m.council_id = ${ctx.councilId}::uuid
@@ -70,10 +75,15 @@ export class DigestService {
     if (result.recipients === 0) return result;
 
     const queue = await this.queue.today(tx, ctx, today);
-    const councilRow = await tx.execute<{ name: string; code: string }>(
-      sql`SELECT name, code FROM council WHERE id = ${ctx.councilId}::uuid`,
+    const councilRow = await tx.execute<{ name: string; code: string; official_email: string }>(
+      sql`SELECT name, code, official_email FROM council WHERE id = ${ctx.councilId}::uuid`,
     );
-    const council = councilRow.rows[0] ?? { name: 'the council', code: '' };
+    const council = councilRow.rows[0] ?? {
+      name: 'the council',
+      code: '',
+      official_email: '',
+    };
+    const councilDomain = council.official_email.split('@')[1]?.toLowerCase() ?? '';
 
     for (const officer of officers.rows) {
       // The unique index on (app_user_id, kind, logical_date) makes a retried Cloud
@@ -94,11 +104,19 @@ export class DigestService {
       }
 
       const logId = claim.rows[0]!.id;
-      const subject = digestSubject(queue, council.code);
-      const body = renderDigest(queue, { councilName: council.name, officerName: officer.full_name });
+      const to = officer.notify_email?.trim() || officer.email;
+      const full = onCouncilDomain(to, councilDomain);
+
+      // Counts and a link go anywhere; case content does not leave council infrastructure.
+      const subject = full
+        ? digestSubject(queue, council.code)
+        : nudgeSubject(queue, council.code);
+      const body = full
+        ? renderDigest(queue, { councilName: council.name, officerName: officer.full_name })
+        : renderNudge(queue, { councilName: council.name, officerName: officer.full_name });
 
       try {
-        await this.mailer.send({ to: officer.email, subject, text: body });
+        await this.mailer.send({ to, subject, text: body });
         await tx.execute(sql`
           UPDATE notification_log
           SET sent_at = now(), subject = ${subject}, item_count = ${queue.summary.total},
@@ -111,7 +129,7 @@ export class DigestService {
         await tx.execute(sql`
           UPDATE notification_log SET error = ${message} WHERE id = ${logId}::uuid
         `);
-        this.log.error(`digest to ${officer.email} failed: ${message}`);
+        this.log.error(`digest to ${officer.notify_email ?? officer.email} failed: ${message}`);
         result.failed++;
       }
     }
@@ -217,4 +235,72 @@ export function renderDigest(
 
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : `${s.slice(0, n - 1)}...`;
+}
+
+/**
+ * Does this address belong to the council itself?
+ *
+ * The test for whether a person may be sent case content by email. Anything on the
+ * council's own domain is council infrastructure - already subject to whatever retention,
+ * access and disclosure rules the council runs under. Anything else is somebody's personal
+ * mailbox, and a patient's complaint has no business arriving there, however convenient.
+ *
+ * Deliberately a domain test rather than a list of trusted addresses: a list goes stale,
+ * and the question is not "do we trust this person" - the officer is the person - but
+ * "whose systems will this sit on afterwards".
+ */
+export function onCouncilDomain(address: string, councilDomain: string): boolean {
+  if (!councilDomain) return false;
+  return address.trim().toLowerCase().endsWith(`@${councilDomain}`);
+}
+
+function nudgeSubject(queue: TodayQueue, code: string): string {
+  const { total, overdue } = queue.summary;
+  if (total === 0) return `${code}: nothing needs you today`;
+  return `${code}: ${total} item${total === 1 ? '' : 's'} today${overdue > 0 ? `, ${overdue} late` : ''}`;
+}
+
+/**
+ * The digest, with the case content taken out.
+ *
+ * Sent when the officer's inbox is not a council one - which at KSDC it is not, because
+ * the only mailbox that reaches them is registrar@ksdc.in, the address this system refuses
+ * to write to, so their reminders go to a personal account instead.
+ *
+ * It carries NO case number, NO summary, NO party name and NO dentist name. Counts, and a
+ * link. That is enough to do its one job, which is to make the officer open the register
+ * on a morning they would otherwise not have - and the register is behind a sign-in, on
+ * the council's own system, which is where the complaint should be read.
+ */
+export function renderNudge(
+  queue: TodayQueue,
+  who: { councilName: string; officerName: string },
+): string {
+  const { summary } = queue;
+  const webUrl = process.env.WEB_URL ?? 'http://localhost:3000';
+  const lines: string[] = [];
+
+  lines.push(`Good morning, ${who.officerName}.`);
+  lines.push('');
+
+  if (summary.total === 0) {
+    lines.push('Nothing needs you today. Every open case has a next step scheduled.');
+  } else {
+    lines.push(`${summary.total} item${summary.total === 1 ? '' : 's'} need attention:`);
+    lines.push('');
+    if (summary.needsDecision > 0) lines.push(`  ${summary.needsDecision} needing a decision`);
+    if (summary.overdue > 0) lines.push(`  ${summary.overdue} overdue`);
+    if (summary.dueToday > 0) lines.push(`  ${summary.dueToday} due today`);
+    if (summary.thisWeek > 0) lines.push(`  ${summary.thisWeek} later this week`);
+    lines.push('');
+    lines.push(`Open the register: ${webUrl}/today`);
+  }
+
+  lines.push('');
+  lines.push('---');
+  lines.push(
+    'This reminder is sent to an address outside ' +
+      `${who.councilName}, so it carries no case details. They are in the register.`,
+  );
+  return lines.join('\n');
 }
