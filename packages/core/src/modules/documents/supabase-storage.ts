@@ -33,7 +33,16 @@ import {
  *   and are constrained by storage policies instead.
  */
 
-const BUCKET = process.env.SUPABASE_STORAGE_BUCKET ?? 'case-documents';
+/**
+ * Read per use, not once at import.
+ *
+ * A module-scope constant is fixed at the moment the file is first imported, which means a
+ * test cannot point the adapter at a throwaway bucket, and a process that changes the
+ * variable at runtime is silently ignored. Neither is worth a saved property lookup.
+ */
+function bucketName(): string {
+  return process.env.SUPABASE_STORAGE_BUCKET ?? 'case-documents';
+}
 
 /** Supabase's signed upload URLs are valid for two hours and the window is not tunable. */
 const UPLOAD_TTL_SECONDS = 2 * 60 * 60;
@@ -65,7 +74,7 @@ export class SupabaseStorage extends StoragePort {
   }
 
   private bucket() {
-    return this.sb().storage.from(BUCKET);
+    return this.sb().storage.from(bucketName());
   }
 
   async signedUpload(args: { contentType: string; maxBytes: number }): Promise<SignedUpload> {
