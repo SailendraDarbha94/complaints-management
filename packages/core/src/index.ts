@@ -15,7 +15,6 @@ export {
   getServices,
   createMailer,
   createStorage,
-  createStorageSync,
   assertProductionConfig,
   type Services,
 } from './services.js';
@@ -64,6 +63,10 @@ export {
   REFRESH_COOKIE,
 } from './modules/auth/session.js';
 export { AuthService } from './modules/auth/auth.service.js';
+export {
+  identityFromSupabaseToken,
+  resetSupabaseKeyCache,
+} from './modules/auth/supabase-jwt.js';
 export { TokenService, generateSigningKeys, type AccessClaims } from './modules/auth/token.service.js';
 
 // The domain.

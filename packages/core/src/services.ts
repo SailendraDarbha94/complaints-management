@@ -12,6 +12,7 @@ import { SchedulerService } from './modules/jobs/scheduler.service.js';
 import { RegisterService } from './modules/register/register.service.js';
 import { ConsoleMailer, MailerPort, SmtpMailer } from './modules/notifications/mailer.js';
 import { GcsStorage, LocalStorage, StoragePort } from './modules/documents/storage.js';
+import { SupabaseStorage } from './modules/documents/supabase-storage.js';
 
 /**
  * Where the services are assembled.
@@ -56,22 +57,18 @@ export function createMailer(): MailerPort {
  * Which storage. 'local' writes under var/documents and signs its own URLs so the whole
  * upload flow works on a laptop with no cloud account at all.
  *
- * The Supabase adapter is loaded by name only when selected, so @supabase/supabase-js
- * stays out of the dependency graph until someone actually sets STORAGE_DRIVER=supabase.
- * That import is dynamic, which makes this function async in that one case; callers that
- * cannot await use createStorageSync() and get local or GCS.
+ * All three adapters implement the same five-method port, so nothing above this line
+ * knows or cares which one is running.
  */
-export async function createStorage(): Promise<StoragePort> {
-  const driver = process.env.STORAGE_DRIVER;
-  if (driver === 'supabase') {
-    const { SupabaseStorage } = await import('./modules/documents/supabase-storage.js');
-    return new SupabaseStorage();
+export function createStorage(): StoragePort {
+  switch (process.env.STORAGE_DRIVER) {
+    case 'supabase':
+      return new SupabaseStorage();
+    case 'gcs':
+      return new GcsStorage();
+    default:
+      return new LocalStorage();
   }
-  return createStorageSync();
-}
-
-export function createStorageSync(): StoragePort {
-  return process.env.STORAGE_DRIVER === 'gcs' ? new GcsStorage() : new LocalStorage();
 }
 
 /**
@@ -93,7 +90,7 @@ export async function getServices(): Promise<Services> {
   if (g[CACHE_KEY]) return g[CACHE_KEY];
 
   const mailer = createMailer();
-  const storage = await createStorage();
+  const storage = createStorage();
 
   const tokens = new TokenService();
   const followups = new FollowupService();

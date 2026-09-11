@@ -29,18 +29,11 @@
     "@ksdc/config": "workspace:*",
     "@ksdc/contracts": "workspace:*",
     "@ksdc/db": "workspace:*",
+    "@supabase/supabase-js": "^2.116.0",
     "drizzle-orm": "^0.38.3",
     "jose": "^6.2.12",
     "nodemailer": "^10.0.3",
     "zod": "^3.24.1"
-  },
-  "peerDependencies": {
-    "@supabase/supabase-js": "^2.49.0"
-  },
-  "peerDependenciesMeta": {
-    "@supabase/supabase-js": {
-      "optional": true
-    }
   },
   "devDependencies": {
     "@ksdc/testing": "workspace:*",
