@@ -34,6 +34,7 @@ const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as 
 const EXPECTED_PUBLIC: Record<string, string> = {
   'auth/code:POST': 'Requesting a sign-in code: there is no session yet, by definition.',
   'auth/verify:POST': 'Exchanging a code for a session.',
+  'auth/password:POST': 'Signing in with a password is what creates the session.',
   'auth/refresh:POST': 'Rotating a session on the refresh cookie alone.',
   'auth/signout:POST': 'Must work even when the access token has already expired.',
   'storage/local:PUT': 'A signed URL carries its own authority; local-disk driver only.',
