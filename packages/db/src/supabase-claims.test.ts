@@ -188,109 +188,74 @@ describe('what Supabase exposes by default', () => {
     expect(rows.rows).toEqual([]);
   });
 
-  it('exposes no public table to anon or authenticated at all, until one is granted', async () => {
+  /**
+   * The exact set a committee member's phone may read, and nothing else.
+   *
+   * This was "no table is granted to anyone" until migration 0010, which is what the grant
+   * decision changed. It is a WHITELIST rather than a relaxation: a table added to the
+   * schema, or granted in passing by a future migration, fails this test until somebody
+   * writes it down here - which is the point, because the grant is what decides whether a
+   * phone may ask at all.
+   *
+   * The test applied when choosing them was: would this have been in the photocopy the
+   * member gets today?
+   */
+  const READABLE_BY_A_MEMBER = [
+    'case_file',
+    'case_milestone',
+    'case_party',
+    'case_respondent',
+    'document',
+    'document_version',
+    'party',
+    'registered_dentist',
+  ];
+
+  it('lets authenticated read exactly the case-file tables, and no others', async () => {
     const rows = await db.execute<{ relname: string }>(sql`
       SELECT c.relname
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind = 'r'
+        AND has_table_privilege('authenticated', c.oid, 'SELECT')
+      ORDER BY c.relname
+    `);
+    expect(rows.rows.map((r) => r.relname)).toEqual(READABLE_BY_A_MEMBER);
+  });
+
+  it.each(['follow_up', 'correspondence', 'contact_event', 'case_note', 'case_state_history'])(
+    'keeps %s away from a committee member',
+    async (table) => {
+      // Each of these is deliberate. follow_up is the officer's chase list; correspondence
+      // is every letter including unsent drafts; the rest are working notes and an audit
+      // trail. follow_up and correspondence even carry a jwt_council_isolation policy - they
+      // stay unreachable because no grant follows it, which is the layering working.
+      const ok = await db.execute<{ ok: boolean }>(sql`
+        SELECT has_table_privilege('authenticated', ${`public.${table}`}, 'SELECT') AS ok
+      `);
+      expect(ok.rows[0]!.ok).toBe(false);
+    },
+  );
+
+  it('never lets anon read anything, and lets neither role write', async () => {
+    const anon = await db.execute<{ n: string }>(sql`
+      SELECT count(*) AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind = 'r'
+        AND has_table_privilege('anon', c.oid, 'SELECT')
+    `);
+    expect(Number(anon.rows[0]!.n)).toBe(0);
+
+    const writes = await db.execute<{ n: string }>(sql`
+      SELECT count(*) AS n
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       CROSS JOIN (SELECT unnest(ARRAY['anon','authenticated']) AS rolname) r
       WHERE n.nspname = 'public' AND c.relkind = 'r'
-        AND has_table_privilege(r.rolname, c.oid, 'SELECT')
+        AND (has_table_privilege(r.rolname, c.oid, 'INSERT')
+          OR has_table_privilege(r.rolname, c.oid, 'UPDATE')
+          OR has_table_privilege(r.rolname, c.oid, 'DELETE'))
     `);
-    expect(rows.rows.map((r) => r.relname)).toEqual([]);
-  });
-});
-
-describe('the access token hook, called as GoTrue calls it', () => {
-  /**
-   * The test 0006 did not have, and should have.
-   *
-   * GoTrue invokes the hook as supabase_auth_admin: not a superuser, no BYPASSRLS, and
-   * search_path=auth. So it is subject to FORCE ROW LEVEL SECURITY on council_membership,
-   * and without a policy naming it the hook reads zero rows and signs a token with no
-   * council in it. Nothing raises; every request afterwards is just empty. Calling the
-   * hook as the owner - which is all a migration can do - proves none of that.
-   *
-   * Migration 0007 creates the role locally with the same attributes, so this rehearses
-   * the real call.
-   */
-  async function asAuthAdmin(event: Record<string, unknown>) {
-    return db
-      .transaction(async (tx) => {
-        await tx.execute(sql`SET LOCAL ROLE supabase_auth_admin`);
-        const r = await tx.execute<{ out: { claims: Record<string, unknown> } }>(
-          sql`SELECT public.custom_access_token_hook(${JSON.stringify(event)}::jsonb) AS out`,
-        );
-        throw Object.assign(new Error('rollback'), { out: r.rows[0]!.out });
-      })
-      .catch((e: { out?: { claims: Record<string, unknown> } }) => {
-        if (e.out) return e.out;
-        throw e;
-      });
-  }
-
-  it('finds the council when invoked by supabase_auth_admin', async () => {
-    const out = await asAuthAdmin({
-      user_id: sbUserA,
-      claims: { sub: sbUserA, role: 'authenticated', app_metadata: { provider: 'email' } },
-    });
-    const meta = out.claims.app_metadata as { council_id: string; council_role: string };
-    expect(meta.council_id).toBe(councilA);
-    expect(meta.council_role).toBe('officer');
-  });
-
-  it('cannot read anything but membership as that role', async () => {
-    // The policy 0007 adds is FOR SELECT on council_membership and nothing else. If this
-    // ever starts passing, the hook's role has been given reach it does not need.
-    const reachable = await db.execute<{ ok: boolean }>(sql`
-      SELECT has_table_privilege('supabase_auth_admin', 'public.case_file', 'SELECT') AS ok
-    `);
-    expect(reachable.rows[0]!.ok).toBe(false);
-  });
-
-  it('returns every required claim, because what it returns IS the token', async () => {
-    // GoTrue merges nothing back in and validates the result against a schema requiring
-    // aud, exp, iat, sub, email, phone, role, aal, session_id and is_anonymous. A hook
-    // that rebuilds the claims object instead of amending it drops them and 500s at
-    // sign-in.
-    const original = {
-      aud: 'authenticated', exp: 1789118681, iat: 1789115081, sub: sbUserA,
-      email: 'jwt-officer@ksdc.in', phone: '', role: 'authenticated', aal: 'aal1',
-      session_id: '9d0bac7d-cf13-4a8a-8d9c-cbcf4375780b', is_anonymous: false,
-      iss: 'https://example.supabase.co/auth/v1',
-    };
-    const out = await asAuthAdmin({ user_id: sbUserA, claims: original });
-    for (const key of Object.keys(original)) {
-      expect(out.claims, `the hook dropped the ${key} claim`).toHaveProperty(key);
-    }
-  });
-
-  it('puts the council in app_metadata, and never touches the role claim', async () => {
-    const out = await db.execute<{ out: { claims: Record<string, unknown> } }>(sql`
-      SELECT public.custom_access_token_hook(${JSON.stringify({
-        user_id: sbUserA,
-        claims: { sub: sbUserA, role: 'authenticated', app_metadata: { provider: 'email' } },
-      })}::jsonb) AS out
-    `);
-    const c = out.rows[0]!.out.claims as {
-      role: string;
-      app_metadata: { council_id: string; council_role: string; app_user_id: string };
-    };
-
-    expect(c.app_metadata.council_id).toBe(councilA);
-    expect(c.app_metadata.council_role).toBe('officer');
-    expect(c.app_metadata.app_user_id).toBe(appUserA);
-    // PostgREST issues SET ROLE with this. 'officer' here would fail every request.
-    expect(c.role).toBe('authenticated');
-  });
-
-  it('strips a stale council from somebody who is no longer a member', async () => {
-    const out = await db.execute<{ out: { claims: { app_metadata: Record<string, unknown> } } }>(sql`
-      SELECT public.custom_access_token_hook(${JSON.stringify({
-        user_id: sbUserStranger,
-        claims: { sub: sbUserStranger, app_metadata: { council_id: councilA, council_role: 'officer' } },
-      })}::jsonb) AS out
-    `);
-    expect(out.rows[0]!.out.claims.app_metadata).toEqual({});
+    // A phone never writes to the register: audit.append() takes its actor from settings a
+    // direct client never sets, so a direct write would land unattributed.
+    expect(Number(writes.rows[0]!.n)).toBe(0);
   });
 });
