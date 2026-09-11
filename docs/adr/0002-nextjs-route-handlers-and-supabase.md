@@ -189,11 +189,34 @@ Until those policies exist, the app should use the route handlers for everything
 - `pnpm --filter @ksdc/core daily` runs the scheduled tick as a process, so the daily job
   no longer depends on an HTTP endpoint finishing inside a request timeout.
 
+## Storage: switched on 2026-09-11
+
+`STORAGE_DRIVER=supabase`, bucket `case-documents`, private, 50 MB per object, no MIME
+allowlist - a claimed content type is not trusted, and the bytes are sniffed on commit,
+which is strictly stronger.
+
+Verified end to end against the live project: signed upload URL issued, bytes PUT straight
+to Supabase, commit sniffed the type and computed the sha256, the object moved out of
+`staging/` into `documents/<councilId>/`, a signed download returned it BYTE-IDENTICAL, and
+the same object without a signature was refused.
+
+**There are no policies on `storage.objects`, and that is the correct state.** No policies
+means deny-by-default: an anonymous caller listing the bucket gets `[]` even when objects
+exist, confirmed with the publishable key while a document was in there. Only the secret
+key, held server-side, can reach the bytes. Policies get written when the React Native app
+needs direct read access and not before - each one is a decision, not a default.
+
+**The backup gap is real and unclosed.** Supabase's database backups do not cover Storage
+objects, at any tier. The documents are magic-byte-sniffed verbatim originals; they ARE
+the evidence. Nothing currently copies them anywhere. Before real case files go in, this
+needs either a scheduled export to a second provider or a bucket on a provider that backs
+up. It is the largest known gap in the system.
+
 ## What is deliberately not done
 
-- No Supabase project exists. Nothing points at one.
-- `AUTH_DRIVER=supabase` throws.
-- No JWT-claim RLS policies. No custom access token hook.
+- Nothing is deployed. The app runs on a laptop; hosting is undecided.
+- No backup of Storage objects. See above.
+- No JWT-claim RLS policies on `storage.objects` - deliberate, see above.
 - No React Native app.
 - The build plan's cost model, its two-service deployment section and D7 still describe the
-  old shape and need rewriting once a Supabase project is real.
+  old shape and need rewriting.
