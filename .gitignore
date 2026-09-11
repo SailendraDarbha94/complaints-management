@@ -31,5 +31,8 @@ packages/db/.pgdata-dev/
 apps/web/.next/
 apps/api/.pgdata-test/
 next-env.d.ts
-apps/api/var/
+# Locally stored documents and the development mail outbox, wherever they land. This
+# rule was once apps/api/var/ - when that package moved to packages/core the rule stopped
+# matching and ~280 test blobs quietly became stageable. Match the directory, not a path.
+var/
 .tmp-*

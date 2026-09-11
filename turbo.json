@@ -1,23 +1,61 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalDependencies": ["tsconfig.base.json", ".env"],
+  "globalDependencies": [
+    "tsconfig.base.json",
+    ".env"
+  ],
   "globalEnv": [
     "NODE_ENV",
     "DATABASE_URL",
-    "GCS_BUCKET_DOCUMENTS",
+    "API_URL",
+    "API_PUBLIC_URL",
+    "NEXT_PUBLIC_API_URL",
     "JWT_PRIVATE_KEY",
     "JWT_PUBLIC_KEY",
-    "SCHEDULER_AUDIENCE",
-    "NEXT_PUBLIC_API_URL"
+    "MAIL_TRANSPORT",
+    "STORAGE_DRIVER",
+    "STORAGE_ROOT",
+    "STORAGE_SIGNING_SECRET",
+    "GCS_BUCKET_DOCUMENTS",
+    "AUTH_DRIVER",
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SUPABASE_STORAGE_BUCKET",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+    "SCHEDULER_AUDIENCE"
   ],
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**",
+        ".next/**",
+        "!.next/cache/**"
+      ]
     },
-    "dev": { "cache": false, "persistent": true },
-    "lint": { "dependsOn": ["^build"] },
-    "typecheck": { "dependsOn": ["^build"] },
-    "test": { "dependsOn": ["^build"], "outputs": ["coverage/**"] }
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "lint": {
+      "dependsOn": [
+        "^build"
+      ]
+    },
+    "typecheck": {
+      "dependsOn": [
+        "^build"
+      ]
+    },
+    "test": {
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "coverage/**"
+      ]
+    }
   }
 }
