@@ -8,7 +8,6 @@
     "scheme": "ksdc",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
       "bundleIdentifier": "in.ksdc.register",
       "supportsTablet": true
     },
