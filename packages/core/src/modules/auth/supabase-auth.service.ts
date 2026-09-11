@@ -106,6 +106,30 @@ export class SupabaseAuthService {
     return session(data.session);
   }
 
+  /**
+   * Sign in with an address and a password.
+   *
+   * There is deliberately NO sign-up counterpart here, and there never should be. The
+   * council's officers and committee members are appointed, not registered: an account
+   * exists because somebody with authority created it, which on this project means the
+   * admin API with the secret key. An endpoint that creates accounts would make
+   * membership of a statutory body's register self-service.
+   *
+   * That is only half the guarantee, though. The other half is the project's own
+   * disable_signup setting - Supabase's /auth/v1/signup is reachable with the publishable
+   * key whatever this codebase does or does not expose.
+   */
+  async signInWithPassword(email: string, password: string): Promise<SupabaseSession> {
+    const { data, error } = await this.sb().auth.signInWithPassword({ email, password });
+
+    if (error || !data.session) {
+      // Wrong password, unknown address and disabled account all read the same. Saying
+      // which would turn this into a way of asking who holds an account.
+      throw new UnauthorizedError('That email address and password do not match.');
+    }
+    return session(data.session);
+  }
+
   /** Rotate a session on the refresh token alone. */
   async refresh(refreshToken: string): Promise<SupabaseSession> {
     const { data, error } = await this.sb().auth.refreshSession({ refresh_token: refreshToken });

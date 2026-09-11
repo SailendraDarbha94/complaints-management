@@ -8,6 +8,10 @@ export default function SignInPage() {
   // than the one the Next server uses internally.
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? API_URL;
 
+  // Decided here, not in the browser: a client that guessed wrong would post to an
+  // endpoint that does not exist. The council's own driver has no password to offer.
+  const mode = process.env.AUTH_DRIVER === 'supabase' ? 'password' : 'code';
+
   return (
     <main className="shell signin-shell">
       <header className="masthead">
@@ -16,7 +20,7 @@ export default function SignInPage() {
           <h1>Complaints Register</h1>
         </div>
       </header>
-      <SignInForm apiUrl={apiUrl} />
+      <SignInForm apiUrl={apiUrl} mode={mode} />
     </main>
   );
 }
