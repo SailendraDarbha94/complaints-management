@@ -761,3 +761,264 @@ label.checkbox {
 .row-decide:focus-visible {
   background: var(--stamp-soft);
 }
+
+/* ── RTI ────────────────────────────────────────────────────────────────────
+ *
+ * One rule governs the colour on these screens: red means a statutory period has run
+ * out, amber means it is about to. Nothing else on an RTI screen is allowed to be red,
+ * because the officer has to be able to read the colour without reading the words.
+ */
+
+.rti-clock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 22px;
+  padding: 16px 18px;
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--stamp);
+  border-radius: 6px;
+  background: var(--surface);
+  margin-bottom: 18px;
+}
+
+.rti-clock.is-soon {
+  border-left-color: var(--amber);
+}
+
+.rti-clock.is-late {
+  border-left-color: var(--seal);
+  background: var(--seal-soft);
+}
+
+.rti-clock .due {
+  font-size: 1.45rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.rti-clock .left {
+  font-size: 0.95rem;
+  color: var(--ink-2);
+}
+
+.rti-clock .left strong {
+  color: var(--ink);
+}
+
+.rti-clock .penalty {
+  font-family: var(--f-mono);
+  font-size: 0.9rem;
+  color: var(--seal);
+  font-weight: 600;
+}
+
+/* A warning is a sentence the officer has to act on, not a badge. */
+.rti-warn {
+  border: 1px solid var(--amber);
+  background: var(--amber-soft);
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
+.rti-warn.grave {
+  border-color: var(--seal);
+  background: var(--seal-soft);
+}
+
+/* The applicant's own words. Set apart so nobody mistakes them for the office's summary. */
+.rti-asked {
+  white-space: pre-wrap;
+  font-family: var(--f-mono);
+  font-size: 0.88rem;
+  line-height: 1.65;
+  background: var(--surface-sunk);
+  border-left: 3px solid var(--rule);
+  border-radius: 4px;
+  padding: 14px 16px;
+}
+
+.rti-ground {
+  border: 1px solid var(--rule-soft);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: var(--surface);
+}
+
+.rti-ground .cite {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.rti-ground .statute {
+  color: var(--ink-2);
+  font-size: 0.85rem;
+  font-style: italic;
+  line-height: 1.55;
+  margin: 6px 0;
+}
+
+.rti-ground .because {
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.rti-ground.withdrawn {
+  opacity: 0.5;
+}
+
+/* The defect list. Deliberately the loudest thing on the reply panel. */
+.rti-defects {
+  border: 1px solid var(--seal);
+  background: var(--seal-soft);
+  border-radius: 6px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.rti-defects h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  color: var(--seal);
+}
+
+.rti-defects li {
+  font-size: 0.9rem;
+  line-height: 1.6;
+  margin-bottom: 8px;
+}
+
+.rti-clean {
+  border: 1px solid var(--moss);
+  background: var(--moss-soft);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  font-size: 0.92rem;
+  color: var(--ink);
+}
+
+.rti-letter {
+  white-space: pre-wrap;
+  font-family: var(--f-mono);
+  font-size: 0.82rem;
+  line-height: 1.7;
+  background: var(--surface-sunk);
+  border: 1px solid var(--rule-soft);
+  border-radius: 4px;
+  padding: 16px;
+  max-height: 480px;
+  overflow: auto;
+}
+
+.rti-days {
+  font-family: var(--f-mono);
+  font-weight: 600;
+}
+
+.rti-days.late {
+  color: var(--seal);
+}
+
+.rti-days.soon {
+  color: var(--amber);
+}
+
+.rti-step {
+  border-top: 1px solid var(--rule-soft);
+  padding: 12px 0;
+}
+
+.rti-step:first-child {
+  border-top: 0;
+}
+
+.rti-step .what {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.rti-step .when {
+  font-size: 0.85rem;
+  color: var(--ink-2);
+}
+
+.rti-step .undone {
+  font-size: 0.85rem;
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+.rti-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.rti-form label {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--ink-2);
+  margin-bottom: 4px;
+}
+
+.rti-form input[type='text'],
+.rti-form input[type='date'],
+.rti-form input[type='number'],
+.rti-form input[type='email'],
+.rti-form select,
+.rti-form textarea {
+  width: 100%;
+  font: inherit;
+  font-size: 0.92rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+
+.rti-form textarea {
+  min-height: 120px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.rti-form .two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.rti-form .check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+
+.rti-form .check input {
+  margin-top: 3px;
+}
+
+.rti-hint {
+  font-size: 0.82rem;
+  color: var(--ink-3);
+  line-height: 1.55;
+}
+
+.rti-error {
+  border: 1px solid var(--seal);
+  background: var(--seal-soft);
+  color: var(--seal);
+  border-radius: 6px;
+  padding: 12px 14px;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}

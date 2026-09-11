@@ -234,6 +234,23 @@ export const FOLLOWUP_STAGES = tuple([
   'propose_closure',
   'no_next_step',
   'ad_hoc',
+  /**
+   * The RTI clock. Two rows, not one, and the split is deliberate.
+   *
+   * `rti_reply_due` falls due on the statutory date ITSELF, so the register never shows an
+   * RTI deadline that is not the real one. It is statutory, so it cannot be snoozed past
+   * that date, and it never escalates - there is nothing to escalate to. It is a wall.
+   *
+   * `rti_prepare_reply` is the working task, due well before, which escalates the ordinary
+   * way. Without it the officer's first warning arrives on the day the reply had to be in
+   * the post, which is no warning at all.
+   */
+  'rti_reply_due',
+  'rti_prepare_reply',
+  /** s.7(3)(a): the applicant owes a further fee, and the clock is excluded until they pay. */
+  'rti_await_fee',
+  /** s.11(2): the third party's ten days, running from THEIR receipt of the notice. */
+  'rti_await_third_party',
 ] as const);
 export const followupStageSchema = z.enum(FOLLOWUP_STAGES);
 export type FollowupStage = z.infer<typeof followupStageSchema>;
@@ -283,3 +300,97 @@ export const NEVER_SUMMARISE: readonly DocumentClass[] = [
   'respondent_explanation',
   'committee_record',
 ];
+
+// ─── RTI ─────────────────────────────────────────────────────────────────────
+
+/**
+ * An RTI request is its own record, not a case type.
+ *
+ * It has a different clock, a different statute, a different appeal route, and a penalty
+ * that lands on a named officer's salary rather than on the council. Filing it as a case
+ * would put a 30-day statutory deadline through machinery built for a grievance that has
+ * no deadline at all. It links to cases — sometimes to several, often to none.
+ */
+export const RTI_STATES = tuple([
+  /** Logged. The clock is running from the inward date. */
+  'received',
+  /**
+   * A further fee has been intimated and is unpaid. s.7(3)(a): the period between the
+   * despatch of the intimation and the payment is EXCLUDED — the only true stop-the-clock
+   * in the Act.
+   */
+  'fee_awaited',
+  /**
+   * The officer has recorded an intention to disclose third-party information, which is
+   * the statutory trigger in s.11(1). The deadline becomes 40 days, not 30.
+   */
+  'third_party_consultation',
+  /** Transferred to another public authority under s.6(3). Our clock stops there. */
+  'transferred',
+  /** The decision has been despatched. */
+  'replied',
+  /**
+   * Finished. Distinct from `replied` because a first appeal is condonable beyond its own
+   * 30 days and a second appeal to the Commission currently takes about 1 year 9 months,
+   * so a file stays re-openable long after the reply went out.
+   */
+  'closed',
+] as const);
+export const rtiStateSchema = z.enum(RTI_STATES);
+export type RtiState = z.infer<typeof rtiStateSchema>;
+
+/** How the application reached the council. Post and email are the two that actually happen. */
+export const RTI_CHANNELS = tuple([
+  'post',
+  'email',
+  'by_hand',
+  /** Forwarded to us by another public authority under s.6(3). */
+  'transferred_in',
+  'other',
+] as const);
+export const rtiChannelSchema = z.enum(RTI_CHANNELS);
+export type RtiChannel = z.infer<typeof rtiChannelSchema>;
+
+/**
+ * What the council decided.
+ *
+ * `query_not_information` is here because it is common and it is NOT a refusal: an
+ * applicant who asks "why did the Council not act sooner" is asking a question, and s.2(f)
+ * defines information as material that exists in some record. Answering that with a s.8
+ * ground would be wrong and appealable; saying so plainly is correct. It is kept separate
+ * precisely so the refusal composer does not offer exemption sections for it.
+ */
+export const RTI_DECISIONS = tuple([
+  'information_supplied',
+  'partly_supplied',
+  'refused',
+  'information_not_held',
+  'transferred',
+  'query_not_information',
+] as const);
+export const rtiDecisionSchema = z.enum(RTI_DECISIONS);
+export type RtiDecision = z.infer<typeof rtiDecisionSchema>;
+
+/**
+ * The ONLY grounds on which information may be withheld.
+ *
+ * s.8(1)(a) to (j) and s.9. Section 11 is deliberately absent and must stay absent: two
+ * CIC decisions are explicit that a refusal rests on s.8(1) or s.9 and that s.11 is the
+ * procedure you follow first, never a ground. Because this list is a Postgres enum, a
+ * refusal "under s.11" cannot be stored, not merely cannot be typed.
+ */
+export const RTI_EXEMPTION_SECTIONS = tuple([
+  's8_1_a',
+  's8_1_b',
+  's8_1_c',
+  's8_1_d',
+  's8_1_e',
+  's8_1_f',
+  's8_1_g',
+  's8_1_h',
+  's8_1_i',
+  's8_1_j',
+  's9',
+] as const);
+export const rtiExemptionSectionSchema = z.enum(RTI_EXEMPTION_SECTIONS);
+export type RtiExemptionSection = z.infer<typeof rtiExemptionSectionSchema>;

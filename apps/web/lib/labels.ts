@@ -168,3 +168,59 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+// ─── RTI ─────────────────────────────────────────────────────────────────────
+
+/**
+ * The register speaks in sections; a reader does not.
+ *
+ * These labels are what the officer scans. The statutory words themselves live in
+ * RTI_EXEMPTIONS in @ksdc/contracts and are quoted into the letter verbatim - a label is
+ * for finding the right clause, never for standing in for it in a document.
+ */
+export const RTI_STATE_LABEL: Record<string, string> = {
+  received: 'Clock running',
+  fee_awaited: 'Awaiting the fee',
+  third_party_consultation: 'Third party consulted',
+  transferred: 'Transferred out',
+  replied: 'Replied',
+  closed: 'Closed',
+};
+
+export const RTI_CHANNEL_LABEL: Record<string, string> = {
+  post: 'By post',
+  email: 'By email',
+  by_hand: 'By hand',
+  transferred_in: 'Transferred to us',
+  other: 'Other',
+};
+
+export const RTI_DECISION_LABEL: Record<string, string> = {
+  information_supplied: 'Information supplied',
+  partly_supplied: 'Partly supplied',
+  refused: 'Refused',
+  information_not_held: 'Not held by the Council',
+  transferred: 'Transferred under s.6(3)',
+  query_not_information: 'A question, not a record',
+};
+
+export const RTI_SECTION_LABEL: Record<string, string> = {
+  s8_1_a: 's.8(1)(a) sovereignty, security, foreign relations',
+  s8_1_b: 's.8(1)(b) forbidden by a court, or contempt',
+  s8_1_c: 's.8(1)(c) privilege of a legislature',
+  s8_1_d: 's.8(1)(d) commercial confidence or trade secrets',
+  s8_1_e: 's.8(1)(e) held in a fiduciary relationship',
+  s8_1_f: 's.8(1)(f) received in confidence from a foreign government',
+  s8_1_g: 's.8(1)(g) endangers life or safety, or a confidential source',
+  s8_1_h: 's.8(1)(h) impedes an investigation or prosecution',
+  s8_1_i: 's.8(1)(i) cabinet papers',
+  s8_1_j: 's.8(1)(j) personal information',
+  s9: 's.9 infringement of copyright held by another',
+};
+
+export const RTI_STAGE_LABEL: Record<string, string> = {
+  rti_reply_due: 'Statutory deadline',
+  rti_prepare_reply: 'Prepare the reply',
+  rti_await_fee: 'Awaiting the further fee',
+  rti_await_third_party: 'Third party may object',
+};

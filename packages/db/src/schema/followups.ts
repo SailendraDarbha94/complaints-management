@@ -12,6 +12,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { appUser, council } from './platform.js';
+import { rtiRequest } from './rti.js';
 import { caseFile, caseRespondent, contactEvent, party } from './cases.js';
 import { followupStageEnum, followupStatusEnum, waitingOnEnum } from './enums.js';
 
@@ -33,6 +34,12 @@ export const followUp = pgTable(
     caseRespondentId: uuid('case_respondent_id').references(() => caseRespondent.id, {
       onDelete: 'restrict',
     }),
+    /**
+     * An RTI application is not a case, so it needs its own anchor. Everything else about
+     * a follow-up applies unchanged: the Today screen, the digest, the escalation ladder
+     * and the statutory-snooze guard all work on RTI rows without knowing what they are.
+     */
+    rtiRequestId: uuid('rti_request_id').references(() => rtiRequest.id, { onDelete: 'restrict' }),
 
     stage: followupStageEnum('stage').notNull(),
     /** Who we are chasing. Mirrors the case's waiting_on, and drives the Today grouping. */
@@ -98,6 +105,7 @@ export const followUp = pgTable(
       .on(t.councilId, t.dueOn)
       .where(sql`status IN ('open','snoozed')`),
     index('follow_up_case_ix').on(t.councilId, t.caseFileId, t.status),
+    index('follow_up_rti_ix').on(t.councilId, t.rtiRequestId, t.status),
     index('follow_up_group_ix')
       .on(t.councilId, t.waitingOnKind, t.dueOn)
       .where(sql`status IN ('open','snoozed')`),

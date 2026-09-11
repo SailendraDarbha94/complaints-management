@@ -38,7 +38,7 @@ export default async function CasesPage() {
           <p className="case-summary">
             {open.length} open, {closed.length} closed.{' '}
             <Link href="/register">The formal register</Link> has every column and exports
-            to CSV.
+            to CSV. <Link href="/rti">RTI applications</Link> are kept in their own book.
           </p>
         </div>
       </header>

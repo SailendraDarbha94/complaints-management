@@ -355,22 +355,113 @@ The case sheet renders "Informant (confidential)" or "Suo motu" where the compla
 
 ## 10. RTI
 
-Phase 5, and deliberately minimal — the user asked to scan and upload RTI requests and their answers and track them.
+**Built, 11 September 2026.** What follows is the as-built module. The original sketch in
+this section — a scan-and-track filing cabinet with five states and a `rejection_ground`
+text column — is superseded, and the reasons are worth keeping because they are the whole
+argument for building it properly.
 
-```sql
-rti_request(id, council_id, rti_no, fiscal_year, received_on date, received_via,
-  applicant_name, applicant_address, applicant_phone, applicant_email,
-  subject, request_document_id, fee_received, is_bpl,
-  due_on date,            -- received_on + 30 days
-  state received|under_process|replied|rejected|closed,
-  reply_document_id, replied_on, despatch_no, despatch_date,
-  rejection_ground, notes)
-rti_case_link(rti_request_id, case_file_id, note)   -- many-to-many, both sides optional
+The research is in `docs/rti-mechanics-2026-09-11.md`. Four findings changed the design:
+
+1. **s.8(1)(j) was rewritten and the new version is in force.** The DPDP Act 2023
+   substituted the whole clause with effect from 13 November 2025. The public-activity
+   test, the unwarranted-invasion test and the internal public-interest override are gone;
+   it now reads, in its entirety, *"information which relates to personal information"*. On
+   a register whose files are a patient's health complaint and a named dentist's conduct,
+   that is close to the whole ball game.
+2. **The penalty is paid by a person.** s.20(1): Rs 250 a day, capped at Rs 25,000, imposed
+   on the Public Information Officer and **recovered from their salary**, with the burden
+   of showing they acted reasonably and diligently on them. The software is not protecting
+   an institution from an abstract risk; it is protecting a named person from a deduction
+   they will feel, and the evidence that discharges that burden is exactly what a dated,
+   audited workflow produces.
+3. **s.11 is procedure, not an exemption.** You can never refuse *under* s.11. A refusal
+   must rest on s.8(1) or s.9.
+4. **The clock has two origins and they collide.** The 40-day limit runs from the
+   council's receipt of the application; the third party's 10 days runs from *their*
+   receipt of the notice — a date the council does not control and cannot know until the
+   acknowledgement card comes back.
+
+### The shape
+
+An RTI application is **its own record**, not a case kind. Different statute, different
+clock, different appeal route, a penalty that lands on a person. It links to cases
+optionally and many-to-many; most link to none.
+
+```
+rti_request          the application, its dates, its decision.
+                     due_on is a GENERATED column:
+                       received_on + (2 | 30 | 40) + any excluded fee period
+rti_case_link        which cases it concerns, if any
+rti_exemption_cited  one row per ground per part of the request, with the reasoning
 ```
 
-First and second appeals go in `notes` until a second appeal actually arrives; they become rows when one does. `AWAIT_RTI_REPLY` is a **statutory** follow-up — calendar days, not working days, pre-alerts at T−20/−7/−2, and it cannot be snoozed past `due_on`, because missing the 30 days is a personal penalty on a named officer.
+`follow_up`, `correspondence` and `document` each gained a nullable `rti_request_id`, so
+the timers, the letters and the scans are the same machinery the complaints side uses.
 
-Screens: RTI list with days-remaining chips; intake (scan upload, applicant, subject, fee/BPL); link to cases; reply drafting from `RTI_REPLY_COVER`; reply scan upload; despatch record.
+### Three things that are enforced rather than encouraged
+
+**A refusal under s.11 cannot be stored.** `rti_exemption_section` is a Postgres enum
+containing s.8(1)(a)–(j) and s.9. Section 11 is not a value in it and must never become
+one. This is not a rule in a form validator; it is the column type.
+
+**The clock is derived in the database.** `due_on` is generated, not written by the
+application, for the same reason `case_file.waiting_on` is. Two deliberate imprecisions,
+both in the safe direction: forty-eight hours renders as two days, and while a further fee
+is intimated and unpaid the exclusion counts as zero — so the date shown is never *later*
+than the true one.
+
+**The reply is composed in code, not from a template.** Every other letter comes out of an
+editable template, and that is right: the wording of an acknowledgement belongs to the
+council. s.7(8) is different. A rejection must communicate the reasons, the period for an
+appeal, and the particulars of the appellate authority; a refusal missing any of them is
+appealable on its face. If the appeal paragraph were a line in a textarea, one day someone
+tidying up a letter would delete it. So the composer assembles the statutory furniture and
+the officer's words go only where the Act asks for their judgement. It never withholds a
+letter — it renders a visible blank and returns a `defects` list — but `recordReplyDespatched`
+refuses a defective one unless a written reason is given, and that reason goes in the audit
+trail.
+
+### Two timers per application, not one
+
+`rti_reply_due` falls on the statutory date **itself**, so the register never shows an RTI
+deadline that is not the real one. It is statutory, so it cannot be snoozed past that date,
+and it does not escalate — there is nothing after a wall. `rti_prepare_reply` is the
+working task, ten clear days earlier, escalating the ordinary way. One row would have meant
+choosing between an honest date and a useful warning.
+
+Both appear on Today, in the same list as everything else, linked to the application rather
+than to a case. Calendar days throughout: a holiday does not lengthen a statutory period,
+and a register that quietly added the Dasara holidays to an RTI deadline would be telling
+the officer a comfortable lie about the one clock that costs them money personally.
+
+### What it refuses, and what it does not
+
+Refuses: a s.11 notice before the intention to disclose is recorded; a fee demanded after
+the period has expired (s.7(6) has already made the information free, and a demand after
+that is void); a decision that withholds information with no section, or a section on a
+decision that withholds nothing; a defective reply recorded as sent.
+
+Does **not** refuse, deliberately: a late transfer, a late reply, a missing application fee.
+The register records what happened. Refusing to record a late act does not make the act
+un-happen; it makes the register wrong about it. Those get a warning that names the
+consequence.
+
+### Deliberately not built
+
+The **first-appeal workflow**. At about one application a month an appeal is rare, it is
+the Registrar's to decide rather than the officer's, and building a screen for it would be
+guessing at a process nobody here has run. The appeal *route* is on every reply, which is
+the part the Act requires. The **s.4(1)(b) proactive-disclosure handbook** is a document,
+not a feature.
+
+### The open question the software will not answer for itself
+
+Nobody is recorded as Public Information Officer or First Appellate Authority, and nothing
+defaults one. s.19(1) requires the appellate authority to be an officer **senior in rank**
+to the PIO, so the two cannot be the same person, and which of the officer and the
+Registrar holds which is a decision for the Registrar. Until it is taken, every refusal the
+council issues is missing s.7(8)(iii) — and the RTI screens say exactly that, in those
+words, rather than printing a plausible name.
 
 **Redaction is manual and non-destructive.** The Export Builder lists every item in a case with Include / Exclude-with-reason / Substitute-a-manually-redacted-copy. The bundle carries a redaction log naming every withheld item and the ground relied on. The system will never draw black boxes over text and call it redacted, and it will never attempt automated PII redaction on an X-ray.
 

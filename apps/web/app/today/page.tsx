@@ -42,6 +42,13 @@ export default async function TodayPage() {
         <div>
           <span className="council">Karnataka State Dental Council</span>
           <h1>Today</h1>
+          <nav className="crumbs" style={{ marginTop: 6, marginBottom: 0 }}>
+            <Link href="/cases">Cases</Link>
+            <span aria-hidden="true">/</span>
+            <Link href="/rti">RTI</Link>
+            <span aria-hidden="true">/</span>
+            <Link href="/register">Register</Link>
+          </nav>
         </div>
         <span className="date">
           {formatLongDate(summary.today)}
@@ -168,9 +175,18 @@ function Row({ item, showUrgencyChip }: { item: QueueItem; showUrgencyChip?: boo
             <Link className="case-link" href={`/cases/${item.caseFileId}`}>
               {item.caseNumber}
             </Link>
+          ) : item.rtiRequestId && item.rtiNo ? (
+            // An RTI timer belongs to an application, not to a case. The Today screen is
+            // still one list: an officer with four complaints and an RTI application does
+            // not keep two queues in their head, and a statutory deadline on a separate
+            // screen is a statutory deadline nobody looks at.
+            <Link className="case-link" href={`/rti/${item.rtiRequestId}`}>
+              {item.rtiNo}
+            </Link>
           ) : (
             (item.caseNumber ?? 'No case')
           )}
+          {item.rtiDueOn && item.rtiDueOn !== item.dueOn && ` · statutory date ${shortDate(item.rtiDueOn)}`}
           {item.caseSummary && ` · ${truncate(item.caseSummary, 60)}`}
           {item.escalationLevel > 0 && ` · reminder ${item.escalationLevel + 1}`}
           {item.caseQuietDays != null && item.caseQuietDays > 0 && ` · quiet ${item.caseQuietDays}d`}

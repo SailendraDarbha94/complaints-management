@@ -13,8 +13,8 @@
   "dependencies": {
     "@ksdc/contracts": "workspace:*",
     "next": "^15.1.4",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
     "@ksdc/core": "workspace:*",
     "@ksdc/db": "workspace:*",
     "zod": "^3.24.1"

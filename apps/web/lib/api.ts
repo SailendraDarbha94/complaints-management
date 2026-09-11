@@ -51,6 +51,10 @@ export interface QueueItem {
   partyName: string | null;
   partyMobile: string | null;
   isStatutory: boolean;
+  /** An RTI application, where this row belongs to one instead of to a case. */
+  rtiRequestId: string | null;
+  rtiNo: string | null;
+  rtiDueOn: string | null;
 }
 
 export interface QueueGroup {
@@ -213,6 +217,15 @@ export interface CaseDetail {
     snoozedUntil: string | null;
     title: string;
   }>;
+  /** RTI applications asking about this case. Usually empty. */
+  rtiRequests: Array<{
+    id: string;
+    rti_no: string;
+    received_on: string;
+    due_on: string;
+    state: string;
+    note: string | null;
+  }>;
   availableEvents: AvailableEvent[];
 }
 
@@ -229,6 +242,85 @@ export interface TemplateRow {
 }
 
 export type RegisterRow = Record<string, string | number | boolean | null>;
+
+// ─── RTI ─────────────────────────────────────────────────────────────────────
+
+export interface RtiClock {
+  dueOn: string;
+  daysRemaining: number;
+  excludedDays: number;
+  onFeeHold: boolean;
+  deemedRefusal: boolean;
+  penaltyExposureRupees: number;
+  transferDueOn: string;
+  thirdPartyNoticeDueOn: string | null;
+  thirdPartyRepresentationDueOn: string | null;
+  appealRunsFrom: string;
+  warnings: string[];
+}
+
+export interface RtiRequest {
+  id: string;
+  rti_no: string;
+  fiscal_year: string;
+  register_sl_no: number;
+  received_on: string;
+  received_via: string;
+  date_source: string;
+  applicant_name: string;
+  applicant_address_lines: string[];
+  applicant_email: string | null;
+  applicant_phone: string | null;
+  is_bpl: boolean;
+  request_text: string;
+  external_ref_no: string | null;
+  application_fee_received: boolean;
+  further_fee_intimated_on: string | null;
+  further_fee_amount: string | null;
+  further_fee_paid_on: string | null;
+  transferred_to: string | null;
+  transferred_on: string | null;
+  life_or_liberty: boolean;
+  life_or_liberty_reason: string | null;
+  intends_to_disclose_third_party_on: string | null;
+  third_party_name: string | null;
+  third_party_notice_sent_on: string | null;
+  third_party_notice_received_on: string | null;
+  third_party_representation_on: string | null;
+  third_party_objected: boolean | null;
+  third_party_representation_note: string | null;
+  state: string;
+  decision: string | null;
+  decided_on: string | null;
+  decision_reasons: string | null;
+  reply_correspondence_id: string | null;
+  reply_despatched_on: string | null;
+  due_on: string;
+  closed_at: string | null;
+  closure_note: string | null;
+}
+
+export interface RtiOfficeHolder {
+  fullName: string;
+  designation: string | null;
+}
+
+export interface RtiFile {
+  request: RtiRequest | null;
+  clock: RtiClock;
+  exemptions: Array<{ id: string; section: string; applies_to: string; reasoning: string }>;
+  cases: Array<{ case_file_id: string; case_number: string; summary: string; note: string | null }>;
+  letters: Array<{
+    id: string;
+    kind: string;
+    subject: string;
+    sent_at: string | null;
+    despatch_no: string | null;
+  }>;
+  documents: Array<{ id: string; title: string; document_class: string; status: string }>;
+  followups: Array<{ id: string; stage: string; status: string; due_on: string; title: string }>;
+  officers: { pio: RtiOfficeHolder | null; firstAppellateAuthority: RtiOfficeHolder | null };
+}
 
 export class ApiError extends Error {
   constructor(
@@ -285,6 +377,23 @@ export function fetchTemplates(): Promise<{ templates: TemplateRow[] }> {
 export function fetchRegister(fiscalYear?: string): Promise<{ rows: RegisterRow[] }> {
   const q = fiscalYear ? `?fiscalYear=${encodeURIComponent(fiscalYear)}` : '';
   return get<{ rows: RegisterRow[] }>(`/register${q}`);
+}
+
+export function fetchRtiRegister(): Promise<{ requests: Array<RtiRequest & { clock: RtiClock }> }> {
+  return get<{ requests: Array<RtiRequest & { clock: RtiClock }> }>('/rti');
+}
+
+export function fetchRtiFile(id: string): Promise<RtiFile> {
+  return get<RtiFile>(`/rti/${id}`);
+}
+
+export function fetchRtiOfficers(): Promise<{
+  pio: RtiOfficeHolder | null;
+  firstAppellateAuthority: RtiOfficeHolder | null;
+}> {
+  return get<{ pio: RtiOfficeHolder | null; firstAppellateAuthority: RtiOfficeHolder | null }>(
+    '/rti/officers',
+  );
 }
 
 /** True when the failure is "sign in", rather than "something broke". */

@@ -14,6 +14,7 @@ import { KSDC_CONFIG } from '@ksdc/config';
 import { FollowupService, type EngineContext } from '../src/modules/followups/followup.service.js';
 import { CaseIntakeService } from '../src/modules/cases/case-intake.service.js';
 import { CaseLifecycleService } from '../src/modules/cases/case-lifecycle.service.js';
+import { RtiService } from '../src/modules/rti/rti.service.js';
 
 const COUNCIL_ID = process.env.DEMO_COUNCIL_ID ?? '0197f9c2-0000-4000-8000-000000000001';
 const OFFICER_ID = process.env.DEMO_USER_ID ?? '0197f9c2-0000-4000-8000-000000000002';
@@ -21,9 +22,11 @@ const OFFICER_ID = process.env.DEMO_USER_ID ?? '0197f9c2-0000-4000-8000-00000000
 const followups = new FollowupService();
 const intake = new CaseIntakeService(followups);
 const lifecycle = new CaseLifecycleService(followups);
+const rti = new RtiService();
 const ctx: EngineContext = { councilId: COUNCIL_ID, userId: OFFICER_ID, config: KSDC_CONFIG };
 
 const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000);
+const isoDaysAgo = (n: number) => daysAgo(n).toISOString().slice(0, 10);
 
 async function addRespondent(tx: Tx, caseFileId: string, name: string): Promise<string> {
   const partyId = crypto.randomUUID();
@@ -163,12 +166,133 @@ async function main(): Promise<void> {
       reason: 'Sub judice before the District Consumer Disputes Redressal Commission',
     });
 
+    // ---- RTI ---------------------------------------------------------------
+    //
+    // Three applications, because there are three shapes and each one exercises a
+    // different part of the module. Deliberately, NOBODY is recorded as Public
+    // Information Officer or First Appellate Authority: that is a decision for the
+    // Registrar, and until it is taken every refusal this council issues is defective
+    // under s.7(8)(iii). The screens say so, which is the point of leaving it undone.
+
+    // 8. The ordinary one. Halfway through the thirty days, asking about a real case.
+    const rtiA = await rti.receive(
+      tx,
+      ctx,
+      {
+        receivedOn: isoDaysAgo(16),
+        receivedVia: 'email',
+        applicantName: 'Sri M. Basavaraj',
+        applicantAddressLines: ['No. 44, 2nd Main', 'Vijayanagar', 'Bengaluru 560040'],
+        applicantEmail: 'mbasavaraj@example.in',
+        requestText:
+          'Under the RTI Act 2005, kindly furnish:\n' +
+          '1. The total number of complaints received by the Council against registered ' +
+          'dentists during the financial year 2025-26.\n' +
+          '2. The number of such complaints in which any action was taken, and the nature ' +
+          'of the action.\n' +
+          '3. A copy of the procedure followed by the Council on receiving a complaint.',
+        applicationFeeReceived: true,
+        caseFileIds: [a.caseFileId],
+      },
+      new Date(),
+    );
+
+    // 9. Late, decided, not yet despatched. Shows the deemed refusal, the s.20 exposure,
+    //    and a refusal composer that will not let it out of the door while the appellate
+    //    authority is unrecorded.
+    const rtiB = await rti.receive(
+      tx,
+      ctx,
+      {
+        receivedOn: isoDaysAgo(41),
+        receivedVia: 'post',
+        applicantName: 'Smt. R. Lakshmi',
+        applicantAddressLines: ['Door No. 9, Shivaji Nagar', 'Mysuru 570001'],
+        requestText:
+          'Please provide certified copies of the complaint filed against my dentist, the ' +
+          'explanation submitted by him, and the expert opinion obtained by the Council, ' +
+          'together with the case papers in full.',
+        applicationFeeReceived: true,
+        externalRefNo: 'RPAD 4471',
+      },
+      new Date(),
+    );
+    await rti.decide(
+      tx,
+      ctx,
+      {
+        rtiRequestId: rtiB.rtiRequestId,
+        decision: 'partly_supplied',
+        decidedOn: isoDaysAgo(2),
+        reasons:
+          'The procedure followed by the Council on receiving a complaint is furnished. ' +
+          'The case papers themselves are withheld for the reasons given below.',
+        exemptions: [
+          {
+            section: 's8_1_j',
+            appliesTo: 'the complaint, the explanation and the expert opinion',
+            reasoning:
+              'The papers sought are the treatment history of an identified patient and ' +
+              'the conduct of an identified dentist. Clause (j) of section 8(1), as ' +
+              'substituted with effect from 13 November 2025, exempts information which ' +
+              'relates to personal information.',
+          },
+        ],
+      },
+      new Date(),
+    );
+
+    // 10. The collision. Section 11 was triggered, the notice went out late, and the
+    //     acknowledgement card puts the third party's ten days past the forty-day
+    //     deadline - which no amount of diligence can now fix, and which the officer has
+    //     to see rather than discover.
+    const rtiC = await rti.receive(
+      tx,
+      ctx,
+      {
+        receivedOn: isoDaysAgo(33),
+        receivedVia: 'email',
+        applicantName: 'Sri Anil Kumar',
+        applicantEmail: 'anilk@example.in',
+        requestText:
+          'Furnish a copy of the written explanation submitted to the Council by Dr S. ' +
+          'Ramesh in the complaint filed against him in 2025, along with the Council\u2019s ' +
+          'correspondence with him.',
+        applicationFeeReceived: true,
+      },
+      new Date(),
+    );
+    await rti.intendToDiscloseThirdParty(
+      tx,
+      ctx,
+      {
+        rtiRequestId: rtiC.rtiRequestId,
+        thirdPartyName: 'Dr S. Ramesh',
+        decidedOn: isoDaysAgo(24),
+      },
+      new Date(),
+    );
+    await rti.recordThirdPartyNotice(
+      tx,
+      ctx,
+      {
+        rtiRequestId: rtiC.rtiRequestId,
+        sentOn: isoDaysAgo(4),
+        receivedOn: isoDaysAgo(1),
+      },
+      new Date(),
+    );
+
     // Run the engine forward day by day, exactly as the scheduler would have, so each
     // ladder sits wherever its own dates put it rather than all landing on a proposal.
     for (let d = 64; d >= 0; d--) {
       await followups.tick(tx, ctx, daysAgo(d));
     }
     await followups.sweepNoNextStep(tx, ctx);
+
+    console.log(`  RTI ${rtiA.rtiNo} - ordinary, mid-clock, linked to a case`);
+    console.log(`  RTI ${rtiB.rtiNo} - past the thirty days, decided, not yet despatched`);
+    console.log(`  RTI ${rtiC.rtiNo} - s.11 consultation, windows colliding`);
   });
 
   // Record a successful tick so the Today banner reflects a system that is actually

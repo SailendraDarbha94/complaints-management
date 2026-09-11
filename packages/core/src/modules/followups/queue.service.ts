@@ -34,6 +34,17 @@ export interface QueueItem {
   caseSummary: string | null;
   /** How long the case itself has been parked, which is not the same as this timer. */
   caseQuietDays: number | null;
+  /**
+   * An RTI application, where this row belongs to one instead of to a case.
+   *
+   * The Today screen is one list and stays one list. An officer with four complaints and
+   * an RTI application does not have two queues in their head, and a statutory deadline
+   * sitting on a separate screen is a statutory deadline nobody looks at.
+   */
+  rtiRequestId: string | null;
+  rtiNo: string | null;
+  /** The statutory date itself, which is not always this row's due date. */
+  rtiDueOn: IsoDate | null;
   partyName: string | null;
   partyMobile: string | null;
   isStatutory: boolean;
@@ -97,6 +108,9 @@ export class QueueService {
       case_quiet_days: number | null;
       party_name: string | null;
       party_mobile: string | null;
+      rti_request_id: string | null;
+      rti_no: string | null;
+      rti_due_on: string | null;
     }>(sql`
       SELECT f.id                AS follow_up_id,
              f.stage,
@@ -114,14 +128,21 @@ export class QueueService {
              CASE WHEN c.id IS NULL THEN NULL
                   ELSE (${todayDate}::date - c.waiting_since::date) END AS case_quiet_days,
              p.full_name         AS party_name,
-             p.mobile            AS party_mobile
+             p.mobile            AS party_mobile,
+             f.rti_request_id,
+             r.rti_no,
+             r.due_on::text      AS rti_due_on
       FROM follow_up f
-      LEFT JOIN case_file c ON c.id = f.case_file_id
-      LEFT JOIN party     p ON p.id = f.waiting_on_party_id
+      LEFT JOIN case_file   c ON c.id = f.case_file_id
+      LEFT JOIN party       p ON p.id = f.waiting_on_party_id
+      LEFT JOIN rti_request r ON r.id = f.rti_request_id
       WHERE f.council_id = ${ctx.councilId}::uuid
         AND f.status IN ('open', 'snoozed')
         -- A case on hold is suppressed, not chased: sub judice, or a party indisposed.
         AND (c.id IS NULL OR (c.on_hold = false AND c.deleted_at IS NULL))
+        -- A closed RTI file is finished. There is no on_hold for one: nothing suspends a
+        -- statutory period, and pretending otherwise is how the thirty days is missed.
+        AND (r.id IS NULL OR r.closed_at IS NULL)
       ORDER BY f.due_on ASC, f.escalation_level DESC
     `);
 
@@ -143,6 +164,9 @@ export class QueueService {
       partyName: r.party_name,
       partyMobile: r.party_mobile,
       isStatutory: r.is_statutory,
+      rtiRequestId: r.rti_request_id,
+      rtiNo: r.rti_no,
+      rtiDueOn: r.rti_due_on,
     }));
 
     const byUrgency = this.group<Urgency>(

@@ -189,6 +189,65 @@ export const KSDC_CONFIG: CouncilConfig = {
       isStatutory: false,
       label: 'Officer task',
     },
+
+    // --- RTI -----------------------------------------------------------------
+    //
+    // Calendar days throughout, never working days. s.7(1) says thirty days and the
+    // Commission counts thirty days; a holiday does not lengthen a statutory period, and a
+    // register that quietly added the Dasara holidays to an RTI deadline would be telling
+    // the officer a comfortable lie about the one clock that costs them money personally.
+    {
+      stage: 'rti_reply_due',
+      // Overridden at the call site with the real statutory date, which accounts for the
+      // s.11 forty-day case and for any excluded fee period. This default is the plain
+      // s.7(1) thirty days and is what a request with no complications gets.
+      dueInDays: 30,
+      basis: 'calendar_days',
+      // A wall does not escalate. There is nothing after the deadline except the penalty,
+      // and a reminder sent the day after would be an insult rather than a help.
+      maxEscalations: 0,
+      escalationGapDays: 1,
+      terminalAction: 'none',
+      isStatutory: true,
+      label: 'Statutory deadline: the RTI reply must be despatched',
+    },
+    {
+      stage: 'rti_prepare_reply',
+      // Ten clear days before the ordinary deadline. Enough to search the files, take the
+      // Registrar's view on a refusal, get a signature and reach the post office.
+      dueInDays: 20,
+      basis: 'calendar_days',
+      maxEscalations: 3,
+      escalationGapDays: 3,
+      terminalAction: 'none',
+      isStatutory: false,
+      label: 'Prepare the RTI reply',
+    },
+    {
+      stage: 'rti_await_fee',
+      // No statutory period at all: s.7(3)(a) stops the clock but does not say for how
+      // long. Fifteen days is a chase, not a deadline, and nothing lapses when it passes.
+      dueInDays: 15,
+      basis: 'calendar_days',
+      maxEscalations: 1,
+      escalationGapDays: 15,
+      terminalAction: 'none',
+      isStatutory: false,
+      label: 'Applicant to pay the further fee intimated',
+    },
+    {
+      stage: 'rti_await_third_party',
+      // s.11(2) gives the third party ten days from THEIR receipt of the notice, which is
+      // a date the council learns from the acknowledgement card. The call site passes the
+      // real due date; this default only applies if that date is genuinely unknown.
+      dueInDays: 10,
+      basis: 'calendar_days',
+      maxEscalations: 0,
+      escalationGapDays: 5,
+      terminalAction: 'none',
+      isStatutory: true,
+      label: 'Third party to make a representation under s.11(2)',
+    },
   ],
 
   respondents: {

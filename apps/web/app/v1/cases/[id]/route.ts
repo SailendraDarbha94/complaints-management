@@ -51,6 +51,11 @@ export const GET = withAuth<{ id: string }>(async ({ params, tx, ctx, services }
       services.followups.liveForCase(tx, ctx, id),
     ]);
 
+  // Which RTI applications have asked about this case. Usually none. When there is one it
+  // matters a great deal: it is the reason somebody outside the Council is entitled to see
+  // part of this file, and it belongs where the officer is already looking.
+  const rtiRequests = await services.rti.forCase(tx, ctx, id);
+
   return {
     case: row,
     parties: parties.rows,
@@ -60,6 +65,7 @@ export const GET = withAuth<{ id: string }>(async ({ params, tx, ctx, services }
     letters: letters.rows,
     documents,
     followups,
+    rtiRequests,
     // Drives every button on every client, so no UI re-implements a guard.
     availableEvents: services.lifecycle.availableFor(row.state, ctx),
   };

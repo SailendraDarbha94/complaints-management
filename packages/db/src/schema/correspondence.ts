@@ -83,6 +83,17 @@ export const correspondence = pgTable(
       .notNull()
       .references(() => council.id, { onDelete: 'restrict' }),
     caseFileId: uuid('case_file_id').references(() => caseFile.id, { onDelete: 'restrict' }),
+    /**
+     * An RTI reply hangs off the RTI application, not off a case, and often there is no
+     * case at all. Exactly one of the two anchors is set.
+     *
+     * The foreign key is declared in migration 0011 rather than here: rti_request
+     * references correspondence (for the reply it was answered by), so declaring the
+     * reverse in this file would make the two schema modules import each other. The
+     * constraint is real either way - it lives in the database, which is where it is
+     * enforced.
+     */
+    rtiRequestId: uuid('rti_request_id'),
     kind: correspondenceKindEnum('kind').notNull(),
     direction: contactDirectionEnum('direction').notNull(),
 
@@ -121,6 +132,7 @@ export const correspondence = pgTable(
   },
   (t) => [
     index('correspondence_case_ix').on(t.councilId, t.caseFileId, t.createdAt),
+    index('correspondence_rti_ix').on(t.councilId, t.rtiRequestId, t.createdAt),
     // Two letters cannot claim the same despatch number in the same financial year.
     // Partial: most letters have none until the office stamps them.
     uniqueIndex('correspondence_despatch_uq')
@@ -142,6 +154,8 @@ export const document = pgTable(
       .notNull()
       .references(() => council.id, { onDelete: 'restrict' }),
     caseFileId: uuid('case_file_id').references(() => caseFile.id, { onDelete: 'restrict' }),
+    /** The RTI application this belongs to, where it is not a case document. FK in 0011. */
+    rtiRequestId: uuid('rti_request_id'),
     title: text('title').notNull(),
     documentClass: documentClassEnum('document_class').notNull().default('complaint_material'),
     /**
@@ -158,7 +172,10 @@ export const document = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     createdBy: uuid('created_by').references(() => appUser.id, { onDelete: 'set null' }),
   },
-  (t) => [index('document_case_ix').on(t.councilId, t.caseFileId, t.createdAt)],
+  (t) => [
+    index('document_case_ix').on(t.councilId, t.caseFileId, t.createdAt),
+    index('document_rti_ix').on(t.councilId, t.rtiRequestId, t.createdAt),
+  ],
 );
 
 export const documentVersion = pgTable(

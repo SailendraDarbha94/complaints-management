@@ -18,6 +18,10 @@ import {
   PARTY_KINDS,
   PARTY_ROLES,
   ROLES,
+  RTI_CHANNELS,
+  RTI_DECISIONS,
+  RTI_EXEMPTION_SECTIONS,
+  RTI_STATES,
   SERVICE_MODES,
   WAITING_ON,
 } from '@ksdc/contracts';
@@ -53,3 +57,9 @@ export const followupStatusEnum = pgEnum('followup_status', FOLLOWUP_STATUSES);
 export const roleEnum = pgEnum('council_role', ROLES);
 export const documentStatusEnum = pgEnum('document_status', DOCUMENT_STATUSES);
 export const documentClassEnum = pgEnum('document_class', DOCUMENT_CLASSES);
+
+export const rtiStateEnum = pgEnum('rti_state', RTI_STATES);
+export const rtiChannelEnum = pgEnum('rti_channel', RTI_CHANNELS);
+export const rtiDecisionEnum = pgEnum('rti_decision', RTI_DECISIONS);
+/** s.8(1)(a) to (j) and s.9 only. Section 11 is absent by design - see rti.ts. */
+export const rtiExemptionSectionEnum = pgEnum('rti_exemption_section', RTI_EXEMPTION_SECTIONS);

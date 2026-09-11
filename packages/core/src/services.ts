@@ -11,6 +11,7 @@ import { QueueService } from './modules/followups/queue.service.js';
 import { DigestService } from './modules/notifications/digest.service.js';
 import { SchedulerService } from './modules/jobs/scheduler.service.js';
 import { RegisterService } from './modules/register/register.service.js';
+import { RtiService } from './modules/rti/rti.service.js';
 import { ConsoleMailer, MailerPort, SmtpMailer } from './modules/notifications/mailer.js';
 import { GcsStorage, LocalStorage, StoragePort } from './modules/documents/storage.js';
 import { SupabaseStorage } from './modules/documents/supabase-storage.js';
@@ -43,6 +44,7 @@ export interface Services {
   correspondence: CorrespondenceService;
   documents: DocumentsService;
   register: RegisterService;
+  rti: RtiService;
   mailer: MailerPort;
   storage: StoragePort;
 }
@@ -114,6 +116,7 @@ export async function getServices(): Promise<Services> {
     correspondence: new CorrespondenceService(lifecycle, followups),
     documents: new DocumentsService(storage),
     register: new RegisterService(),
+    rti: new RtiService(),
     mailer,
     storage,
   };

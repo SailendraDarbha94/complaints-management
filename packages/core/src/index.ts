@@ -81,6 +81,26 @@ export { QueueService } from './modules/followups/queue.service.js';
 export { CorrespondenceService } from './modules/correspondence/correspondence.service.js';
 export { DocumentsService } from './modules/documents/documents.service.js';
 export { RegisterService } from './modules/register/register.service.js';
+
+// RTI: its own register, its own clock, its own composer. See modules/rti.
+export {
+  RtiService,
+  type ReceiveRtiInput,
+  type RtiRequestRow,
+  type RtiExemptionRow,
+  type RtiFile,
+} from './modules/rti/rti.service.js';
+export {
+  rtiClock,
+  predictDueOn,
+  statutoryPeriodDays,
+  type RtiClock,
+} from './modules/rti/rti-clock.js';
+export {
+  composeRtiReply,
+  type RtiReplyDraft,
+  type RtiOfficeHolder,
+} from './modules/rti/rti-reply.js';
 export { DigestService } from './modules/notifications/digest.service.js';
 export { SchedulerService } from './modules/jobs/scheduler.service.js';
 export { MailerPort, ConsoleMailer, SmtpMailer } from './modules/notifications/mailer.js';

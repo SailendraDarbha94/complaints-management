@@ -398,6 +398,9 @@ export class FollowupService {
         councilId: ctx.councilId,
         caseFileId: row.caseFileId,
         caseRespondentId: row.caseRespondentId,
+        // Carried, or an escalated RTI reminder would lose the application it belongs to
+        // and appear on the Today screen attached to nothing at all.
+        rtiRequestId: row.rtiRequestId,
         stage: row.stage,
         waitingOnKind: row.waitingOnKind,
         waitingOnPartyId: row.waitingOnPartyId,

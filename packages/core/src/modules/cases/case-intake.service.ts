@@ -13,6 +13,7 @@ import type { CaseKind, DateSource, IntakeSource, PartyRole } from '@ksdc/contra
 import { formatCaseNumber, fiscalYearOf, type CaseSeries } from '@ksdc/contracts';
 import type { EngineContext, FollowupService } from '../followups/followup.service.js';
 import { DomainError } from '../../common/domain-error.js';
+import { allocateSerial } from '../../common/serials.js';
 
 /**
  * Case intake: the only place a case is created, and the only place a serial is issued.
@@ -166,25 +167,11 @@ export class CaseIntakeService {
   }
 
   /**
-   * Allocate the next serial. `UPDATE ... RETURNING` inside the caller's transaction, so
-   * two concurrent intakes cannot take the same number: the second waits on the row lock.
+   * Allocate the next serial. The mechanism moved to common/serials.ts when the RTI
+   * register started drawing on the same book of sequences; the behaviour is unchanged.
    */
-  private async allocate(
-    tx: Tx,
-    councilId: string,
-    series: string,
-    fiscalYear: string,
-  ): Promise<number> {
-    const res = await tx.execute<{ next_value: number }>(sql`
-      INSERT INTO number_sequence (council_id, series, fiscal_year, next_value)
-      VALUES (${councilId}::uuid, ${series}, ${fiscalYear}, 2)
-      ON CONFLICT (council_id, series, fiscal_year)
-      DO UPDATE SET next_value = number_sequence.next_value + 1
-      RETURNING next_value - 1 AS next_value
-    `);
-    const value = res.rows[0]?.next_value;
-    if (value == null) throw new Error(`Could not allocate a ${series} serial for ${fiscalYear}`);
-    return Number(value);
+  private allocate(tx: Tx, councilId: string, series: string, fiscalYear: string): Promise<number> {
+    return allocateSerial(tx, councilId, series, fiscalYear);
   }
 
   /**

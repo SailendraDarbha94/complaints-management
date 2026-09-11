@@ -139,6 +139,29 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
             )}
           </Section>
 
+          {data.rtiRequests.length > 0 && (
+            <Section title="Asked about under the RTI Act">
+              {/*
+                An RTI application on a case is not a note. It is the reason somebody
+                outside the Council is entitled to see part of this file, and it runs on a
+                statutory clock with a penalty attached to a named officer, so it belongs
+                where the officer is already looking rather than only in its own book.
+              */}
+              <ul className="plain">
+                {data.rtiRequests.map((r) => (
+                  <li key={r.id} className="followup-row">
+                    <Link className="case-link" href={`/rti/${r.id}`}>
+                      {r.rti_no}
+                    </Link>
+                    <span className="mono muted">
+                      received {formatDate(r.received_on)} · reply due {formatDate(r.due_on)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
           <CaseActions
             caseId={c.id}
             apiUrl={PUBLIC_API_URL}
