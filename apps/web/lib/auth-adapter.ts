@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server';
 import {
   ACCESS_COOKIE,
+  identityFromSupabaseToken,
   identityFromToken,
   tokenFrom,
   UnauthorizedError,
@@ -43,6 +44,9 @@ import {
  * bearer token, exactly as the current code already supports. See docs/adr/0002.
  */
 
+/** Where this app keeps a Supabase access token for the browser. HttpOnly, as ever. */
+export const SUPABASE_COOKIE = 'ksdc_sb';
+
 export type AuthDriver = 'council' | 'supabase';
 
 export function authDriver(): AuthDriver {
@@ -63,17 +67,19 @@ export async function identityFromRequest(
 }
 
 /**
- * Not implemented on purpose.
+ * A Supabase session.
  *
- * Throwing here is the honest state of things: the schema has no custom-claims hook and no
- * JWT-keyed policies yet, so a half-written version of this would authenticate people into
- * a council whose rows they cannot read. It fails loudly the moment AUTH_DRIVER is set,
- * rather than at the first request that matters.
+ * The token arrives either as a bearer header (the mobile app, and curl) or in the cookie
+ * this app sets after sign-in. It is VERIFIED against the project's JWKS - never merely
+ * decoded - and the council it names is checked against a live membership by row-level
+ * security on every query afterwards, so a stale claim in a token that has not expired
+ * still reads nothing.
  */
-async function supabaseIdentity(_req: NextRequest): Promise<RequestIdentity> {
-  throw new UnauthorizedError(
-    'AUTH_DRIVER=supabase is not wired up yet. It needs a custom access token hook ' +
-      'putting council_id and role into the JWT, and JWKS verification here. Unset ' +
-      'AUTH_DRIVER to use the council sign-in that works.',
-  );
+async function supabaseIdentity(req: NextRequest): Promise<RequestIdentity> {
+  const token = tokenFrom({
+    authorization: req.headers.get('authorization'),
+    cookie: req.cookies.get(SUPABASE_COOKIE)?.value ?? null,
+  });
+  if (!token) throw new UnauthorizedError('Not signed in.');
+  return identityFromSupabaseToken(token);
 }
