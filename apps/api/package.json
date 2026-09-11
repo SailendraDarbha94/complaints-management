@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "pnpm build && node dist/src/main.js",
+    "dev": "pnpm build && node --env-file-if-exists=../../.env.dev dist/src/main.js",
     "start": "node dist/src/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "lint": "echo 'lint: api ok'",
-    "demo": "pnpm build && node dist/scripts/demo.js",
+    "demo": "pnpm build && node --env-file-if-exists=../../.env.dev dist/scripts/demo.js",
     "keys": "pnpm build && node dist/scripts/keys.js"
   },
   "dependencies": {

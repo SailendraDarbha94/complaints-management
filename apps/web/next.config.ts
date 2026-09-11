@@ -5,7 +5,7 @@ const config: NextConfig = {
   // vendor, one INR invoice, one region, one pipeline.
   output: 'standalone',
   reactStrictMode: true,
-  experimental: { typedRoutes: true },
+  typedRoutes: true,
 };
 
 export default config;

@@ -20,24 +20,37 @@ pnpm install
 pnpm db:dev          # leave running: starts Postgres, migrates, seeds KSDC
 ```
 
-That prints a `DATABASE_URL` and seeds the council. In a second terminal:
+Run it again later and it notices the cluster is already up, migrates and seeds against
+it, and exits — so it is safe to run every morning whether or not yesterday's postmaster
+is still alive. `pnpm db:dev --reset` wipes and starts clean, and refuses while a cluster
+is running rather than deleting the files underneath it.
+
+**Settings.** Everything the API needs lives in `.env.dev` at the repository root, which
+is gitignored and read automatically — no exported variables:
+
+```
+DATABASE_URL=postgres://app_rw:app_rw_dev@localhost:55432/ksdc_dev
+JWT_PRIVATE_KEY="..."     # from: pnpm --filter @ksdc/api keys
+JWT_PUBLIC_KEY="..."
+MAIL_TRANSPORT=console
+```
+
+Without the keys the API generates an ephemeral pair and signs everyone out when it
+restarts. It says so at boot, and refuses to do it in production. The web app reads
+`apps/web/.env.local` the same way (`API_URL` and `NEXT_PUBLIC_API_URL`). In production
+both come from Secret Manager and the environment instead; nothing reads a file there.
+
+In a second terminal:
 
 ```bash
-export DATABASE_URL="postgres://app_rw:app_rw_dev@localhost:55432/ksdc_dev"
-pnpm --filter @ksdc/api keys     # prints JWT_PRIVATE_KEY / JWT_PUBLIC_KEY - export them
 pnpm --filter @ksdc/api demo     # example cases, created through the real services
 pnpm --filter @ksdc/api dev      # API on :8080
 ```
 
-Without the keys the API generates an ephemeral pair and signs everyone out when it
-restarts. It says so at boot, and refuses to do it in production.
-
 And a third:
 
 ```bash
-export API_URL=http://localhost:8080
-export NEXT_PUBLIC_API_URL=http://localhost:8080
-pnpm --filter @ksdc/web dev      # Today screen on :3000
+pnpm --filter @ksdc/web dev      # the register on :3000
 ```
 
 **Signing in.** There is no password: the API emails a six-digit code. In development

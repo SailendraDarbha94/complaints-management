@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import {
   API_URL,
@@ -10,6 +11,7 @@ import {
   type TodayResponse,
 } from '@/lib/api';
 import { SignOutButton } from '../components/sign-out';
+import { RowActions } from './row-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -162,7 +164,13 @@ function Row({ item, showUrgencyChip }: { item: QueueItem; showUrgencyChip?: boo
         {item.title}
         {item.isStatutory && <span className="statutory"> · statutory</span>}
         <span className="meta">
-          {item.caseNumber ?? 'No case'}
+          {item.caseFileId && item.caseNumber ? (
+            <Link className="case-link" href={`/cases/${item.caseFileId}`}>
+              {item.caseNumber}
+            </Link>
+          ) : (
+            (item.caseNumber ?? 'No case')
+          )}
           {item.caseSummary && ` · ${truncate(item.caseSummary, 60)}`}
           {item.escalationLevel > 0 && ` · reminder ${item.escalationLevel + 1}`}
           {item.caseQuietDays != null && item.caseQuietDays > 0 && ` · quiet ${item.caseQuietDays}d`}
@@ -175,6 +183,12 @@ function Row({ item, showUrgencyChip }: { item: QueueItem; showUrgencyChip?: boo
         </span>
       </div>
       <span className={`age age-${chipKey}`}>{ageLabel(item)}</span>
+      <RowActions
+        followUpId={item.followUpId}
+        title={item.title}
+        needsDecision={item.urgency === 'needs_decision'}
+        caseFileId={item.caseFileId}
+      />
     </div>
   );
 }

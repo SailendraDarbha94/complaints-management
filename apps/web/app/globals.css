@@ -249,7 +249,7 @@ body {
 
 .row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 4px 14px;
   align-items: baseline;
   padding: 10px 15px;

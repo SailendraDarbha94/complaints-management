@@ -220,7 +220,71 @@ describe('drafting', () => {
       expect(draft.attachments.map((a) => a.filename)).toContain('bill.pdf');
     });
   });
+
+  it('rewrites the unsent draft instead of leaving a second one behind', async () => {
+    await withCouncil({ councilId, userId: officerId }, async (tx) => {
+      const c = await newCase(tx);
+      const first = await correspondence.draft(tx, ctx, {
+        caseFileId: c.caseFileId,
+        kind: 'request_docs',
+        now: SENT,
+      });
+      const again = await correspondence.draft(tx, ctx, {
+        caseFileId: c.caseFileId,
+        kind: 'request_docs',
+        now: new Date('2026-09-11T06:00:00Z'),
+      });
+
+      expect(again.correspondenceId).toBe(first.correspondenceId);
+      expect(await draftCount(tx, c.caseFileId)).toBe(1);
+
+      // And it is a real rewrite, not a stale row handed back: what is stored is what the
+      // second draft rendered, deadline and all.
+      const row = await tx.execute<{ body: string }>(sql`
+        SELECT body FROM correspondence WHERE id = ${first.correspondenceId}::uuid
+      `);
+      expect(row.rows[0]!.body).toBe(again.body);
+    });
+  });
+
+  it('never touches a letter that has gone out', async () => {
+    await withCouncil({ councilId, userId: officerId }, async (tx) => {
+      const c = await newCase(tx);
+      const sent = await correspondence.draft(tx, ctx, {
+        caseFileId: c.caseFileId,
+        kind: 'request_docs',
+        now: SENT,
+      });
+      await correspondence.markSent(tx, ctx, {
+        correspondenceId: sent.correspondenceId,
+        sentAt: SENT,
+      });
+
+      const reminder = await correspondence.draft(tx, ctx, {
+        caseFileId: c.caseFileId,
+        kind: 'request_docs',
+        now: new Date('2026-09-18T06:00:00Z'),
+      });
+
+      // A second request for documents after the first was served is a new letter, and
+      // the despatched one has to survive exactly as it was sent.
+      expect(reminder.correspondenceId).not.toBe(sent.correspondenceId);
+      const row = await tx.execute<{ subject: string; body: string }>(sql`
+        SELECT subject, body FROM correspondence WHERE id = ${sent.correspondenceId}::uuid
+      `);
+      expect(row.rows[0]!.subject).toBe(sent.subject);
+      expect(row.rows[0]!.body).toBe(sent.body);
+    });
+  });
 });
+
+async function draftCount(tx: Tx, caseFileId: string): Promise<number> {
+  const rows = await tx.execute<{ n: string }>(sql`
+    SELECT count(*) AS n FROM correspondence
+    WHERE case_file_id = ${caseFileId}::uuid AND direction = 'out' AND sent_at IS NULL
+  `);
+  return Number(rows.rows[0]!.n);
+}
 
 describe('"I have sent this"', () => {
   it('starts the clock on the document request', async () => {
