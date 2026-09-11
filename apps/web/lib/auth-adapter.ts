@@ -46,6 +46,7 @@ import {
 
 /** Where this app keeps a Supabase access token for the browser. HttpOnly, as ever. */
 export const SUPABASE_COOKIE = 'ksdc_sb';
+export const SUPABASE_REFRESH_COOKIE = 'ksdc_sb_rt';
 
 export type AuthDriver = 'council' | 'supabase';
 

@@ -1,5 +1,6 @@
 import { Logger } from './common/logger.js';
 import { AuthService } from './modules/auth/auth.service.js';
+import { SupabaseAuthService } from './modules/auth/supabase-auth.service.js';
 import { TokenService } from './modules/auth/token.service.js';
 import { CaseIntakeService } from './modules/cases/case-intake.service.js';
 import { CaseLifecycleService } from './modules/cases/case-lifecycle.service.js';
@@ -31,6 +32,8 @@ import { SupabaseStorage } from './modules/documents/supabase-storage.js';
 export interface Services {
   tokens: TokenService;
   auth: AuthService;
+  /** Only used when AUTH_DRIVER=supabase. Cheap to construct either way. */
+  supabaseAuth: SupabaseAuthService;
   followups: FollowupService;
   queue: QueueService;
   digest: DigestService;
@@ -101,6 +104,7 @@ export async function getServices(): Promise<Services> {
   const services: Services = {
     tokens,
     auth: new AuthService(tokens, mailer),
+    supabaseAuth: new SupabaseAuthService(),
     followups,
     queue,
     digest,

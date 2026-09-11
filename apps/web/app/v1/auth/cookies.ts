@@ -1,5 +1,6 @@
 import type { NextResponse } from 'next/server';
-import { ACCESS_COOKIE, REFRESH_COOKIE, type AuthService } from '@ksdc/core';
+import { ACCESS_COOKIE, REFRESH_COOKIE, type AuthService, type SupabaseSession } from '@ksdc/core';
+import { SUPABASE_COOKIE, SUPABASE_REFRESH_COOKIE } from '@/lib/auth-adapter';
 
 /**
  * The session cookies, and the body sign-in answers with.
@@ -42,4 +43,36 @@ export function setSessionCookies(res: NextResponse, signedIn: SignedIn): void {
     path: '/v1/auth',
     maxAge: 30 * 24 * 60 * 60,
   });
+}
+
+// ─── The Supabase session ────────────────────────────────────────────────────
+
+/**
+ * Same shape, different issuer.
+ *
+ * Kept as separate cookies rather than reusing ksdc_at/ksdc_rt so that flipping
+ * AUTH_DRIVER does not leave a browser holding a token the other verifier will reject on
+ * every request with no way back. A stale cookie from the other driver is simply ignored.
+ *
+ * The access token still never reaches script: the mobile app gets its session from
+ * supabase-js directly and sends a bearer header, and the browser never needs to see one.
+ */
+export function setSupabaseCookies(res: NextResponse, s: SupabaseSession): void {
+  res.cookies.set(SUPABASE_COOKIE, s.accessToken, accessCookieOptions(s.expiresIn));
+  res.cookies.set(SUPABASE_REFRESH_COOKIE, s.refreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/v1/auth',
+    maxAge: 30 * 24 * 60 * 60,
+  });
+}
+
+export function clearAllSessionCookies(res: NextResponse): void {
+  // Both drivers, always. Signing out must work whichever one minted the session, and
+  // whichever one is configured now - otherwise a driver change strands a live cookie.
+  res.cookies.delete({ name: ACCESS_COOKIE, path: '/' });
+  res.cookies.delete({ name: REFRESH_COOKIE, path: '/v1/auth' });
+  res.cookies.delete({ name: SUPABASE_COOKIE, path: '/' });
+  res.cookies.delete({ name: SUPABASE_REFRESH_COOKIE, path: '/v1/auth' });
 }
