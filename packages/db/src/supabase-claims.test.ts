@@ -201,7 +201,70 @@ describe('what Supabase exposes by default', () => {
   });
 });
 
-describe('the access token hook', () => {
+describe('the access token hook, called as GoTrue calls it', () => {
+  /**
+   * The test 0006 did not have, and should have.
+   *
+   * GoTrue invokes the hook as supabase_auth_admin: not a superuser, no BYPASSRLS, and
+   * search_path=auth. So it is subject to FORCE ROW LEVEL SECURITY on council_membership,
+   * and without a policy naming it the hook reads zero rows and signs a token with no
+   * council in it. Nothing raises; every request afterwards is just empty. Calling the
+   * hook as the owner - which is all a migration can do - proves none of that.
+   *
+   * Migration 0007 creates the role locally with the same attributes, so this rehearses
+   * the real call.
+   */
+  async function asAuthAdmin(event: Record<string, unknown>) {
+    return db
+      .transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL ROLE supabase_auth_admin`);
+        const r = await tx.execute<{ out: { claims: Record<string, unknown> } }>(
+          sql`SELECT public.custom_access_token_hook(${JSON.stringify(event)}::jsonb) AS out`,
+        );
+        throw Object.assign(new Error('rollback'), { out: r.rows[0]!.out });
+      })
+      .catch((e: { out?: { claims: Record<string, unknown> } }) => {
+        if (e.out) return e.out;
+        throw e;
+      });
+  }
+
+  it('finds the council when invoked by supabase_auth_admin', async () => {
+    const out = await asAuthAdmin({
+      user_id: sbUserA,
+      claims: { sub: sbUserA, role: 'authenticated', app_metadata: { provider: 'email' } },
+    });
+    const meta = out.claims.app_metadata as { council_id: string; council_role: string };
+    expect(meta.council_id).toBe(councilA);
+    expect(meta.council_role).toBe('officer');
+  });
+
+  it('cannot read anything but membership as that role', async () => {
+    // The policy 0007 adds is FOR SELECT on council_membership and nothing else. If this
+    // ever starts passing, the hook's role has been given reach it does not need.
+    const reachable = await db.execute<{ ok: boolean }>(sql`
+      SELECT has_table_privilege('supabase_auth_admin', 'public.case_file', 'SELECT') AS ok
+    `);
+    expect(reachable.rows[0]!.ok).toBe(false);
+  });
+
+  it('returns every required claim, because what it returns IS the token', async () => {
+    // GoTrue merges nothing back in and validates the result against a schema requiring
+    // aud, exp, iat, sub, email, phone, role, aal, session_id and is_anonymous. A hook
+    // that rebuilds the claims object instead of amending it drops them and 500s at
+    // sign-in.
+    const original = {
+      aud: 'authenticated', exp: 1789118681, iat: 1789115081, sub: sbUserA,
+      email: 'jwt-officer@ksdc.in', phone: '', role: 'authenticated', aal: 'aal1',
+      session_id: '9d0bac7d-cf13-4a8a-8d9c-cbcf4375780b', is_anonymous: false,
+      iss: 'https://example.supabase.co/auth/v1',
+    };
+    const out = await asAuthAdmin({ user_id: sbUserA, claims: original });
+    for (const key of Object.keys(original)) {
+      expect(out.claims, `the hook dropped the ${key} claim`).toHaveProperty(key);
+    }
+  });
+
   it('puts the council in app_metadata, and never touches the role claim', async () => {
     const out = await db.execute<{ out: { claims: Record<string, unknown> } }>(sql`
       SELECT public.custom_access_token_hook(${JSON.stringify({
