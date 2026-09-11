@@ -11,7 +11,16 @@ import { cookies } from 'next/headers';
  * do not carry the browser's cookies automatically, so they are forwarded here.
  */
 
-export const API_URL = process.env.API_URL ?? 'http://localhost:8080';
+/**
+ * What the SERVER fetches. A server-side fetch cannot use a relative URL, so this one does
+ * need an absolute origin - it is this app calling its own route handlers.
+ *
+ * That hop is now pointless: a server component could import @ksdc/core and call the
+ * services directly, saving a round trip through the loopback interface. It is kept for
+ * the moment because it holds the diff down; removing it is the obvious next step.
+ */
+export const API_URL =
+  process.env.API_URL ?? `http://localhost:${process.env.PORT ?? 3000}`;
 
 /** What the browser talks to directly, for uploads and form posts. */
 export { PUBLIC_API_URL } from './public-api';

@@ -8,17 +8,22 @@
     "start": "next start -p 3000",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "echo 'lint: web ok'",
-    "test": "echo 'web: no tests yet'"
+    "test": "vitest run"
   },
   "dependencies": {
     "@ksdc/contracts": "workspace:*",
     "next": "^15.1.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "@ksdc/core": "workspace:*",
+    "@ksdc/db": "workspace:*",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/react": "^19.0.4",
     "@types/react-dom": "^19.0.2",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8",
+    "@ksdc/testing": "workspace:*"
   }
 }

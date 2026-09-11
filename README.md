@@ -7,6 +7,7 @@ makes sure no case sits silently with nobody chasing it.
 - **[docs/requirements.md](docs/requirements.md)** — the requirements interview it came from.
 - **[docs/v1-scope.md](docs/v1-scope.md)** — what Phase 1 builds, and what it deliberately does not.
 - **[docs/adr/0001-canonical-schema.md](docs/adr/0001-canonical-schema.md)** — the vocabulary. CI enforces it.
+- **[docs/adr/0002-nextjs-route-handlers-and-supabase.md](docs/adr/0002-nextjs-route-handlers-and-supabase.md)** — why there is no separate API service, and what is prepared for Supabase.
 
 ## Running it locally
 
@@ -25,44 +26,42 @@ it, and exits — so it is safe to run every morning whether or not yesterday's 
 is still alive. `pnpm db:dev --reset` wipes and starts clean, and refuses while a cluster
 is running rather than deleting the files underneath it.
 
-**Settings.** Everything the API needs lives in `.env.dev` at the repository root, which
-is gitignored and read automatically — no exported variables:
+**Settings.** The scripts read `.env.dev` at the repository root; Next.js reads
+`apps/web/.env.local`. Both are gitignored and loaded automatically — no exported
+variables. `.env.example` shows what goes in them.
 
 ```
 DATABASE_URL=postgres://app_rw:app_rw_dev@localhost:55432/ksdc_dev
-JWT_PRIVATE_KEY="..."     # from: pnpm --filter @ksdc/api keys
+JWT_PRIVATE_KEY="..."     # from: pnpm --filter @ksdc/core keys
 JWT_PUBLIC_KEY="..."
 MAIL_TRANSPORT=console
 ```
 
-Without the keys the API generates an ephemeral pair and signs everyone out when it
-restarts. It says so at boot, and refuses to do it in production. The web app reads
-`apps/web/.env.local` the same way (`API_URL` and `NEXT_PUBLIC_API_URL`). In production
-both come from Secret Manager and the environment instead; nothing reads a file there.
+Without the keys an ephemeral pair is generated and everyone is signed out whenever the
+process reloads — which, under Next's dev server, is often. It says so in the log and
+refuses to do it in production. In production every one of these comes from Secret Manager
+and the environment; nothing reads a file there.
 
-In a second terminal:
-
-```bash
-pnpm --filter @ksdc/api demo     # example cases, created through the real services
-pnpm --filter @ksdc/api dev      # API on :8080
-```
-
-And a third:
+In a second terminal — one command, because the API is not a separate service any more:
 
 ```bash
-pnpm --filter @ksdc/web dev      # the register on :3000
+pnpm --filter @ksdc/core demo   # example cases, created through the real services
+pnpm --filter @ksdc/web dev     # the register AND /v1 on :3000
 ```
 
-**Signing in.** There is no password: the API emails a six-digit code. In development
-`MAIL_TRANSPORT` defaults to `console`, so the code is printed in the API's log and
-appended to `apps/api/var/mail/outbox.log` — no mail server needed. Sign in as
-`officer@ksdc.in`.
+**Signing in.** There is no password: a six-digit code is emailed. In development
+`MAIL_TRANSPORT` is `console`, so the code is printed in the log and appended to
+`apps/web/var/mail/outbox.log` — no mail server needed. Sign in as `officer@ksdc.in`.
 
 **The daily job**, which escalates the ladder and sends the digest, is normally called by
-Cloud Scheduler. To fire it by hand:
+Cloud Scheduler. Two ways to fire it by hand:
 
 ```bash
-curl -X POST http://localhost:8080/v1/internal/jobs/daily -H 'x-dev-scheduler: 1'
+pnpm --filter @ksdc/core daily
+```
+
+```bash
+curl -X POST http://localhost:3000/v1/internal/jobs/daily -H 'x-dev-scheduler: 1'
 ```
 
 `infra/docker-compose.yml` is there if you would rather use Docker.
@@ -71,9 +70,10 @@ curl -X POST http://localhost:8080/v1/internal/jobs/daily -H 'x-dev-scheduler: 1
 
 ```
 apps/
-  api/          NestJS + Fastify. The only thing that talks to the database.
-  web/          Next.js. A thin client over the API — it holds no credentials.
+  web/          Next.js. The UI in app/, and the whole API in app/v1/ as route handlers.
 packages/
+  core/         The register itself: services, the follow-up engine, auth, documents.
+                No web framework — everything takes (tx, ctx, args) and returns data.
   contracts/    Enums, the case-number format, the case lifecycle as one data table.
   config/       Council configuration schema + the KSDC seed.
   db/           Drizzle schema, migrations, withCouncil(), the dev database.
@@ -85,7 +85,7 @@ docs/           The plan, the requirements, the ADRs.
 ## Checks
 
 ```bash
-pnpm test              # 174 tests, against a real PostgreSQL 17
+pnpm test              # 308 tests, against a real PostgreSQL 17
 pnpm typecheck
 pnpm check:vocabulary  # ADR-0001: fails the build on a banned identifier
 ```

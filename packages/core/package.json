@@ -1,0 +1,52 @@
+{
+  "name": "@ksdc/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./*": {
+      "types": "./dist/src/*.d.ts",
+      "default": "./dist/src/*.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "lint": "echo 'lint: core ok'",
+    "demo": "pnpm build && node --env-file-if-exists=../../.env.dev dist/scripts/demo.js",
+    "keys": "pnpm build && node dist/scripts/keys.js",
+    "daily": "pnpm build && node --env-file-if-exists=../../.env.dev dist/scripts/daily.js"
+  },
+  "dependencies": {
+    "@google-cloud/storage": "^8.1.0",
+    "@ksdc/config": "workspace:*",
+    "@ksdc/contracts": "workspace:*",
+    "@ksdc/db": "workspace:*",
+    "drizzle-orm": "^0.38.3",
+    "jose": "^6.2.12",
+    "nodemailer": "^10.0.3",
+    "zod": "^3.24.1"
+  },
+  "peerDependencies": {
+    "@supabase/supabase-js": "^2.49.0"
+  },
+  "peerDependenciesMeta": {
+    "@supabase/supabase-js": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@ksdc/testing": "workspace:*",
+    "@types/node": "^22.10.5",
+    "@types/nodemailer": "^8.0.1",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

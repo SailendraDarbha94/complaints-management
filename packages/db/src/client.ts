@@ -11,13 +11,31 @@ import * as schema from './schema/index.js';
  * session; `withCouncil()` is the only thing that sets it.
  *
  * The raw handle is deliberately not exported. An ESLint rule bans importing from this
- * module outside packages/db and apps/api/src/db.
+ * module outside packages/db and @ksdc/core.
  */
 
 export type Db = NodePgDatabase<typeof schema>;
 
-let pool: pg.Pool | undefined;
-let db: Db | undefined;
+/**
+ * The pool is cached on globalThis, not in a module variable.
+ *
+ * Next.js re-evaluates server modules on every edit in development, so a module-scoped
+ * singleton is rebuilt on each hot reload and the old pool is never closed - you run out
+ * of PostgreSQL connections after a morning's work, and the failure looks like the
+ * database being down rather than like a leak. globalThis survives the re-evaluation.
+ *
+ * In production the module is evaluated once and this behaves exactly as a module
+ * variable would.
+ */
+const POOL_KEY = Symbol.for('ksdc.db.pool');
+const DB_KEY = Symbol.for('ksdc.db.handle');
+
+interface DbGlobal {
+  [POOL_KEY]?: pg.Pool;
+  [DB_KEY]?: Db;
+}
+
+const g = globalThis as unknown as DbGlobal;
 
 export interface DbOptions {
   connectionString?: string;
@@ -26,11 +44,11 @@ export interface DbOptions {
 }
 
 export function initDb(opts: DbOptions = {}): Db {
-  if (db) return db;
+  if (g[DB_KEY]) return g[DB_KEY];
   const connectionString = opts.connectionString ?? process.env.DATABASE_URL;
   if (!connectionString) throw new Error('DATABASE_URL is not set');
 
-  pool = new pg.Pool({
+  const pool = new pg.Pool({
     connectionString,
     // Cloud Run: one instance, concurrency 40. A small pool per instance is right; the
     // Cloud SQL connector multiplexes and PgBouncer is explicitly not in scope.
@@ -40,13 +58,14 @@ export function initDb(opts: DbOptions = {}): Db {
     ...(opts.ssl ? { ssl: { rejectUnauthorized: false } } : {}),
   });
 
-  db = drizzle(pool, { schema });
+  const db = drizzle(pool, { schema });
+  g[POOL_KEY] = pool;
+  g[DB_KEY] = db;
   return db;
 }
 
 export function getDb(): Db {
-  if (!db) return initDb();
-  return db;
+  return g[DB_KEY] ?? initDb();
 }
 
 /**
@@ -67,9 +86,9 @@ export function createDb(opts: DbOptions & { connectionString: string }): {
 }
 
 export async function closeDb(): Promise<void> {
-  await pool?.end();
-  pool = undefined;
-  db = undefined;
+  await g[POOL_KEY]?.end();
+  delete g[POOL_KEY];
+  delete g[DB_KEY];
 }
 
 export interface CouncilContext {

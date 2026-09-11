@@ -116,12 +116,12 @@ export async function seed(connectionString: string, withDemo = false): Promise<
     console.log('');
     console.log('  Sign in at the web app with that address. There is no password: the API');
     console.log('  emails a six-digit code, and in development that means it is printed in');
-    console.log('  the API log and appended to apps/api/var/mail/outbox.log.');
+    console.log('  the API log and appended to packages/core/var/mail/outbox.log.');
 
     if (withDemo) {
-      // Demo cases are created by apps/api's demo script, through the real services, so
+      // Demo cases are created by the @ksdc/core demo script, through the real services, so
       // the example data has the same follow-ups and history that real data would.
-      console.log('\n  For example cases: pnpm --filter @ksdc/api demo');
+      console.log('\n  For example cases: pnpm --filter @ksdc/core demo');
     }
   } finally {
     await close();

@@ -3,7 +3,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 import pg from 'pg';
 
 /**
- * A throwaway PostgreSQL 17 for integration tests, shared by @ksdc/db and apps/api.
+ * A throwaway PostgreSQL 17 for integration tests, shared by @ksdc/db and @ksdc/core.
  *
  * `embedded-postgres` unpacks a real Postgres into node_modules and runs it on a private
  * port — no Docker, no system service, no admin rights. That matters: the tenant-isolation
