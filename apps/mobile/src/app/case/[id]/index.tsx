@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSession } from '@/lib/session';
 import * as ScreenCapture from 'expo-screen-capture';
 import {
   getCase,
@@ -40,6 +41,8 @@ export default function CaseScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { claims } = useSession();
+  const isOfficer = claims.councilRole === 'officer';
 
   const [data, setData] = useState<CaseFile | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -171,7 +174,14 @@ export default function CaseScreen() {
         ) : null}
 
         {/* 6-8. The papers. An absence here is itself a finding and must not be blank. */}
-        <Text style={styles.label}>THE PAPERS</Text>
+        <View style={styles.papersHead}>
+          <Text style={[styles.label, { marginTop: 28 }]}>THE PAPERS</Text>
+          {isOfficer ? (
+            <Pressable onPress={() => router.push(`/case/${id}/add`)} hitSlop={10}>
+              <Text style={styles.add}>+ Add</Text>
+            </Pressable>
+          ) : null}
+        </View>
         {documents.length === 0 ? (
           <Text style={styles.absent}>Nothing has been filed on this case yet.</Text>
         ) : (
@@ -263,6 +273,8 @@ const styles = StyleSheet.create({
   position: { fontSize: 15, color: ink.muted, marginTop: 4, lineHeight: 22 },
   practice: { fontSize: 13, color: ink.faint, marginTop: 8, lineHeight: 19 },
 
+  papersHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
+  add: { fontSize: 15, color: ink.stamp, fontWeight: '600' },
   absent: { fontSize: 15, color: ink.faint, lineHeight: 22 },
   paper: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: ink.ruleSoft },
   paperTitle: { fontSize: 16, color: ink.text },
