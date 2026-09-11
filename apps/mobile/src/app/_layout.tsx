@@ -22,6 +22,7 @@ export default function RootLayout() {
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="index" />
             <Stack.Screen name="sign-in" />
+            <Stack.Screen name="case/[id]" />
           </Stack>
         </ThemeProvider>
       </SessionProvider>

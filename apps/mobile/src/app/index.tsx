@@ -1,24 +1,54 @@
-import { Redirect } from 'expo-router';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { ROLES } from '@ksdc/contracts';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { Redirect, useRouter } from 'expo-router';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '@/lib/session';
+import { listCases, type CaseRow } from '@/lib/cases';
+import { ink } from '@/lib/theme';
 
 /**
- * What a signed-in member sees.
+ * The cases in front of the committee.
  *
- * Almost nothing yet, deliberately. The register's tables are not granted to the
- * `authenticated` role - no policy, no grant, nothing readable from a phone - so this
- * cannot list case files however much it would like to. That is the correct order: the
- * policies that decide which rows a member may see are written one table at a time, as
- * deliberate reviewed decisions, not as a default switched on to make a screen work.
+ * The design this came from organises the home screen around the next SITTING - the agenda
+ * and nothing else - which is right, and is not buildable yet: there is no sitting in the
+ * schema (build plan Phase 4). So this is the honest intermediate: every open case, newest
+ * first. When sittings exist this screen becomes the agenda and this list moves behind it.
  *
- * What it does prove is the part that had to come first. The account signs in, Supabase
- * mints a token, the access token hook puts the council and the role into it, and the
- * phone reads them back. Everything after this is a query away.
+ * A FlatList rather than a ScrollView, not for virtualisation - there are about ten cases,
+ * ever - but for the free pull-to-refresh and because these are homogeneous rows.
+ *
+ * The bottom inset goes on contentContainerStyle, NOT on the view. Put it on the view and
+ * the last card cannot scroll clear of the home indicator.
  */
 export default function Index() {
   const { session, claims, loading, signOut } = useSession();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+
+  const [cases, setCases] = useState<CaseRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setCases(await listCases());
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (session && claims.councilId) void load();
+  }, [session, claims.councilId, load]);
 
   if (loading) {
     return (
@@ -30,71 +60,116 @@ export default function Index() {
 
   if (!session) return <Redirect href="/sign-in" />;
 
-  const roleLabel: Record<(typeof ROLES)[number], string> = {
-    officer: 'Dental Officer',
-    committee_member: 'Committee member',
-    auditor: 'Auditor',
-  };
-
-  return (
-    <SafeAreaView style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.body}>
-        <Text style={styles.council}>KARNATAKA STATE DENTAL COUNCIL</Text>
-        <Text style={styles.title}>Signed in</Text>
-
-        <View style={styles.card}>
-          <Text style={styles.label}>ACCOUNT</Text>
-          <Text style={styles.value}>{session.user.email}</Text>
-
-          <Text style={styles.label}>ROLE</Text>
-          <Text style={styles.value}>
-            {claims.councilRole ? roleLabel[claims.councilRole] : 'None recorded'}
-          </Text>
-
-          <Text style={styles.label}>COUNCIL</Text>
-          <Text style={[styles.value, styles.mono]}>{claims.councilId ?? 'None'}</Text>
-        </View>
-
-        {claims.councilId ? (
-          <Text style={styles.note}>
-            The council and role above came from the access token, put there by the register
-            when Supabase issued it. Case files are not readable from a phone yet: the
-            row-level security policies for this app are written one table at a time, and
-            none has been granted.
-          </Text>
-        ) : (
-          <Text style={styles.warn}>
+  // Signing in is not the same as being appointed, and the app says so rather than
+  // showing an empty list that looks like a council with no complaints.
+  if (!claims.councilId) {
+    return (
+      <SafeAreaView style={styles.center}>
+        <View style={styles.notMember}>
+          <Text style={styles.notMemberTitle}>Not an active member</Text>
+          <Text style={styles.notMemberBody}>
             This account is not an active member of any council in the register. Ask the
             Registrar — signing in is not the same as being appointed.
           </Text>
-        )}
+          <Pressable onPress={() => void signOut()}>
+            <Text style={styles.link}>Sign out</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
-        <Pressable style={styles.signOut} onPress={() => void signOut()}>
-          <Text style={styles.signOutText}>Sign out</Text>
-        </Pressable>
-      </ScrollView>
+  return (
+    <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
+      <FlatList
+        data={cases ?? []}
+        keyExtractor={(c) => c.id}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 28, paddingHorizontal: 18 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              setRefreshing(true);
+              void load().finally(() => setRefreshing(false));
+            }}
+          />
+        }
+        ListHeaderComponent={
+          <View style={styles.header}>
+            <Text style={styles.council}>KARNATAKA STATE DENTAL COUNCIL</Text>
+            <Text style={styles.title}>Committee file</Text>
+            <Text style={styles.subtitle}>
+              {cases === null
+                ? 'Loading…'
+                : `${cases.length} open ${cases.length === 1 ? 'case' : 'cases'}`}
+            </Text>
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+          </View>
+        }
+        ListEmptyComponent={
+          cases === null ? (
+            <ActivityIndicator style={{ marginTop: 40 }} />
+          ) : (
+            <Text style={styles.empty}>No open cases.</Text>
+          )
+        }
+        ListFooterComponent={
+          <View style={styles.footer}>
+            <Text style={styles.confidential}>
+              Confidential to the Council. Every document you open is logged, with your name
+              and the time.
+            </Text>
+            <Pressable onPress={() => void signOut()}>
+              <Text style={styles.link}>Sign out</Text>
+            </Pressable>
+          </View>
+        }
+        renderItem={({ item }) => (
+          <Pressable
+            style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+            onPress={() => router.push(`/case/${item.id}`)}
+          >
+            {item.on_hold ? (
+              <Text style={styles.hold}>
+                ON HOLD{item.hold_reason ? ` — ${item.hold_reason}` : ''}
+              </Text>
+            ) : null}
+            {/* The grievance first and largest: it is what the member is here to read. The
+                case number is a reference, not a headline, so it sits underneath. */}
+            <Text style={styles.summary}>{item.summary}</Text>
+            <Text style={styles.number}>{item.case_number}</Text>
+          </Pressable>
+        )}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#f6f5f2' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f6f5f2' },
-  body: { padding: 24, maxWidth: 560, width: '100%', alignSelf: 'center' },
-  council: { fontSize: 11, letterSpacing: 1.2, color: '#767d8e', marginBottom: 6 },
-  title: { fontSize: 24, fontWeight: '600', color: '#191e2b', marginBottom: 22 },
+  screen: { flex: 1, backgroundColor: ink.paper },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: ink.paper },
+  header: { paddingTop: 14, paddingBottom: 18 },
+  council: { fontSize: 11, letterSpacing: 1.1, color: ink.faint },
+  title: { fontSize: 26, fontWeight: '600', color: ink.text, marginTop: 6 },
+  subtitle: { fontSize: 14, color: ink.muted, marginTop: 4 },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: ink.surface,
     borderWidth: 1,
-    borderColor: '#d8d5cd',
-    borderRadius: 8,
+    borderColor: ink.rule,
+    borderRadius: 10,
     padding: 16,
+    marginBottom: 12,
   },
-  label: { fontSize: 10, letterSpacing: 0.8, color: '#767d8e', marginTop: 12 },
-  value: { fontSize: 16, color: '#191e2b', marginTop: 3 },
-  mono: { fontFamily: undefined, fontSize: 13, color: '#4a5163' },
-  note: { marginTop: 20, color: '#4a5163', fontSize: 13, lineHeight: 20 },
-  warn: { marginTop: 20, color: '#a82820', fontSize: 14, lineHeight: 21 },
-  signOut: { marginTop: 28, alignSelf: 'flex-start' },
-  signOutText: { color: '#2f3e8c', fontSize: 15, fontWeight: '600' },
+  cardPressed: { backgroundColor: ink.sunk },
+  hold: { fontSize: 11, letterSpacing: 0.6, color: ink.seal, marginBottom: 8, fontWeight: '600' },
+  summary: { fontSize: 17, lineHeight: 24, color: ink.text },
+  number: { fontSize: 12, color: ink.faint, marginTop: 10 },
+  empty: { fontSize: 15, color: ink.muted, marginTop: 30, textAlign: 'center' },
+  error: { fontSize: 13, color: ink.seal, marginTop: 12, lineHeight: 19 },
+  footer: { marginTop: 22, gap: 16 },
+  confidential: { fontSize: 12, color: ink.faint, lineHeight: 18 },
+  link: { fontSize: 15, color: ink.stamp, fontWeight: '600' },
+  notMember: { padding: 28, gap: 14 },
+  notMemberTitle: { fontSize: 20, fontWeight: '600', color: ink.text },
+  notMemberBody: { fontSize: 15, color: ink.muted, lineHeight: 22 },
 });
