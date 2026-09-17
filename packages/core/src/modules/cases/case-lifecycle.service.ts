@@ -95,8 +95,20 @@ export class CaseLifecycleService {
     if (rule.requiresReason && !input.reason?.trim()) {
       throw new DomainError(`${input.event} requires a reason. It becomes part of the record.`);
     }
-    if (rule.scope === 'respondent' && !input.caseRespondentId) {
-      throw new DomainError(`${input.event} applies to one respondent; caseRespondentId is required.`);
+    // ISSUE_RESPONDENT_NOTICE is scoped to the CASE, because issuing a notice moves the
+    // whole case to awaiting_respondent_reply. But a notice is still served on a person,
+    // and applyRespondentEffects silently returns when there is nobody to serve it on - so
+    // without this line the transition landed, a `respondent_notice_despatched` milestone
+    // was written against no respondent, and no respondent_notice row and no notice_count
+    // increment happened at all. The register then said a notice had gone out to a dentist
+    // it could not name, and notice_count - the number an ex parte finding against a named
+    // dentist rests on - stayed at zero. Refusing is the only safe answer.
+    const needsRespondent = rule.scope === 'respondent' || input.event === 'ISSUE_RESPONDENT_NOTICE';
+    if (needsRespondent && !input.caseRespondentId) {
+      throw new DomainError(
+        `${input.event} is served on one respondent, so it needs to say which. ` +
+          'Pick the dentist this notice went to.',
+      );
     }
 
     const occurredAt = input.occurredAt ?? new Date();

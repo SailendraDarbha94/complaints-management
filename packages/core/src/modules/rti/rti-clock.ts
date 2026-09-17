@@ -235,18 +235,16 @@ function warningsFor(
     );
   }
 
-  if (!answered && daysBetween(today, derived.transferDueOn) < 0 && row.receivedOn) {
-    // Only worth saying while the request is still open and untransferred: after five days
-    // a transfer is still lawful, it simply stops protecting this officer.
-    const overshoot = -daysBetween(today, derived.transferDueOn);
-    if (overshoot > 0 && overshoot <= 25) {
-      out.push(
-        `The five-day window for transferring this to another public authority under s.6(3) ` +
-          `closed on ${derived.transferDueOn}. A transfer now is still lawful, but the delay ` +
-          'up to the date of transfer stays with this office.',
-      );
-    }
-  }
+  // NOT here: a warning that the five-day window for a s.6(3) transfer has closed.
+  //
+  // It was here, and it was wrong. Nothing about an application says whether a transfer is
+  // contemplated, so the condition could only ever be "open, and more than five days old" -
+  // which is true of almost every application for almost all of its life. On a file with
+  // nothing whatever the matter with it, that was the ONLY line shown, and a healthy file
+  // that displays a warning teaches the officer that warnings mean nothing. The same
+  // sentence, with the real overshoot in days, is returned by RtiService.transfer() at the
+  // moment a transfer is actually being recorded, which is the only moment it can change
+  // what anybody does.
 
   return out;
 }

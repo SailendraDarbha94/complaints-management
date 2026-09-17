@@ -70,7 +70,10 @@ export function CaseActions({
     try {
       const body: Record<string, unknown> = {};
       if (open.requiresReason) body.reason = reason;
-      if (open.scope === 'respondent') body.caseRespondentId = respondentId;
+      // needsRespondent, not scope: ISSUE_RESPONDENT_NOTICE is case-scoped but is still
+      // served on one dentist, and this form has always shown a picker for it. Keying on
+      // scope meant the picked dentist was collected and then thrown away.
+      if (needsRespondent) body.caseRespondentId = respondentId;
       if (NEEDS_CLOSURE_REASON.has(open.event)) body.closureReason = closureReason;
 
       const res = await fetch(`${apiUrl}/v1/cases/${caseId}/events/${open.event}`, {

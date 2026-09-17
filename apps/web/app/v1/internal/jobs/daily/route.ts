@@ -18,6 +18,23 @@ export const POST = withPublic(
     assertScheduler(req);
     const now = new Date();
     const logicalDate = todayIn('Asia/Kolkata', now);
-    return services.scheduler.run('daily', logicalDate, () => services.scheduler.daily(now));
+    const outcome = await services.scheduler.run('daily', logicalDate, () =>
+      services.scheduler.daily(now),
+    );
+
+    // A failed run must not answer 200.
+    //
+    // scheduler.run() catches its own error and RETURNS {status:'failed'} rather than
+    // throwing, so that job_run is updated and the failure is logged. Handed straight back,
+    // that became a perfectly ordinary JSON body with a 200 beside it - and a scheduler
+    // records a success on a day the ladder did not move. Nobody is then told that nothing
+    // was escalated and no digest went out, which is the precise failure this whole product
+    // exists to prevent. packages/core/scripts/daily.ts already guards the command-line
+    // path for exactly this reason ("A failed run must not exit 0"); this is the same guard
+    // for the path a scheduler actually calls.
+    if (outcome.status === 'failed') {
+      return Response.json(outcome, { status: 500 });
+    }
+    return outcome;
   },
 );

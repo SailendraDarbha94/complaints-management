@@ -142,6 +142,23 @@ describe('the two clocks colliding', () => {
   });
 });
 
+describe('what it refuses to warn about', () => {
+  it('says nothing at all about a healthy application mid-clock', () => {
+    // The regression this guards: a warning that the five-day s.6(3) transfer window had
+    // closed used to fire on every open application older than five days, which is almost
+    // every application for almost all of its life. On a file with nothing whatever the
+    // matter with it, that was the only line shown. A healthy file that displays a warning
+    // teaches the officer that warnings mean nothing - and this module is nothing but
+    // warnings.
+    const c = rtiClock({ receivedOn: '2026-04-01', dueOn: '2026-05-01' }, '2026-04-17');
+    expect(c.daysRemaining).toBe(14);
+    expect(c.warnings).toEqual([]);
+    // The date is still computed and still offered to the screens; it is the unprompted
+    // nagging that is gone.
+    expect(c.transferDueOn).toBe('2026-04-06');
+  });
+});
+
 describe('the fee', () => {
   it('says the deadline shown is earlier than the true one while the fee is unpaid', () => {
     const c = rtiClock({ ...base, furtherFeeIntimatedOn: '2026-04-10' }, '2026-04-20');

@@ -64,14 +64,34 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (!configured) return;
-  // Objects first; Supabase refuses to drop a bucket that still has any.
-  for (const prefix of [STAGING_PREFIX, DOCUMENTS_PREFIX, 'quarantine-misfiled/']) {
-    const { data } = await admin!.storage.from(TEST_BUCKET).list(prefix.replace(/\/$/, ''));
-    const paths = (data ?? []).map((o) => `${prefix}${o.name}`);
-    if (paths.length) await admin!.storage.from(TEST_BUCKET).remove(paths);
+
+  // Emptying a bucket is TWO problems, and this cleanup got both of them wrong.
+  //
+  // First: it used to list each prefix and remove what came back, which silently did
+  // nothing. list('documents') returns the IMMEDIATE children of that prefix, and for keys
+  // shaped `documents/<documentId>/<versionId>` those children are the <documentId>
+  // FOLDERS, not the objects inside them. remove() on a folder path is a no-op.
+  //
+  // Second: emptyBucket() returns before the server has finished, so deleting straight
+  // afterwards races it and fails with "The bucket you tried to delete is not empty".
+  //
+  // Neither failure was ever reported, because nothing checked the error. Thirteen orphan
+  // buckets accumulated in the live project before anyone looked.
+  await admin!.storage.emptyBucket(TEST_BUCKET);
+
+  let dropped = await admin!.storage.deleteBucket(TEST_BUCKET);
+  for (let attempt = 0; dropped.error && attempt < 5; attempt++) {
+    await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+    await admin!.storage.emptyBucket(TEST_BUCKET);
+    dropped = await admin!.storage.deleteBucket(TEST_BUCKET);
   }
-  await admin!.storage.deleteBucket(TEST_BUCKET);
   delete process.env.SUPABASE_STORAGE_BUCKET;
+
+  // Fail loudly rather than littering quietly. A test that leaves rubbish in a live
+  // project is a test that will one day be the reason a quota is hit on a Friday evening.
+  if (dropped.error) {
+    throw new Error(`the test bucket ${TEST_BUCKET} was left behind: ${dropped.error.message}`);
+  }
 }, 60_000);
 
 describe.runIf(configured)('the Supabase storage adapter', () => {

@@ -322,6 +322,42 @@ describe('per-respondent follow-ups', () => {
 });
 
 describe('the guards', () => {
+  it('refuses to issue a notice without saying which dentist it went to', async () => {
+    // The regression this guards. ISSUE_RESPONDENT_NOTICE is scoped to the CASE, so the
+    // respondent guard - which only fired for respondent-scoped events - let it through;
+    // applyRespondentEffects then returned silently because there was nobody to act on.
+    // The case still moved to awaiting_respondent_reply and a
+    // respondent_notice_despatched milestone was written against no respondent, while
+    // notice_count stayed at zero. The register said a notice had gone out to a dentist it
+    // could not name, and notice_count is the number an ex parte finding rests on.
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const { caseFileId } = await newComplaint(tx);
+      await lifecycle.apply(tx, ctx, { caseFileId, event: 'REQUEST_DOCUMENTS' });
+      await lifecycle.apply(tx, ctx, { caseFileId, event: 'DOCUMENTS_RECEIVED' });
+      await makeRespondent(tx, { councilId, caseFileId });
+
+      await expect(
+        lifecycle.apply(tx, ctx, {
+          caseFileId,
+          event: 'ISSUE_RESPONDENT_NOTICE',
+          notice: { serviceMode: 'email', sentAt: new Date() },
+        }),
+      ).rejects.toThrow(/which dentist|respondent/i);
+
+      // And nothing moved: no half-applied transition, and no phantom notice.
+      expect((await stateOf(tx, caseFileId)).state).toBe('under_scrutiny');
+      const counts = await tx.execute<{ notices: number; milestones: number }>(sql`
+        SELECT (SELECT coalesce(sum(notice_count), 0)::int FROM case_respondent
+                 WHERE case_file_id = ${caseFileId}::uuid) AS notices,
+               (SELECT count(*)::int FROM case_milestone
+                 WHERE case_file_id = ${caseFileId}::uuid
+                   AND milestone = 'respondent_notice_despatched') AS milestones
+      `);
+      expect(counts.rows[0]!.notices).toBe(0);
+      expect(counts.rows[0]!.milestones).toBe(0);
+    });
+  });
+
   it('refuses an event the case cannot take, and says what it can', async () => {
     await withCouncil({ councilId, userId: officer }, async (tx) => {
       const { caseFileId } = await newComplaint(tx);
