@@ -77,6 +77,18 @@ export class SupabaseStorage extends StoragePort {
     return this.sb().storage.from(bucketName());
   }
 
+  async write(storageKey: string, bytes: Buffer, contentType: string): Promise<void> {
+    // upsert stays false. Every key this is called with is a fresh UUID under staging/,
+    // so a collision is not a retry to be absorbed - it is a bug, and it should say so.
+    const { error } = await this.bucket().upload(storageKey, bytes, {
+      contentType,
+      upsert: false,
+    });
+    if (error) {
+      throw new DomainError(`Could not store that file: ${error.message}`);
+    }
+  }
+
   async signedUpload(args: { contentType: string; maxBytes: number }): Promise<SignedUpload> {
     const storageKey = `${STAGING_PREFIX}${crypto.randomUUID()}`;
     const { data, error } = await this.bucket().createSignedUploadUrl(storageKey);

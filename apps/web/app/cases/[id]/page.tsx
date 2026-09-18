@@ -23,6 +23,7 @@ import {
   formatDateTime,
   label,
 } from '@/lib/labels';
+import { AddRespondent } from './add-respondent';
 import { CaseActions } from './case-actions';
 import { DocumentUpload } from './document-upload';
 
@@ -325,9 +326,15 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
             </Section>
           )}
 
-          <Section title={`Respondents (${data.respondents.length})`}>
+          <Section
+            title={`Respondents (${data.respondents.length})`}
+            action={<AddRespondent caseId={c.id} disabled={c.state === 'closed'} />}
+          >
             {data.respondents.length === 0 ? (
-              <p className="muted">None named yet.</p>
+              <p className="muted">
+                None named yet. A notice cannot be issued until one is — the ladder, ex
+                parte eligibility and every respondent letter all hang off this.
+              </p>
             ) : (
               <ul className="plain">
                 {data.respondents.map((r) => (

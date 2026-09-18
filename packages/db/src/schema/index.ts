@@ -5,3 +5,4 @@ export * from './followups.js';
 export * from './correspondence.js';
 export * from './audit.js';
 export * from './rti.js';
+export * from './mail.js';

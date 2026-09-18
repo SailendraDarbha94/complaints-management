@@ -114,6 +114,16 @@ export const correspondence = pgTable(
      */
     mergeContext: jsonb('merge_context').$type<Record<string, unknown>>(),
 
+    /**
+     * The RFC 5322 Message-ID, where one is known.
+     *
+     * Written today only on an INBOUND message filed from the mail tray. Phase 1 letters
+     * go out by hand from council webmail, so there is no outbound Message-ID to record -
+     * but when there is, a reply that threads perfectly should not fall to the tray for
+     * want of a column.
+     */
+    messageId: text('message_id'),
+
     /** Set by the officer's "I have sent this" click. THIS is what starts the clock. */
     sentAt: timestamp('sent_at', { withTimezone: true }),
     receivedAt: timestamp('received_at', { withTimezone: true }),
@@ -133,6 +143,9 @@ export const correspondence = pgTable(
   (t) => [
     index('correspondence_case_ix').on(t.councilId, t.caseFileId, t.createdAt),
     index('correspondence_rti_ix').on(t.councilId, t.rtiRequestId, t.createdAt),
+    uniqueIndex('correspondence_message_id_uq')
+      .on(t.councilId, t.messageId)
+      .where(sql`message_id IS NOT NULL`),
     // Two letters cannot claim the same despatch number in the same financial year.
     // Partial: most letters have none until the office stamps them.
     uniqueIndex('correspondence_despatch_uq')

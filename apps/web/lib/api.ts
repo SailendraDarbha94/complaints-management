@@ -379,6 +379,80 @@ export function fetchRegister(fiscalYear?: string): Promise<{ rows: RegisterRow[
   return get<{ rows: RegisterRow[] }>(`/register${q}`);
 }
 
+export interface TrayCard {
+  id: string;
+  subject: string;
+  snippet: string;
+  envelope_from: string;
+  envelope_from_name: string | null;
+  envelope_date: string;
+  ingested_at: string;
+  forward_kind: string;
+  original_from: string | null;
+  original_from_name: string | null;
+  original_subject: string | null;
+  original_date_text: string | null;
+  status: string;
+  suggestion_note: string | null;
+  suggested_case_file_id: string | null;
+  suggested_case_number: string | null;
+  attachment_count: number;
+  skipped_count: number;
+}
+
+export interface TrayMessage {
+  message: (TrayCard & {
+    body_text: string | null;
+    original_body: string | null;
+    original_to: string | null;
+    envelope_to: string | null;
+    message_id: string | null;
+    matched_rung: string | null;
+    case_file_id: string | null;
+    case_number: string | null;
+    dismissed_reason: string | null;
+  }) | null;
+  attachments: Array<{
+    id: string;
+    filename: string;
+    declared_type: string | null;
+    size_bytes: number;
+    sha256: string;
+    document_id: string | null;
+    skipped_reason: string | null;
+  }>;
+  candidates: Array<{
+    caseFileId: string;
+    caseNumber: string;
+    summary: string;
+    isClosed: boolean;
+    onHold: boolean;
+    because: string;
+  }>;
+}
+
+export interface RespondentCandidate {
+  partyId: string;
+  fullName: string;
+  registrationNo: string | null;
+  clinicName: string | null;
+  email: string | null;
+  mobile: string | null;
+  priorCases: number;
+  /** WHICH cases — two dentists sharing a name are otherwise indistinguishable. */
+  priorCaseNumbers: string[];
+  registeredDentistId: string | null;
+  because: string;
+}
+
+export function fetchTray(status = 'unfiled'): Promise<{ status: string; messages: TrayCard[] }> {
+  return get<{ status: string; messages: TrayCard[] }>(`/intake?status=${status}`);
+}
+
+export function fetchTrayMessage(id: string): Promise<TrayMessage> {
+  return get<TrayMessage>(`/intake/${id}`);
+}
+
 export function fetchRtiRegister(): Promise<{ requests: Array<RtiRequest & { clock: RtiClock }> }> {
   return get<{ requests: Array<RtiRequest & { clock: RtiClock }> }>('/rti');
 }

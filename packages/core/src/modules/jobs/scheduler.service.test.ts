@@ -119,14 +119,19 @@ describe('the daily job', () => {
 
     expect(result.status).toBe('ok');
     expect(stats.escalated).toBeGreaterThan(0);
-    expect(stats.digestsSent).toBe(1);
+
+    // THIS council's digest, not a global count. The daily job runs across every
+    // configured council in the database, and the test database is shared by every test
+    // file - so asserting `digestsSent === 1` was only true while this happened to be the
+    // only council with a configuration. It broke the moment another suite registered one.
+    const ours = mailer.sent.filter((m) => /SCHD\/COMP\/2026-27\//.test(m.text));
+    expect(ours).toHaveLength(1);
 
     // The escalated obligation is created due TODAY -- the reminder is owed now -- so the
     // digest reports it as due today rather than as overdue. The overdue rung it replaced
     // has been retired.
-    expect(mailer.sent[0]!.subject).toMatch(/due today/);
-    expect(mailer.sent[0]!.text).toMatch(/SCHD\/COMP\/2026-27\//);
-    expect(mailer.sent[0]!.text).toMatch(/no reply logged/);
+    expect(ours[0]!.subject).toMatch(/due today/);
+    expect(ours[0]!.text).toMatch(/no reply logged/);
   });
 
   it('does not run twice for the same day', async () => {

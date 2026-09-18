@@ -394,3 +394,55 @@ export const RTI_EXEMPTION_SECTIONS = tuple([
 ] as const);
 export const rtiExemptionSectionSchema = z.enum(RTI_EXEMPTION_SECTIONS);
 export type RtiExemptionSection = z.infer<typeof rtiExemptionSectionSchema>;
+
+// ─── Inward mail ─────────────────────────────────────────────────────────────
+
+/**
+ * What became of a message in the inward tray.
+ *
+ * A message is not a case. Most forwards are complaints, some are replies on a case
+ * already open, and some are circulars or misdirected mail — so a message is stored as
+ * itself first, and exactly one of these three things happens to it afterwards.
+ */
+export const MAIL_STATUSES = tuple(['unfiled', 'filed', 'dismissed'] as const);
+export const mailStatusSchema = z.enum(MAIL_STATUSES);
+export type MailStatus = z.infer<typeof mailStatusSchema>;
+
+/**
+ * How a message came to be attached to a case.
+ *
+ * Recorded on the row, because "why is this letter on this file" is a question somebody
+ * will ask in two years, and "a person decided" and "it quoted the number" are very
+ * different answers to it.
+ */
+export const MAIL_MATCH_RUNGS = tuple([
+  /** The case number was in the subject line. The strongest signal there is. */
+  'reference_subject',
+  /** The case number was in the body, usually inside a quoted reply. */
+  'reference_body',
+  /** An address the register knows. SUGGESTS ONLY - see matching.ts for why. */
+  'sender',
+  /** A person decided. */
+  'officer',
+] as const);
+export const mailMatchRungSchema = z.enum(MAIL_MATCH_RUNGS);
+export type MailMatchRung = z.infer<typeof mailMatchRungSchema>;
+
+/**
+ * Which shape of forward was unwrapped.
+ *
+ * Kept so that a parser regression can be traced to the mail client that produced it
+ * rather than guessed at. `rfc822_attachment` is the only form that carries a real
+ * timezone; every other form's date is text with no offset in it.
+ */
+export const MAIL_FORWARD_KINDS = tuple([
+  'rfc822_attachment',
+  'gmail',
+  'outlook_web',
+  'outlook_desktop',
+  'apple_mail',
+  'generic',
+  'none',
+] as const);
+export const mailForwardKindSchema = z.enum(MAIL_FORWARD_KINDS);
+export type MailForwardKind = z.infer<typeof mailForwardKindSchema>;

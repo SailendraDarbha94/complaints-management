@@ -22,7 +22,8 @@
     "lint": "echo 'lint: core ok'",
     "demo": "pnpm build && node --env-file-if-exists=../../.env.dev dist/scripts/demo.js",
     "keys": "pnpm build && node dist/scripts/keys.js",
-    "daily": "pnpm build && node --env-file-if-exists=../../.env.dev dist/scripts/daily.js"
+    "daily": "pnpm build && node --env-file-if-exists=../../.env.dev dist/scripts/daily.js",
+    "mail": "pnpm build && node --env-file-if-exists=../../.env.dev --env-file-if-exists=../../apps/web/.env.local dist/scripts/mail.js"
   },
   "dependencies": {
     "@google-cloud/storage": "^8.1.0",
@@ -31,12 +32,15 @@
     "@ksdc/db": "workspace:*",
     "@supabase/supabase-js": "^2.116.0",
     "drizzle-orm": "^0.38.3",
+    "imapflow": "^2.0.5",
     "jose": "^6.2.12",
+    "mailparser": "^3.9.28",
     "nodemailer": "^10.0.3",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@ksdc/testing": "workspace:*",
+    "@types/mailparser": "^3.4.6",
     "@types/node": "^22.10.5",
     "@types/nodemailer": "^8.0.1",
     "typescript": "^5.7.3",

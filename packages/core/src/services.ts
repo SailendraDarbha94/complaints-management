@@ -3,6 +3,7 @@ import { AuthService } from './modules/auth/auth.service.js';
 import { SupabaseAuthService } from './modules/auth/supabase-auth.service.js';
 import { TokenService } from './modules/auth/token.service.js';
 import { CaseIntakeService } from './modules/cases/case-intake.service.js';
+import { RespondentService } from './modules/cases/respondent.service.js';
 import { CaseLifecycleService } from './modules/cases/case-lifecycle.service.js';
 import { CorrespondenceService } from './modules/correspondence/correspondence.service.js';
 import { DocumentsService } from './modules/documents/documents.service.js';
@@ -12,6 +13,7 @@ import { DigestService } from './modules/notifications/digest.service.js';
 import { SchedulerService } from './modules/jobs/scheduler.service.js';
 import { RegisterService } from './modules/register/register.service.js';
 import { RtiService } from './modules/rti/rti.service.js';
+import { MailIntakeService } from './modules/mail/mail-intake.service.js';
 import { ConsoleMailer, MailerPort, SmtpMailer } from './modules/notifications/mailer.js';
 import { GcsStorage, LocalStorage, StoragePort } from './modules/documents/storage.js';
 import { SupabaseStorage } from './modules/documents/supabase-storage.js';
@@ -40,11 +42,13 @@ export interface Services {
   digest: DigestService;
   scheduler: SchedulerService;
   intake: CaseIntakeService;
+  respondents: RespondentService;
   lifecycle: CaseLifecycleService;
   correspondence: CorrespondenceService;
   documents: DocumentsService;
   register: RegisterService;
   rti: RtiService;
+  mail: MailIntakeService;
   mailer: MailerPort;
   storage: StoragePort;
 }
@@ -103,6 +107,12 @@ export async function getServices(): Promise<Services> {
   const lifecycle = new CaseLifecycleService(followups);
   const digest = new DigestService(queue, mailer);
 
+  // Hoisted out of the literal below because the mail service takes them as collaborators
+  // and an object literal cannot refer to its own siblings.
+  const intake = new CaseIntakeService(followups);
+  const correspondenceService = new CorrespondenceService(lifecycle, followups);
+  const documentsService = new DocumentsService(storage);
+
   const services: Services = {
     tokens,
     auth: new AuthService(tokens, mailer),
@@ -111,12 +121,20 @@ export async function getServices(): Promise<Services> {
     queue,
     digest,
     scheduler: new SchedulerService(followups, digest),
-    intake: new CaseIntakeService(followups),
+    intake,
+    respondents: new RespondentService(),
     lifecycle,
-    correspondence: new CorrespondenceService(lifecycle, followups),
-    documents: new DocumentsService(storage),
+    correspondence: correspondenceService,
+    documents: documentsService,
     register: new RegisterService(),
     rti: new RtiService(),
+    mail: new MailIntakeService(
+      storage,
+      intake,
+      correspondenceService,
+      documentsService,
+      followups,
+    ),
     mailer,
     storage,
   };

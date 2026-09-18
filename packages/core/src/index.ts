@@ -76,6 +76,11 @@ export { TokenService, generateSigningKeys, type AccessClaims } from './modules/
 // The domain.
 export { CaseIntakeService, type IntakeInput } from './modules/cases/case-intake.service.js';
 export { CaseLifecycleService } from './modules/cases/case-lifecycle.service.js';
+export {
+  RespondentService,
+  type AddRespondentInput,
+  type RespondentCandidate,
+} from './modules/cases/respondent.service.js';
 export { FollowupService, type EngineContext } from './modules/followups/followup.service.js';
 export { QueueService } from './modules/followups/queue.service.js';
 export { CorrespondenceService } from './modules/correspondence/correspondence.service.js';
@@ -96,6 +101,29 @@ export {
   statutoryPeriodDays,
   type RtiClock,
 } from './modules/rti/rti-clock.js';
+// Inward mail: the tray the officer forwards complaints into.
+export {
+  MailIntakeService,
+  MAIL_ROBOT_USER_ID,
+  type IngestMeta,
+  type IngestResult,
+  type TrayRow,
+} from './modules/mail/mail-intake.service.js';
+export { unwrapForward, snippetOf, type ForwardedOriginal } from './modules/mail/forwarded.js';
+export { matchMessage, referencesIn, type MatchResult } from './modules/mail/matching.js';
+export {
+  sweepMailbox,
+  mailboxOrThrow,
+  councilForMailbox,
+  type SweepResult,
+} from './modules/mail/sweep.js';
+export {
+  Mailbox,
+  mailboxConfigFromEnv,
+  mailboxKey,
+  type MailboxConfig,
+} from './modules/mail/mailbox.js';
+
 export {
   composeRtiReply,
   type RtiReplyDraft,

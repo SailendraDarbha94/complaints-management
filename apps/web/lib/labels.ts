@@ -224,3 +224,24 @@ export const RTI_STAGE_LABEL: Record<string, string> = {
   rti_await_fee: 'Awaiting the further fee',
   rti_await_third_party: 'Third party may object',
 };
+
+// ─── Inward mail ─────────────────────────────────────────────────────────────
+
+/** How the message reached us, in words rather than in parser vocabulary. */
+export const FORWARD_KIND_LABEL: Record<string, string> = {
+  rfc822_attachment: 'forwarded as an attachment',
+  gmail: 'forwarded from Gmail',
+  outlook_web: 'forwarded from Outlook',
+  outlook_desktop: 'forwarded from Outlook',
+  apple_mail: 'forwarded from Apple Mail',
+  generic: 'forwarded',
+  none: 'sent to us directly',
+};
+
+/** Why a message ended up on the case it is on. */
+export const MATCH_RUNG_LABEL: Record<string, string> = {
+  reference_subject: 'filed automatically — the subject quoted the case number',
+  reference_body: 'filed automatically — the message quoted the case number',
+  sender: 'filed on the sender',
+  officer: 'filed by the officer',
+};

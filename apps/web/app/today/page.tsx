@@ -43,6 +43,8 @@ export default async function TodayPage() {
           <span className="council">Karnataka State Dental Council</span>
           <h1>Today</h1>
           <nav className="crumbs" style={{ marginTop: 6, marginBottom: 0 }}>
+            <Link href="/intake">Inward mail</Link>
+            <span aria-hidden="true">/</span>
             <Link href="/cases">Cases</Link>
             <span aria-hidden="true">/</span>
             <Link href="/rti">RTI</Link>

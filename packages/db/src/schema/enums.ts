@@ -17,6 +17,9 @@ import {
   NOTICE_STATES,
   PARTY_KINDS,
   PARTY_ROLES,
+  MAIL_FORWARD_KINDS,
+  MAIL_MATCH_RUNGS,
+  MAIL_STATUSES,
   ROLES,
   RTI_CHANNELS,
   RTI_DECISIONS,
@@ -63,3 +66,7 @@ export const rtiChannelEnum = pgEnum('rti_channel', RTI_CHANNELS);
 export const rtiDecisionEnum = pgEnum('rti_decision', RTI_DECISIONS);
 /** s.8(1)(a) to (j) and s.9 only. Section 11 is absent by design - see rti.ts. */
 export const rtiExemptionSectionEnum = pgEnum('rti_exemption_section', RTI_EXEMPTION_SECTIONS);
+
+export const mailStatusEnum = pgEnum('mail_status', MAIL_STATUSES);
+export const mailMatchRungEnum = pgEnum('mail_match_rung', MAIL_MATCH_RUNGS);
+export const mailForwardKindEnum = pgEnum('mail_forward_kind', MAIL_FORWARD_KINDS);

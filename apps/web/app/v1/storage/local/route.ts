@@ -55,7 +55,9 @@ export const PUT = withPublic(SIGNED_URL_REASON, async ({ req, services }) => {
   if (bytes.length > MAX_UPLOAD_BYTES) {
     throw new DomainError(`That file is larger than ${MAX_UPLOAD_BYTES / 1_048_576} MB.`);
   }
-  await local(services.storage).write(key, bytes);
+  // The type the browser declared, kept only so the local driver's signature matches the
+  // cloud ones. It is never trusted: commit() re-establishes the type from the bytes.
+  await local(services.storage).write(key, bytes, req.headers.get('content-type') ?? 'application/octet-stream');
   return { stored: bytes.length };
 });
 
