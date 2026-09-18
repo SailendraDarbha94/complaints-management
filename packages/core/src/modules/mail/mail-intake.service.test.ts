@@ -198,6 +198,107 @@ describe('opening a case from a card', () => {
   });
 });
 
+describe("a forward from the Council's own address that could not be unwrapped", () => {
+  // What happened on the first real forward from the office webmail: the unwrapper did not
+  // recognise the layout, and every fallback then took the only sender left - the Council's
+  // own registrar address - as the complainant. Whatever the unwrapper misses in future,
+  // the Council must never be the complainant on its own case.
+  async function unreadableForward() {
+    seq++;
+    const bytes = raw(
+      {
+        From: 'Registrar MLKS <registrar@mlks.test>',
+        To: 'intake@mlks.test',
+        Subject: 'Fwd: Treatment complaint',
+        'Message-ID': `<unreadable-${seq}@mlks.test>`,
+        Date: 'Thu, 17 Sep 2026 12:02:00 +0530',
+        'Content-Type': 'text/plain; charset=utf-8',
+      },
+      'Please see below.\r\n\r\nThe bridge fitted in August has come loose twice.',
+    );
+    return { parsed: await simpleParser(bytes), raw: bytes };
+  }
+
+  it('shows no complainant on the card rather than the Council', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const out = await ingest(tx, await unreadableForward());
+      const card = (await mail.tray(tx, ctx)).find((c) => c.id === out.mailMessageId);
+      expect(card!.complainant).toBeNull();
+
+      const page = await mail.get(tx, ctx, out.mailMessageId);
+      expect((page!.message as { complainant: unknown }).complainant).toBeNull();
+    });
+  });
+
+  it('will not open a case in the Council name, and spends no case number trying', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const out = await ingest(tx, await unreadableForward());
+      const count = async () =>
+        (
+          await tx.execute<{ n: number }>(
+            sql`SELECT count(*)::int n FROM case_file WHERE council_id = ${councilId}::uuid`,
+          )
+        ).rows[0]!.n;
+      const before = await count();
+
+      await expect(mail.openCase(tx, ctx, { mailMessageId: out.mailMessageId })).rejects.toThrow(
+        /Council's own address/,
+      );
+      expect(await count()).toBe(before);
+    });
+  });
+
+  it('opens once the officer says who complained, without pairing them with our address', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const out = await ingest(tx, await unreadableForward());
+      const opened = await mail.openCase(tx, ctx, {
+        mailMessageId: out.mailMessageId,
+        complainantName: 'L. N. Rao',
+      });
+
+      const parties = await tx.execute<{ full_name: string; email: string | null }>(sql`
+        SELECT p.full_name, p.email
+        FROM case_party cp JOIN party p ON p.id = cp.party_id
+        WHERE cp.case_file_id = ${opened.caseFileId}::uuid AND cp.role = 'complainant'
+      `);
+      expect(parties.rows).toEqual([{ full_name: 'L. N. Rao', email: null }]);
+    });
+  });
+
+  it('treats the intake mailbox itself as the Council too', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      seq++;
+      const bytes = raw(
+        {
+          From: 'Intake <intake@mlks.test>',
+          To: 'intake@mlks.test',
+          Subject: 'A note to self',
+          'Message-ID': `<self-${seq}@mlks.test>`,
+          Date: 'Thu, 17 Sep 2026 12:02:00 +0530',
+          'Content-Type': 'text/plain; charset=utf-8',
+        },
+        'Testing the tray.',
+      );
+      const out = await mail.ingest(tx, ctx, await simpleParser(bytes), {
+        mailbox: 'intake@mlks.test/INBOX',
+        uid: ++seq,
+        uidValidity: '1',
+        raw: bytes,
+      });
+      const card = (await mail.tray(tx, ctx)).find((c) => c.id === out.mailMessageId);
+      expect(card!.complainant).toBeNull();
+    });
+  });
+
+  it('still names the complainant of a forward it could read', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const out = await ingest(tx, await forward(GMAIL_FORWARD));
+      const card = (await mail.tray(tx, ctx)).find((c) => c.id === out.mailMessageId);
+      expect(card!.complainant).toEqual({ name: 'Kavitha Devi', email: 'kdevi@example.in' });
+    });
+  });
+});
+
 describe('a reply that quotes a case number', () => {
   it('files itself, without waiting for the officer', async () => {
     await withCouncil({ councilId, userId: officer }, async (tx) => {

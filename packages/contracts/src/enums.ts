@@ -443,6 +443,7 @@ export const MAIL_FORWARD_KINDS = tuple([
   'apple_mail',
   'generic',
   'none',
+  'header_block',
 ] as const);
 export const mailForwardKindSchema = z.enum(MAIL_FORWARD_KINDS);
 export type MailForwardKind = z.infer<typeof mailForwardKindSchema>;

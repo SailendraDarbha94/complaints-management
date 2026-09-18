@@ -97,12 +97,242 @@ const LABELS = {
   date: /^[ \t>]*\*?[ \t]*(?:Date|Sent)[ \t]*:[ \t]*\*?(.*)$/im,
 } as const;
 
+/** One forwarded-header line: a known label, a colon, and whatever follows on the same line. */
+const LABEL_LINE = /^[ \t>]*\*?[ \t]*(From|To|Cc|Subject|Date|Sent|Reply-To)[ \t]*:\*?[ \t]*(.*)$/i;
+
+/**
+ * A line that opens with a rule of three or more `-`, `=` or `_`: a separator, a bare rule,
+ * or a closing line. Furniture, and never part of a header value.
+ */
+const RULE = /^[ \t>]*(?:-{3,}|={3,}|_{3,})/;
+
+/**
+ * The narrowest hard wrap a header line is known to get. SquirrelMail breaks every line at
+ * 76 characters when it sends, header lines included; html-to-text, which mailparser uses
+ * for an HTML-only message, breaks at 80. A header line that long, with the next line's
+ * first word unable to fit on it, was broken by a wrapper, not by whoever wrote it.
+ */
+const WRAP_WIDTH = 76;
+
+/**
+ * Is `line`, directly under the header line `prev`, the rest of that header's value?
+ *
+ * Long values get wrapped: a subject that names a dentist and a clinic is routinely past
+ * 80 characters, and a long display name pushes the address onto a line of its own:
+ *
+ *      From: Lakshminarayana Chikkaballapur Venkatasubbaiah
+ *      <lakshminarayana.venkatasubbaiah@example.in>
+ *
+ * Read one line at a time, that sender has no address and the first line of the body is
+ * the tail of the subject. So a line counts as a continuation when it sits INSIDE the
+ * block (the line after it is another header or the rule that closes the block), or when
+ * `prev` was full enough that the wrapper must have broken it. An indented line is only
+ * accepted in the first case: Yahoo starts the body on the line straight after Subject,
+ * with a leading space and no blank line, and that must stay the body.
+ */
+function isContinuation(prev: string, line: string, after: string | undefined): boolean {
+  const unquoted = line.replace(/^[ \t]*(?:>[ \t]?)+/, '');
+  const content = unquoted.trim();
+  if (!content || LABEL_LINE.test(line) || RULE.test(line)) return false;
+  if (after !== undefined && (LABEL_LINE.test(after) || RULE.test(after))) return true;
+  if (/^[ \t]/.test(unquoted)) return false;
+  return prev.trimEnd().length + 1 + content.split(/\s/)[0]!.length > WRAP_WIDTH;
+}
+
+/** A forwarded header block as read: one line per header, and where the letter starts. */
+interface HeaderBlock {
+  /** One line per header, "Label: value", however the client laid it out. */
+  rows: string[];
+  /** The headers present, with Sent read as Date. */
+  fields: Set<string>;
+  /** The index of the first line after the block. The body is cut from here. */
+  end: number;
+}
+
+/**
+ * Read the forwarded header block that starts at the label line `lines[start]`.
+ *
+ * Found on the first real forward from the Council's own webmail. Roundcube lays a
+ * forwarded message's headers out as an HTML TABLE - <th>From:</th><td>Name &lt;addr&gt;</td> -
+ * and the text/plain alternative it writes from that (its own html2text, not mailparser's)
+ * upper-cases the <th> and puts the value on the NEXT line, with a blank line between rows:
+ *
+ *      SUBJECT:
+ *      Customer redressal for treatment related issue
+ *
+ *      FROM:
+ *      A. Complainant <complainant@example.in>
+ *
+ * A label regex reading "From: value" on one line captures nothing from that. So a label
+ * standing alone takes the line under it as its value, a wrapped value is joined back onto
+ * its label (see isContinuation), and a blank line between two rows is stepped over.
+ *
+ * Where the block ENDS matters as much, because what follows it is stored as the
+ * complainant's letter, and a letter to the Council routinely opens with labelled lines of
+ * its own: "From: <name, address>", "Date: 10/09/2026", "To:" over the addressee. Two rules,
+ * both about the block's shape, keep those in the letter:
+ *
+ * - A block is laid out one way throughout, and its first gap says which. Rows that touch
+ *   (Gmail, Outlook, Zimbra, almost everyone) make a blank line the end of the block. Only
+ *   rows that start out apart - Roundcube's table, and HTML rendered with a blank line
+ *   under every row - are read across blank lines.
+ * - No header comes twice in one block. A second From: or Date: is the letter's.
+ *
+ * Only the rows are rebuilt. The lines from `end` on are left exactly as they are.
+ */
+function readHeaderBlock(lines: string[], start: number): HeaderBlock {
+  const rows: string[] = [];
+  const fields = new Set<string>();
+  let apart: boolean | undefined;
+  let i = start;
+
+  while (i < lines.length) {
+    const m = LABEL_LINE.exec(lines[i]!);
+    if (!m) break;
+    // Date and Sent are one field under two names: Outlook says Sent, the rest Date.
+    const label = m[1]!.toLowerCase();
+    const field = label === 'sent' ? 'date' : label;
+    if (fields.has(field)) break;
+    fields.add(field);
+
+    let row = lines[i++]!;
+    // Measured against the last PHYSICAL line, not the joined one, which is always long.
+    let last = row;
+    const under = lines[i];
+    // Only when the line under is a value rather than another label: "FROM:" then "TO:"
+    // means an empty field, not a sender called "TO:".
+    if (m[2]!.trim() === '' && under !== undefined && under.trim() !== '' && !LABEL_LINE.test(under)) {
+      row = `${m[1]}: ${under.trim()}`;
+      last = under;
+      i++;
+    }
+    while (i < lines.length && isContinuation(last, lines[i]!, lines[i + 1])) {
+      last = lines[i++]!;
+      row = `${row.trimEnd()} ${last.replace(/^[ \t>]*/, '').trim()}`;
+    }
+    rows.push(row);
+
+    let next = i;
+    while (next < lines.length && lines[next]!.trim() === '') next++;
+    if (next === i) {
+      apart ??= false;
+      continue;
+    }
+    apart ??= true;
+    if (!apart || next === lines.length || !LABEL_LINE.test(lines[next]!)) break;
+    i = next;
+  }
+  return { rows, fields, end: i };
+}
+
+/** "Fwd:", "Fw:", "FW:" - the subject a mail client gives a message it is forwarding. */
+const FORWARD_SUBJECT = /^\s*(?:fwd?|fw)\s*:/i;
+
+/**
+ * A forwarded header block with no separator line above it.
+ *
+ * Roundcube draws none: the forwarded message opens directly with its Subject / Date /
+ * From / To rows. This finds such a block by its SHAPE - a block of header rows containing
+ * From and at least two of Subject, Date and To - within the first lines of the message,
+ * leaving room for a covering note above it.
+ *
+ * It is only consulted when the subject says the message is a forward. Without that, a
+ * complainant writing to us directly who pasted an earlier email into their complaint
+ * would have the pasted sender taken for themselves.
+ */
+function headerBlockWithoutSeparator(lines: string[]): HeaderBlock | null {
+  for (let i = 0; i < Math.min(lines.length, 25); i++) {
+    if (!LABEL_LINE.test(lines[i]!)) continue;
+
+    const block = readHeaderBlock(lines, i);
+    const supporting = ['subject', 'date', 'to'].filter((f) => block.fields.has(f)).length;
+    if (block.fields.has('from') && supporting >= 2) return block;
+    // Always past line i: a block holds at least the label line it started on.
+    i = block.end - 1;
+  }
+  return null;
+}
+
 /** Apple Mail quotes the forwarded block; a parser anchored on `^From:` finds nothing. */
 function unquote(text: string): string {
   return text
     .split('\n')
     .map((line) => line.replace(/^[ \t]*(?:>[ \t]?)+/, ''))
     .join('\n');
+}
+
+/** "----- End forwarded message -----": Horde and Mutt close the forward as well as open it. */
+const END_RULE = /^[ \t>]*-{3,}[ \t]*End\b.*-{3,}[ \t]*$/i;
+
+/**
+ * The forwarded message's own words, without the furniture some clients put around them.
+ *
+ * - A rule opening the body that does not introduce another header block closes the one
+ *   above it: SquirrelMail draws a bare rule under its headers, Zoho repeats its separator.
+ *   A rule followed by From: is a forward nested inside this one and is kept.
+ * - An "End forwarded message" line, and whatever the forwarder added below it - their
+ *   signature, usually - is not the complainant's.
+ * - A body quoted on every line (Zimbra's quote-the-original option, Zoho's blockquote) is
+ *   unquoted, one level. Left quoted, snippetOf() drops every line and the card is blank.
+ */
+function cleanBody(body: string): string | null {
+  let lines = body.split('\n');
+
+  let i = 0;
+  while (i < lines.length && lines[i]!.trim() === '') i++;
+  if (i < lines.length && RULE.test(lines[i]!)) {
+    let j = i + 1;
+    while (j < lines.length && lines[j]!.trim() === '') j++;
+    if (j >= lines.length || !LABEL_LINE.test(lines[j]!)) i++;
+  }
+  lines = lines.slice(i);
+
+  const end = lines.findIndex((l) => END_RULE.test(l));
+  if (end !== -1) lines = lines.slice(0, end);
+
+  const written = lines.filter((l) => l.trim() !== '');
+  if (written.length && written.every((l) => /^[ \t]*>/.test(l))) {
+    lines = lines.map((l) => l.replace(/^[ \t]*>[ \t]?/, ''));
+  }
+  return lines.join('\n').trim() || null;
+}
+
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+
+/**
+ * The HTML part as plain lines: one per block, no wrapping, entities decoded.
+ *
+ * Used only when the text gave up no sender, in cases where the HTML still has each header
+ * in its own table row or <div> but the text has lost that:
+ *
+ * - An HTML-only message, its text part dropped by a relay. mailparser's own rendering
+ *   runs Roundcube's header table into one wrapped line: "Subject:XDate:YFrom:Name".
+ * - Yahoo's own text part, which puts the separator and every header on ONE line, each
+ *   value glued to the next label.
+ * - An HTML part beside an attachment with no text part: mailparser sets no text at all.
+ *
+ * All that is needed is a line per block element, which mailparser's rendering does not
+ * guarantee. This is not a general HTML renderer and does not try to be.
+ */
+function htmlAsText(html: string): string {
+  return html
+    .replace(/<(head|style|script|title)\b[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/<br\b[^>]*>/gi, '\n')
+    .replace(/<\/?(?:p|div|tr|table|tbody|thead|blockquote|h[1-6]|li|ul|ol|pre|hr)\b[^>]*>/gi, '\n')
+    .replace(/<\/t[hd]\s*>/gi, ' ')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi, (m, dec?: string, hex?: string, name?: string) => {
+      const code = dec ? Number(dec) : hex ? parseInt(hex, 16) : NaN;
+      if (!Number.isNaN(code)) return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+      return ENTITIES[name!.toLowerCase()] ?? m;
+    })
+    .split('\n')
+    .map((l) => l.trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 /**
@@ -126,11 +356,15 @@ function addressFrom(value: string): { address: string | null; name: string | nu
   }
 
   // `Name addr [addr]` — mailparser's rendering of a mailto link in an HTML-only forward.
-  const bracketed = /\[([^\]\s]+@[^\]\s]+)\]/.exec(raw);
+  // Outlook 2007/2010 writes the same shape itself as `Name [mailto:addr]`; without the
+  // optional prefix the complainant's address would be stored as "mailto:addr".
+  const bracketed = /\[(?:mailto:)?([^\]\s]+@[^\]\s]+)\]/i.exec(raw);
   if (bracketed) {
     const before = raw.slice(0, bracketed.index).trim();
-    // The address usually appears twice: once as the link text, once in the brackets.
-    const name = before.replace(/[^\s]+@[^\s]+\s*$/, '').trim();
+    // The address usually appears twice: once as the link text, once in the brackets. It
+    // is cut at its `<` when there is one, because Zoho writes `Name<addr>` with no space
+    // and the whole of "Gowda<ramesh.gowda@example.in" is otherwise one word to remove.
+    const name = before.replace(/<?[^\s<]+@[^\s]+\s*$/, '').trim();
     return { address: bracketed[1]!.toLowerCase(), name: name || null };
   }
 
@@ -181,23 +415,43 @@ export async function unwrapForward(parsed: ParsedMail): Promise<ForwardedOrigin
     }
   }
 
-  // ── Route 2: an in-body separator, matched by shape. ──────────────────────
-  const text = parsed.text ?? '';
+  // Routes 2 and 3 read the text part. When that yields no sender, they read the HTML
+  // part instead - see htmlAsText() for when the HTML has what the text lost. A sender
+  // from either wins; failing that, a `generic` from the text is kept over nothing.
+  const fromText = unwrapInBody(parsed.text ?? '', parsed.subject);
+  if (fromText.fromAddress || fromText.fromName) return fromText;
+  if (typeof parsed.html === 'string' && parsed.html.trim()) {
+    const fromHtml = unwrapInBody(htmlAsText(parsed.html), parsed.subject);
+    if (fromHtml.fromAddress || fromHtml.fromName || fromText.kind === 'none') return fromHtml;
+  }
+  return fromText;
+}
+
+/** Routes 2 and 3, on one rendering of the message as text. */
+function unwrapInBody(raw: string, envelopeSubject: string | undefined): ForwardedOriginal {
+  // Two changes to the text as a whole, and neither alters a word of the letter later cut
+  // from it: line ends become \n, and non-breaking spaces become spaces. Horde
+  // right-aligns its labels with &nbsp; and Outlook on the web puts one straight after each
+  // label, so the text arrives with U+00A0 before "Date:" and after "From:", where [ \t]
+  // does not match it.
+  const text = raw.replace(/\r\n/g, '\n').replace(/\xa0/g, ' ');
   if (!text.trim()) return NOT_A_FORWARD;
 
+  // ── Route 2: an in-body separator, matched by shape. ──────────────────────
   for (const { kind, re } of SEPARATORS) {
     const m = re.exec(text);
     if (!m) continue;
 
     // Everything after the separator. What precedes it is the officer's own covering
     // note, which belongs to the forward rather than to the complaint.
-    const after = unquote(text.slice(m.index + m[0].length));
+    const after = unquote(text.slice(m.index + m[0].length)).split('\n');
 
-    // The header block is the run of labelled lines at the top; the body is the rest.
-    // Take the first blank line that follows at least one recognised label.
-    const headerEnd = findHeaderEnd(after);
-    const headerBlock = after.slice(0, headerEnd);
-    const body = after.slice(headerEnd).trim();
+    // The header block opens within the first lines under the separator - Apple Mail
+    // leaves a blank line first - and the body is everything below it.
+    const start = after.slice(0, 12).findIndex((l) => LABEL_LINE.test(l));
+    const block = start === -1 ? null : readHeaderBlock(after, start);
+    const headerBlock = block?.rows.join('\n') ?? '';
+    const body = cleanBody(after.slice(block?.end ?? 0).join('\n'));
 
     const fromLine = LABELS.from.exec(headerBlock)?.[1] ?? '';
     const { address, name } = addressFrom(fromLine);
@@ -208,7 +462,7 @@ export async function unwrapForward(parsed: ParsedMail): Promise<ForwardedOrigin
     // A separator with no `From:` under it is not a header block we understood. Say
     // `generic` and hand the officer the whole thing rather than inventing a sender.
     if (!address && !name) {
-      return { ...NOT_A_FORWARD, kind: 'generic', body: after.trim() || null };
+      return { ...NOT_A_FORWARD, kind: 'generic', body: after.join('\n').trim() || null };
     }
 
     return {
@@ -221,38 +475,39 @@ export async function unwrapForward(parsed: ParsedMail): Promise<ForwardedOrigin
       // header carries no timezone, and inventing one is worse than having none.
       date: null,
       dateText,
-      body: body || null,
+      body,
     };
   }
 
-  return NOT_A_FORWARD;
-}
-
-/**
- * Where the forwarded header block stops and the message begins.
- *
- * The first blank line after at least one recognised label. Falling back to "no body" when
- * there is no blank line at all is wrong in the other direction — some clients run the
- * headers straight into the text — so the fallback is a small fixed window of lines.
- */
-function findHeaderEnd(after: string): number {
-  const lines = after.split('\n');
-  let seenLabel = false;
-  let offset = 0;
-
-  for (let i = 0; i < lines.length && i < 12; i++) {
-    const line = lines[i]!;
-    const bare = line.replace(/^[ \t]*(?:>[ \t]?)+/, '').trim();
-    const isLabel = /^\*?\s*(?:From|To|Cc|Subject|Date|Sent|Reply-To)\s*:/i.test(bare);
-
-    if (isLabel) seenLabel = true;
-    else if (seenLabel && bare === '') return offset;
-    // A non-blank, non-label line after the labels have started is already the body.
-    else if (seenLabel && bare !== '') return offset;
-
-    offset += line.length + 1;
+  // ── Route 3: a header block with no separator above it. ───────────────────
+  //
+  // Roundcube - the Council's own webmail - forwards this way, and so do Zimbra and classic
+  // Outlook in HTML compose. Only tried when the subject says this IS a forward; see
+  // headerBlockWithoutSeparator() for why.
+  if (FORWARD_SUBJECT.test(envelopeSubject ?? '')) {
+    const lines = text.split('\n');
+    const block = headerBlockWithoutSeparator(lines);
+    if (block) {
+      const headerBlock = unquote(block.rows.join('\n'));
+      const { address, name } = addressFrom(LABELS.from.exec(headerBlock)?.[1] ?? '');
+      if (address || name) {
+        return {
+          kind: 'header_block',
+          fromAddress: address,
+          fromName: name,
+          to: LABELS.to.exec(headerBlock)?.[1]?.trim().replace(/\*/g, '') || null,
+          subject: LABELS.subject.exec(headerBlock)?.[1]?.trim().replace(/\*/g, '') || null,
+          // Text, not a timestamp, for the same reason as every other in-body header: the
+          // "2026-09-18 15:15" Roundcube writes carries no timezone at all.
+          date: null,
+          dateText: LABELS.date.exec(headerBlock)?.[1]?.trim().replace(/\*/g, '') || null,
+          body: cleanBody(lines.slice(block.end).join('\n')),
+        };
+      }
+    }
   }
-  return seenLabel ? offset : 0;
+
+  return NOT_A_FORWARD;
 }
 
 /**

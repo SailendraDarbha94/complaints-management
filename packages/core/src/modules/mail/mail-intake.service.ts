@@ -15,6 +15,13 @@ import type { StoragePort } from '../documents/storage.js';
 import { pgTextArray } from '../../common/pg-array.js';
 import { snippetOf, unwrapForward } from './forwarded.js';
 import { matchMessage, type MatchCandidate } from './matching.js';
+import {
+  intakeAccountOf,
+  ownAddressesOf,
+  suggestedComplainant,
+  type OwnAddresses,
+  type SuggestedComplainant,
+} from './complainant.js';
 
 /**
  * The inward mail tray.
@@ -107,6 +114,8 @@ export type TrayRow = {
   suggested_case_number: string | null;
   attachment_count: number;
   skipped_count: number;
+  /** Who the case would be opened for. Null when the message does not say. */
+  complainant: SuggestedComplainant | null;
 };
 
 export type MailAttachmentRow = {
@@ -373,16 +382,29 @@ export class MailIntakeService {
 
     // Always give the case a complainant. intake.create() only creates party rows when one
     // is supplied, and a case with no parties has nobody for a letter to go to.
-    const name =
-      args.complainantName?.trim() ||
-      m.original_from_name?.trim() ||
-      m.envelope_from_name?.trim() ||
-      (m.original_from ?? m.envelope_from).split('@')[0] ||
-      'Unnamed complainant';
+    //
+    // What the officer typed wins. Otherwise the message's own answer - which is never an
+    // address of the Council's (see complainant.ts). When the message cannot say, the case
+    // is not opened in the Council's name: the officer is asked. That refusal is the whole
+    // point, and it is what the tray's quick "Open a case" runs into on a forward it could
+    // not read.
+    const suggested = suggestedComplainant(m, await this.ownAddresses(tx, ctx, m.mailbox));
+    const typedName = args.complainantName?.trim();
+    if (!typedName && !suggested) {
+      throw new DomainError(
+        "This message came from the Council's own address and the original sender could " +
+          "not be read from it. Open the message and enter the complainant's name and email.",
+      );
+    }
+    const name = typedName || suggested!.name;
     const email =
       args.complainantEmail !== undefined
-        ? args.complainantEmail
-        : (m.original_from ?? m.envelope_from);
+        ? args.complainantEmail?.trim() || null
+        : // A typed name with the suggested email would pair two different people when
+          // the officer has corrected who complained, so the email follows the name.
+          typedName && typedName !== suggested?.name
+          ? null
+          : (suggested?.email ?? null);
 
     const created = await this.intake.create(tx, ctx, {
       summary,
@@ -476,9 +498,9 @@ export class MailIntakeService {
     ctx: EngineContext,
     status: MailStatus = 'unfiled',
   ): Promise<TrayRow[]> {
-    const rows = await tx.execute<TrayRow>(sql`
+    const rows = await tx.execute<Omit<TrayRow, 'complainant'> & { mailbox: string | null }>(sql`
       SELECT m.id, m.subject, m.snippet, m.envelope_from, m.envelope_from_name,
-             m.envelope_date, m.ingested_at, m.forward_kind,
+             m.envelope_date, m.ingested_at, m.forward_kind, m.mailbox,
              m.original_from, m.original_from_name, m.original_subject, m.original_date_text,
              m.status, m.suggestion_note, m.suggested_case_file_id,
              sc.case_number AS suggested_case_number,
@@ -492,7 +514,14 @@ export class MailIntakeService {
       ORDER BY m.ingested_at DESC
       LIMIT 200
     `);
-    return rows.rows;
+    const council = await this.councilAddresses(tx, ctx);
+    return rows.rows.map(({ mailbox, ...row }) => ({
+      ...row,
+      complainant: suggestedComplainant(
+        row,
+        ownAddressesOf({ ...council, intakeAccount: intakeAccountOf(mailbox) }),
+      ),
+    }));
   }
 
   /** One message, with everything the detail screen shows. */
@@ -524,7 +553,12 @@ export class MailIntakeService {
       senderAddresses: [m.original_from, m.envelope_from].filter((a): a is string => Boolean(a)),
     });
 
-    return { message: m as unknown as Record<string, unknown>, attachments: attachments.rows, candidates: match.candidates };
+    const complainant = suggestedComplainant(m, await this.ownAddresses(tx, ctx, m.mailbox));
+    return {
+      message: { ...m, complainant } as unknown as Record<string, unknown>,
+      attachments: attachments.rows,
+      candidates: match.candidates,
+    };
   }
 
   /**
@@ -699,18 +733,39 @@ export class MailIntakeService {
       case_number: string | null;
       suggestion_note: string | null;
       dismissed_reason: string | null;
+      mailbox: string | null;
     }>(sql`
       SELECT m.id, m.subject, m.body_text, m.body_html, m.snippet, m.message_id,
              m.envelope_from, m.envelope_from_name, m.envelope_to, m.envelope_date,
              m.ingested_at, m.forward_kind, m.original_from, m.original_from_name,
              m.original_to, m.original_subject, m.original_date, m.original_date_text,
              m.original_body, m.status, m.matched_rung, m.case_file_id,
-             c.case_number, m.suggestion_note, m.dismissed_reason
+             c.case_number, m.suggestion_note, m.dismissed_reason, m.mailbox
       FROM mail_message m
       LEFT JOIN case_file c ON c.id = m.case_file_id
       WHERE m.council_id = ${ctx.councilId}::uuid AND m.id = ${id}::uuid
     `);
     return rows.rows[0] ?? null;
+  }
+
+  private async councilAddresses(
+    tx: Tx,
+    ctx: EngineContext,
+  ): Promise<{ officialEmail: string | null; website: string | null }> {
+    const rows = await tx.execute<{ official_email: string | null; website: string | null }>(sql`
+      SELECT official_email, website FROM council WHERE id = ${ctx.councilId}::uuid
+    `);
+    const r = rows.rows[0];
+    return { officialEmail: r?.official_email ?? null, website: r?.website ?? null };
+  }
+
+  private async ownAddresses(
+    tx: Tx,
+    ctx: EngineContext,
+    mailbox: string | null,
+  ): Promise<OwnAddresses> {
+    const council = await this.councilAddresses(tx, ctx);
+    return ownAddressesOf({ ...council, intakeAccount: intakeAccountOf(mailbox) });
   }
 
   private async mustFind(tx: Tx, ctx: EngineContext, id: string) {
