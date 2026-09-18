@@ -1,8 +1,9 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { RTI_DECISIONS, RTI_EXEMPTIONS, requiresExemption, type RtiDecision } from '@ksdc/contracts';
+import { BusyButton } from '@/app/components/busy-button';
+import { useAction } from '@/app/components/use-action';
 import type { RtiClock, RtiRequest } from '@/lib/api';
 import { RTI_DECISION_LABEL, formatDate } from '@/lib/labels';
 import { PUBLIC_API_URL } from '@/lib/public-api';
@@ -29,29 +30,43 @@ async function post(path: string, body: unknown): Promise<Record<string, unknown
   return payload as Record<string, unknown>;
 }
 
-function useAction() {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+/**
+ * useAction(), plus the two things every form here also needs: the warnings a successful
+ * write can come back with, and which of a panel's forms is the one in flight.
+ *
+ * A panel shares one of these across all its forms so that a single error line serves
+ * them all. `pending` therefore disables every write button in the panel - two steps of
+ * the same file recorded at once is never what was meant - while `busy(which)` puts the
+ * spinner only on the button that was actually pressed, not on its neighbours too.
+ *
+ * With no `then`, a success refreshes the page, inside the transition, so the button stays
+ * down until the file on screen shows what was just recorded.
+ */
+function useRtiAction() {
+  const action = useAction();
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [doing, setDoing] = useState<string | null>(null);
 
-  async function run(fn: () => Promise<Record<string, unknown>>, refresh = true) {
-    setBusy(true);
-    setError(null);
-    try {
-      const out = await fn();
+  function run(
+    which: string,
+    work: () => Promise<Record<string, unknown>>,
+    then?: (out: Record<string, unknown>) => void,
+  ) {
+    setDoing(which);
+    action.run(work, (out, router) => {
       setWarnings(Array.isArray(out.warnings) ? (out.warnings as string[]) : []);
-      if (refresh) router.refresh();
-      return out;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      return null;
-    } finally {
-      setBusy(false);
-    }
+      if (then) then(out);
+      else router.refresh();
+    });
   }
 
-  return { busy, error, warnings, run, setError };
+  return {
+    pending: action.pending,
+    busy: (which: string) => action.pending && doing === which,
+    error: action.error,
+    warnings,
+    run,
+  };
 }
 
 function Messages({ error, warnings }: { error: string | null; warnings: string[] }) {
@@ -94,7 +109,7 @@ export function DecisionForm({
   rtiRequestId: string;
   current: string | null;
 }) {
-  const { busy, error, warnings, run } = useAction();
+  const { pending, busy, error, warnings, run } = useRtiAction();
   const [open, setOpen] = useState(!current);
   const [decision, setDecision] = useState<RtiDecision>((current as RtiDecision) ?? 'refused');
   const [decidedOn, setDecidedOn] = useState(today);
@@ -117,7 +132,7 @@ export function DecisionForm({
       className="rti-form"
       onSubmit={(e) => {
         e.preventDefault();
-        void run(() =>
+        run('decide', () =>
           post(`/${rtiRequestId}/decide`, {
             decision,
             decidedOn,
@@ -243,11 +258,16 @@ export function DecisionForm({
       <Messages error={error} warnings={warnings} />
 
       <div className="action-row">
-        <button type="submit" disabled={busy}>
-          {busy ? 'Recording\u2026' : 'Record the decision'}
-        </button>
+        <BusyButton type="submit" busy={busy('decide')} busyLabel={'Recording\u2026'}>
+          Record the decision
+        </BusyButton>
         {current && (
-          <button type="button" className="link-like" onClick={() => setOpen(false)}>
+          <button
+            type="button"
+            className="link-like"
+            disabled={pending}
+            onClick={() => setOpen(false)}
+          >
             Cancel
           </button>
         )}
@@ -302,7 +322,7 @@ export function ReplyPanel({
   despatchedOn: string | null;
   hasDecision: boolean;
 }) {
-  const { busy, error, warnings, run } = useAction();
+  const { pending, busy, error, warnings, run } = useRtiAction();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [despatchOn, setDespatchOn] = useState(today);
   const [despatchNo, setDespatchNo] = useState('');
@@ -317,7 +337,7 @@ export function ReplyPanel({
         </div>
         <div className="panel-body">
           <p className="rti-hint">
-            Despatched on {formatDate(despatchedOn)}. An appeal under s.19(1) lies within
+            Dispatched on {formatDate(despatchedOn)}. An appeal under s.19(1) lies within
             thirty days of the applicant&rsquo;s receipt, and that period is condonable, so
             this file stays open to being reopened well past it.
           </p>
@@ -339,19 +359,23 @@ export function ReplyPanel({
         )}
 
         <div className="action-row">
-          <button
+          <BusyButton
             type="button"
-            disabled={busy || !hasDecision}
+            disabled={pending || !hasDecision}
+            busy={busy('compose')}
+            busyLabel={'Composing\u2026'}
             onClick={() => {
-              void run(async () => {
-                const out = await post(`/${rtiRequestId}/reply`, {});
-                setDraft(out as unknown as Draft);
-                return out;
-              }, false);
+              // The letter is shown from the response, not the page, so no refresh: the button
+              // stays down until the letter itself is on screen.
+              run(
+                'compose',
+                () => post(`/${rtiRequestId}/reply`, {}),
+                (out) => setDraft(out as unknown as Draft),
+              );
             }}
           >
-            {busy ? 'Composing\u2026' : draft ? 'Compose again' : 'Compose the reply'}
-          </button>
+            {draft ? 'Compose again' : 'Compose the reply'}
+          </BusyButton>
         </div>
 
         {draft && (
@@ -383,7 +407,7 @@ export function ReplyPanel({
               className="rti-form"
               onSubmit={(e) => {
                 e.preventDefault();
-                void run(() =>
+                run('despatch', () =>
                   post(`/${rtiRequestId}/despatch`, {
                     despatchedOn: despatchOn,
                     correspondenceId: draft.correspondenceId,
@@ -395,7 +419,7 @@ export function ReplyPanel({
             >
               <div className="two">
                 <div>
-                  <label htmlFor="despatchOn">Despatched on</label>
+                  <label htmlFor="despatchOn">Dispatched on</label>
                   <input
                     id="despatchOn"
                     type="date"
@@ -404,7 +428,7 @@ export function ReplyPanel({
                   />
                 </div>
                 <div>
-                  <label htmlFor="despatchNo">Outward despatch number, once stamped</label>
+                  <label htmlFor="despatchNo">Outward dispatch number, once stamped</label>
                   <input
                     id="despatchNo"
                     type="text"
@@ -436,9 +460,14 @@ export function ReplyPanel({
               <Messages error={error} warnings={warnings} />
 
               <div className="action-row">
-                <button type="submit" disabled={busy}>
+                <BusyButton
+                  type="submit"
+                  disabled={pending}
+                  busy={busy('despatch')}
+                  busyLabel="Recording…"
+                >
                   I have sent this
-                </button>
+                </BusyButton>
               </div>
             </form>
           </>
@@ -461,7 +490,7 @@ export function ThirdPartySteps({
   request: RtiRequest;
   clock: RtiClock;
 }) {
-  const { busy, error, warnings, run } = useAction();
+  const { pending, busy, error, warnings, run } = useRtiAction();
   const [name, setName] = useState('');
   const [sentOn, setSentOn] = useState(today);
   const [receivedOn, setReceivedOn] = useState('');
@@ -491,7 +520,7 @@ export function ThirdPartySteps({
               className="rti-form"
               onSubmit={(e) => {
                 e.preventDefault();
-                void run(() =>
+                run('intend', () =>
                   post(`/${rtiRequestId}/third-party`, {
                     action: 'intend',
                     thirdPartyName: name,
@@ -512,9 +541,14 @@ export function ThirdPartySteps({
               </div>
               <Messages error={error} warnings={warnings} />
               <div className="action-row">
-                <button type="submit" disabled={busy || !name.trim()}>
+                <BusyButton
+                  type="submit"
+                  disabled={pending || !name.trim()}
+                  busy={busy('intend')}
+                  busyLabel="Recording…"
+                >
                   I intend to disclose this
-                </button>
+                </BusyButton>
               </div>
             </form>
           </>
@@ -546,7 +580,7 @@ export function ThirdPartySteps({
                 className="rti-form"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  void run(() =>
+                  run('notice', () =>
                     post(`/${rtiRequestId}/third-party`, {
                       action: 'notice',
                       sentOn,
@@ -581,9 +615,14 @@ export function ThirdPartySteps({
                   to know whether their window closes before or after the statutory deadline.
                 </p>
                 <div className="action-row">
-                  <button type="submit" disabled={busy}>
+                  <BusyButton
+                    type="submit"
+                    disabled={pending}
+                    busy={busy('notice')}
+                    busyLabel="Recording…"
+                  >
                     Record the notice
-                  </button>
+                  </BusyButton>
                 </div>
               </form>
             </div>
@@ -610,7 +649,7 @@ export function ThirdPartySteps({
                       className="rti-form"
                       onSubmit={(e) => {
                         e.preventDefault();
-                        void run(() =>
+                        run('representation', () =>
                           post(`/${rtiRequestId}/third-party`, {
                             action: 'representation',
                             receivedOn: repOn,
@@ -652,9 +691,14 @@ export function ThirdPartySteps({
                         />
                       </div>
                       <div className="action-row">
-                        <button type="submit" disabled={busy}>
+                        <BusyButton
+                          type="submit"
+                          disabled={pending}
+                          busy={busy('representation')}
+                          busyLabel="Recording…"
+                        >
                           Record it
-                        </button>
+                        </BusyButton>
                       </div>
                     </form>
                   </>
@@ -679,7 +723,7 @@ export function FeeAndTransfer({
   rtiRequestId: string;
   request: RtiRequest;
 }) {
-  const { busy, error, warnings, run } = useAction();
+  const { pending, busy, error, warnings, run } = useRtiAction();
   const [amount, setAmount] = useState('');
   const [intimatedOn, setIntimatedOn] = useState(today);
   const [paidOn, setPaidOn] = useState(today);
@@ -705,7 +749,7 @@ export function FeeAndTransfer({
             className="rti-form"
             onSubmit={(e) => {
               e.preventDefault();
-              void run(() => post(`/${rtiRequestId}/fee`, { action: 'paid', paidOn }));
+              run('paid', () => post(`/${rtiRequestId}/fee`, { action: 'paid', paidOn }));
             }}
           >
             <p className="rti-hint">
@@ -724,9 +768,14 @@ export function FeeAndTransfer({
               />
             </div>
             <div className="action-row">
-              <button type="submit" disabled={busy}>
+              <BusyButton
+                type="submit"
+                disabled={pending}
+                busy={busy('paid')}
+                busyLabel="Recording…"
+              >
                 Record the payment
-              </button>
+              </BusyButton>
             </div>
           </form>
         ) : request.further_fee_paid_on ? (
@@ -742,7 +791,7 @@ export function FeeAndTransfer({
               className="rti-form"
               onSubmit={(e) => {
                 e.preventDefault();
-                void run(() =>
+                run('intimate', () =>
                   post(`/${rtiRequestId}/fee`, {
                     action: 'intimate',
                     amount: Number(amount),
@@ -768,7 +817,7 @@ export function FeeAndTransfer({
                   />
                 </div>
                 <div>
-                  <label htmlFor="intimatedOn">Intimation despatched on</label>
+                  <label htmlFor="intimatedOn">Intimation dispatched on</label>
                   <input
                     id="intimatedOn"
                     type="date"
@@ -778,9 +827,14 @@ export function FeeAndTransfer({
                 </div>
               </div>
               <div className="action-row">
-                <button type="submit" disabled={busy || !amount}>
+                <BusyButton
+                  type="submit"
+                  disabled={pending || !amount}
+                  busy={busy('intimate')}
+                  busyLabel="Recording…"
+                >
                   Record the fee intimation
-                </button>
+                </BusyButton>
               </div>
             </form>
           )
@@ -797,7 +851,7 @@ export function FeeAndTransfer({
             className="rti-form"
             onSubmit={(e) => {
               e.preventDefault();
-              void run(() =>
+              run('transfer', () =>
                 post(`/${rtiRequestId}/transfer`, {
                   toAuthority: authority,
                   transferredOn,
@@ -829,10 +883,20 @@ export function FeeAndTransfer({
               />
             </div>
             <div className="action-row">
-              <button type="submit" disabled={busy || !authority.trim()}>
+              <BusyButton
+                type="submit"
+                disabled={pending || !authority.trim()}
+                busy={busy('transfer')}
+                busyLabel="Recording…"
+              >
                 Record the transfer
-              </button>
-              <button type="button" className="link-like" onClick={() => setShowTransfer(false)}>
+              </BusyButton>
+              <button
+                type="button"
+                className="link-like"
+                disabled={pending}
+                onClick={() => setShowTransfer(false)}
+              >
                 Cancel
               </button>
             </div>

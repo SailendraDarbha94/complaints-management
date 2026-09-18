@@ -147,6 +147,7 @@ export interface CaseLetter {
   kind: string;
   direction: 'in' | 'out';
   subject: string;
+  body: string;
   to_name: string | null;
   from_email: string | null;
   sent_at: string | null;
@@ -154,6 +155,21 @@ export interface CaseLetter {
   despatch_no: string | null;
   despatch_date: string | null;
   created_at: string;
+}
+
+export interface CaseMail {
+  id: string;
+  subject: string;
+  original_subject: string | null;
+  original_from: string | null;
+  original_from_name: string | null;
+  envelope_from: string;
+  envelope_from_name: string | null;
+  envelope_date: string;
+  original_date_text: string | null;
+  body: string | null;
+  forward_kind: string;
+  matched_rung: string | null;
 }
 
 export interface CaseDocument {
@@ -207,6 +223,8 @@ export interface CaseDetail {
   milestones: CaseMilestone[];
   history: CaseHistoryEntry[];
   letters: CaseLetter[];
+  /** Mail filed on the case, oldest first. The first is the complaint as it was received. */
+  mail: CaseMail[];
   documents: CaseDocument[];
   followups: Array<{
     id: string;
@@ -398,6 +416,11 @@ export interface TrayCard {
   suggested_case_number: string | null;
   attachment_count: number;
   skipped_count: number;
+  /**
+   * Who a case would be opened for, decided by the server. Null when the message does not
+   * say - never the Council's own address.
+   */
+  complainant: { name: string; email: string } | null;
 }
 
 export interface TrayMessage {

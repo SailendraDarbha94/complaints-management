@@ -137,7 +137,7 @@ export const TRANSITIONS: readonly TransitionRule[] = [
     supersedes: ['no_next_step'],
     description:
       'A notice to one respondent. Increments that respondent’s notice count — but only ' +
-      'because the officer confirmed a despatch. A timer never does this.',
+      'because the officer confirmed a dispatch. A timer never does this.',
   },
   {
     event: 'RECORD_RESPONDENT_REPLY',
@@ -160,7 +160,7 @@ export const TRANSITIONS: readonly TransitionRule[] = [
     milestones: ['respondent_declared_ex_parte'],
     supersedes: ['propose_ex_parte'],
     description:
-      'An officer decision, never an automatic one. Eligibility is computed from despatched ' +
+      'An officer decision, never an automatic one. Eligibility is computed from dispatched ' +
       'notices with proof of service, never from a reminder counter.',
   },
   {
@@ -288,8 +288,8 @@ export const TRANSITIONS: readonly TransitionRule[] = [
     milestones: ['expert_referral_despatched'],
     opens: ['await_gdc_report'],
     description:
-      'The GDCRI referral has been signed, sealed, scanned and despatched. The state is entered ' +
-      'on despatch, not on drafting — timers run from the stamped date.',
+      'The GDCRI referral has been signed, sealed, scanned and dispatched. The state is entered ' +
+      'on dispatch, not on drafting — timers run from the stamped date.',
   },
   {
     event: 'RECORD_EXPERT_REPORT',

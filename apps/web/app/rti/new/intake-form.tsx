@@ -1,10 +1,11 @@
 'use client';
 
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { PUBLIC_API_URL } from '@/lib/public-api';
 import { today } from '@/lib/today';
+import { BusyButton } from '../../components/busy-button';
+import { PendingLink } from '../../components/pending-link';
+import { useAction } from '../../components/use-action';
 
 interface Received {
   rtiRequestId: string;
@@ -14,7 +15,7 @@ interface Received {
 }
 
 export function RtiIntakeForm() {
-  const router = useRouter();
+  const action = useAction();
   const [receivedOn, setReceivedOn] = useState(today);
   const [receivedVia, setReceivedVia] = useState('email');
   const [applicantName, setApplicantName] = useState('');
@@ -27,8 +28,6 @@ export function RtiIntakeForm() {
   const [isBpl, setIsBpl] = useState(false);
   const [lifeOrLiberty, setLifeOrLiberty] = useState(false);
   const [lifeReason, setLifeReason] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<Received | null>(null);
 
   // The clock has already been running if this came by post. Say so while they type.
@@ -36,40 +35,41 @@ export function RtiIntakeForm() {
     (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${receivedOn}T00:00:00Z`)) / 86_400_000,
   );
 
-  async function submit(e: React.FormEvent) {
+  function submit(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`${PUBLIC_API_URL}/v1/rti`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          receivedOn,
-          receivedVia,
-          applicantName,
-          applicantAddressLines: address.split('\n').map((l) => l.trim()).filter(Boolean),
-          applicantEmail: applicantEmail || null,
-          applicantPhone: applicantPhone || null,
-          requestText,
-          externalRefNo: externalRefNo || null,
-          applicationFeeReceived: feeReceived,
-          isBpl,
-          lifeOrLiberty,
-          lifeOrLibertyReason: lifeOrLiberty ? lifeReason : null,
-          dateSource: elapsed > 0 ? 'recorded' : 'recorded',
-        }),
-      });
-      const payload = (await res.json().catch(() => ({}))) as Received & { message?: string };
-      if (!res.ok) throw new Error(payload.message ?? 'That did not go through.');
-      setDone(payload);
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+    action.run(
+      async () => {
+        const res = await fetch(`${PUBLIC_API_URL}/v1/rti`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            receivedOn,
+            receivedVia,
+            applicantName,
+            applicantAddressLines: address.split('\n').map((l) => l.trim()).filter(Boolean),
+            applicantEmail: applicantEmail || null,
+            applicantPhone: applicantPhone || null,
+            requestText,
+            externalRefNo: externalRefNo || null,
+            applicationFeeReceived: feeReceived,
+            isBpl,
+            lifeOrLiberty,
+            lifeOrLibertyReason: lifeOrLiberty ? lifeReason : null,
+            dateSource: elapsed > 0 ? 'recorded' : 'recorded',
+          }),
+        });
+        const payload = (await res.json().catch(() => ({}))) as Received & { message?: string };
+        if (!res.ok) throw new Error(payload.message ?? 'That did not go through.');
+        return payload;
+      },
+      // The form gives way to the RTI number in the same render as the refresh, so the button
+      // spins until there is something else on screen - a second press would be a second file.
+      (payload, router) => {
+        setDone(payload);
+        router.refresh();
+      },
+    );
   }
 
   if (done) {
@@ -80,7 +80,7 @@ export function RtiIntakeForm() {
         </div>
         <div className="panel-body">
           <p className="rti-hint">
-            The reply must be despatched by <strong>{done.dueOn}</strong>. Two reminders are
+            The reply must be dispatched by <strong>{done.dueOn}</strong>. Two reminders are
             now on the Today screen: the working task, and the statutory date itself.
           </p>
           {done.warnings.map((w) => (
@@ -89,12 +89,12 @@ export function RtiIntakeForm() {
             </div>
           ))}
           <div className="action-row">
-            <Link className="action" href={`/rti/${done.rtiRequestId}`}>
+            <PendingLink className="action" href={`/rti/${done.rtiRequestId}`}>
               Open the file
-            </Link>
-            <Link className="link-like" href="/rti">
+            </PendingLink>
+            <PendingLink className="link-like" href="/rti">
               Back to the register
-            </Link>
+            </PendingLink>
           </div>
         </div>
       </section>
@@ -261,12 +261,17 @@ export function RtiIntakeForm() {
             </div>
           )}
 
-          {error && <p className="rti-error">{error}</p>}
+          {action.error && <p className="rti-error">{action.error}</p>}
 
           <div className="action-row">
-            <button type="submit" disabled={busy || !applicantName.trim() || !requestText.trim()}>
-              {busy ? 'Entering\u2026' : 'Enter in the register'}
-            </button>
+            <BusyButton
+              type="submit"
+              busy={action.pending}
+              busyLabel={'Entering\u2026'}
+              disabled={!applicantName.trim() || !requestText.trim()}
+            >
+              Enter in the register
+            </BusyButton>
           </div>
         </div>
       </div>

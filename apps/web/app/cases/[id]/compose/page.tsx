@@ -1,5 +1,5 @@
-import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
+import { PendingLink } from '@/app/components/pending-link';
 import { PUBLIC_API_URL, fetchCase, fetchTemplates, isUnauthorized } from '@/lib/api';
 import { LETTER_LABEL, label } from '@/lib/labels';
 import { Composer } from './composer';
@@ -43,11 +43,11 @@ export default async function ComposePage({ params }: { params: Promise<{ id: st
   return (
     <main className="shell">
       <nav className="crumbs">
-        <Link href="/today">Today</Link>
+        <PendingLink href="/today">Today</PendingLink>
         <span aria-hidden="true">/</span>
-        <Link href="/cases">Cases</Link>
+        <PendingLink href="/cases">Cases</PendingLink>
         <span aria-hidden="true">/</span>
-        <Link href={`/cases/${c.id}`}>{c.case_number}</Link>
+        <PendingLink href={`/cases/${c.id}`}>{c.case_number}</PendingLink>
         <span aria-hidden="true">/</span>
         <span className="here">Draft a letter</span>
       </nav>

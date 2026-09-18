@@ -17,7 +17,7 @@ export const GET = withAuth<{ id: string }>(async ({ params, tx, ctx, services }
   // One call feeds the whole page. A case detail screen that fires six requests is
   // six chances to render half a case, and the officer reads this screen before
   // deciding what to do next.
-  const [parties, respondents, milestones, history, letters, documents, followups] =
+  const [parties, respondents, milestones, history, letters, mail, documents, followups] =
     await Promise.all([
       tx.execute(sql`
         SELECT cp.role, p.full_name, p.mobile, p.email, p.age_years, p.sex
@@ -43,10 +43,19 @@ export const GET = withAuth<{ id: string }>(async ({ params, tx, ctx, services }
         SELECT event, from_state, to_state, reason, occurred_at, is_system
         FROM case_state_history WHERE case_file_id = ${id}::uuid ORDER BY occurred_at`),
       tx.execute(sql`
-        SELECT id, kind, direction, subject, to_name, from_email, sent_at, received_at,
+        SELECT id, kind, direction, subject, body, to_name, from_email, sent_at, received_at,
                despatch_no, despatch_date, created_at
         FROM correspondence WHERE case_file_id = ${id}::uuid
         ORDER BY coalesce(sent_at, received_at, created_at)`),
+      // The mail filed on this case, oldest first - so the first is the complaint itself,
+      // in the complainant's own words. Without this the case file said who complained
+      // and about what in one line, and the complaint was only readable in the tray.
+      tx.execute(sql`
+        SELECT id, subject, original_subject, original_from, original_from_name,
+               envelope_from, envelope_from_name, envelope_date, original_date_text,
+               coalesce(original_body, body_text) AS body, forward_kind, matched_rung
+        FROM mail_message WHERE case_file_id = ${id}::uuid
+        ORDER BY coalesce(original_date, envelope_date)`),
       services.documents.listForCase(tx, ctx, id),
       services.followups.liveForCase(tx, ctx, id),
     ]);
@@ -63,6 +72,7 @@ export const GET = withAuth<{ id: string }>(async ({ params, tx, ctx, services }
     milestones: milestones.rows,
     history: history.rows,
     letters: letters.rows,
+    mail: mail.rows,
     documents,
     followups,
     rtiRequests,

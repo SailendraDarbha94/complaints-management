@@ -116,7 +116,7 @@ describe('the two clocks colliding', () => {
   it('warns when their window closes within three days of the deadline', () => {
     const c = rtiClock({ ...withS11, thirdPartyNoticeReceivedOn: '2026-04-29' }, '2026-04-30');
     expect(c.thirdPartyRepresentationDueOn).toBe('2026-05-09');
-    expect(c.warnings.join(' ')).toMatch(/leaving 2 days to decide and despatch/i);
+    expect(c.warnings.join(' ')).toMatch(/leaving 2 days to decide and dispatch/i);
   });
 
   it('raises the alarm when their window closes AFTER the statutory deadline', () => {

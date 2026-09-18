@@ -1,7 +1,8 @@
-import Link from 'next/link';
+import type { Route } from 'next';
 import { redirect } from 'next/navigation';
 import { fetchCases, fetchTray, isUnauthorized, type CaseListRow, type TrayCard } from '@/lib/api';
 import { FORWARD_KIND_LABEL, label } from '@/lib/labels';
+import { PendingLink } from '@/app/components/pending-link';
 import { TrayActions } from './tray-actions';
 import { SyncButton } from './sync-button';
 
@@ -40,7 +41,7 @@ export default async function TrayPage({
   return (
     <main className="shell">
       <nav className="crumbs">
-        <Link href="/today">Today</Link>
+        <PendingLink href="/today">Today</PendingLink>
         <span aria-hidden="true">/</span>
         <span className="here">Inward mail</span>
       </nav>
@@ -58,17 +59,17 @@ export default async function TrayPage({
       </header>
 
       <nav className="crumbs">
-        <Link href="/intake" className={status === 'unfiled' ? 'here' : undefined}>
+        <PendingLink href="/intake" className={status === 'unfiled' ? 'here' : undefined}>
           Waiting
-        </Link>
+        </PendingLink>
         <span aria-hidden="true">/</span>
-        <Link href="/intake?status=filed" className={status === 'filed' ? 'here' : undefined}>
+        <PendingLink href="/intake?status=filed" className={status === 'filed' ? 'here' : undefined}>
           Filed
-        </Link>
+        </PendingLink>
         <span aria-hidden="true">/</span>
-        <Link href="/intake?status=dismissed" className={status === 'dismissed' ? 'here' : undefined}>
+        <PendingLink href="/intake?status=dismissed" className={status === 'dismissed' ? 'here' : undefined}>
           Set aside
-        </Link>
+        </PendingLink>
       </nav>
 
       {tray.messages.length === 0 ? (
@@ -102,17 +103,17 @@ function Card({
   message: TrayCard;
   cases: Array<{ id: string; caseNumber: string; summary: string }>;
 }) {
-  // The complainant, not the forwarder. Falling back to the envelope only when this was
-  // written to us directly rather than forwarded.
-  const who = message.original_from_name ?? message.original_from ?? message.envelope_from_name ?? message.envelope_from;
+  // The complainant, not the forwarder - as the server worked it out, so the card, the
+  // message page and "Open a case" can never disagree about who it is.
+  const who = message.complainant?.name ?? `complainant not known \u00b7 via ${message.envelope_from}`;
   const what = message.original_subject ?? message.subject;
 
   return (
     <div className="row">
       <div className="t">
-        <Link className="case-link" href={`/intake/${message.id}`}>
+        <PendingLink className="case-link" href={`/intake/${message.id}` as Route}>
           {what}
-        </Link>
+        </PendingLink>
         {message.attachment_count > 0 && (
           <span className="chip chip-verbatim">
             {message.attachment_count} file{message.attachment_count === 1 ? '' : 's'}
@@ -142,6 +143,7 @@ function Card({
         cases={cases}
         suggestedCaseFileId={message.suggested_case_file_id}
         status={message.status}
+        complainant={message.complainant}
       />
     </div>
   );

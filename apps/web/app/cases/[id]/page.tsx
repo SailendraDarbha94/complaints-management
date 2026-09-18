@@ -1,17 +1,19 @@
-import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
+import { PendingLink } from '@/app/components/pending-link';
 import {
   PUBLIC_API_URL,
   fetchCase,
   isUnauthorized,
   type CaseDetail,
   type CaseHistoryEntry,
+  type CaseMail,
   type CaseMilestone,
 } from '@/lib/api';
 import {
   CLOSURE_REASON_LABEL,
   DOCUMENT_CLASS_LABEL,
   EVENT_LABEL,
+  FORWARD_KIND_LABEL,
   LETTER_LABEL,
   MILESTONE_LABEL,
   NOTICE_STATE_LABEL,
@@ -23,7 +25,7 @@ import {
   formatDateTime,
   label,
 } from '@/lib/labels';
-import { AddRespondent } from './add-respondent';
+import { RespondentsPanel } from './add-respondent';
 import { CaseActions } from './case-actions';
 import { DocumentUpload } from './document-upload';
 
@@ -58,9 +60,9 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
   return (
     <main className="shell">
       <nav className="crumbs">
-        <Link href="/today">Today</Link>
+        <PendingLink href="/today">Today</PendingLink>
         <span aria-hidden="true">/</span>
-        <Link href="/cases">Cases</Link>
+        <PendingLink href="/cases">Cases</PendingLink>
         <span aria-hidden="true">/</span>
         <span className="here">{c.case_number}</span>
       </nav>
@@ -140,6 +142,8 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
             )}
           </Section>
 
+          {data.mail[0] && <Complaint mail={data.mail[0]} />}
+
           {data.rtiRequests.length > 0 && (
             <Section title="Asked about under the RTI Act">
               {/*
@@ -151,9 +155,9 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
               <ul className="plain">
                 {data.rtiRequests.map((r) => (
                   <li key={r.id} className="followup-row">
-                    <Link className="case-link" href={`/rti/${r.id}`}>
+                    <PendingLink className="case-link" href={`/rti/${r.id}`}>
                       {r.rti_no}
-                    </Link>
+                    </PendingLink>
                     <span className="mono muted">
                       received {formatDate(r.received_on)} · reply due {formatDate(r.due_on)}
                     </span>
@@ -174,9 +178,9 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
             title="Letters"
             action={
               c.state === 'closed' ? undefined : (
-                <Link className="button-link" href={`/cases/${c.id}/compose`}>
+                <PendingLink className="button-link" href={`/cases/${c.id}/compose`}>
                   Draft a letter
-                </Link>
+                </PendingLink>
               )
             }
           >
@@ -189,7 +193,7 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
                     <th>Letter</th>
                     <th>To / from</th>
                     <th>Sent</th>
-                    <th>Despatch no.</th>
+                    <th>Dispatch no.</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -198,7 +202,16 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
                       <td>
                         {label(LETTER_LABEL, l.kind)}
                         {l.direction === 'in' && <span className="chip chip-in">in</span>}
-                        <span className="meta">{l.subject}</span>
+                        {l.body?.trim() ? (
+                          // Every letter readable where it is listed, rather than a subject
+                          // line and nothing behind it.
+                          <details className="letter-body">
+                            <summary className="meta">{l.subject}</summary>
+                            <div className="rti-letter">{l.body}</div>
+                          </details>
+                        ) : (
+                          <span className="meta">{l.subject}</span>
+                        )}
                       </td>
                       <td>{l.to_name ?? l.from_email ?? '-'}</td>
                       <td className="mono">
@@ -326,9 +339,12 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
             </Section>
           )}
 
-          <Section
+          {/* Its own panel rather than a Section: the add form opens in the body, and the
+              client component holding it has to own the header button as well. */}
+          <RespondentsPanel
+            caseId={c.id}
             title={`Respondents (${data.respondents.length})`}
-            action={<AddRespondent caseId={c.id} disabled={c.state === 'closed'} />}
+            disabled={c.state === 'closed'}
           >
             {data.respondents.length === 0 ? (
               <p className="muted">
@@ -362,7 +378,7 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
                 ))}
               </ul>
             )}
-          </Section>
+          </RespondentsPanel>
 
           <Section title="Intake">
             <dl className="pairs">
@@ -408,6 +424,42 @@ function Section({
       </div>
       <div className="panel-body">{children}</div>
     </section>
+  );
+}
+
+/**
+ * The complaint, as the complainant wrote it.
+ *
+ * The first mail filed on the case - the one it was opened from. Shown whole, because this
+ * is the text every later decision on the case answers to, and the officer should not have
+ * to go back to the tray (or the mailbox) to read it.
+ */
+function Complaint({ mail }: { mail: CaseMail }) {
+  const who = mail.original_from_name ?? mail.original_from ?? mail.envelope_from_name ?? mail.envelope_from;
+  const address = mail.original_from ?? mail.envelope_from;
+  return (
+    <Section
+      title="The complaint"
+      action={
+        <PendingLink className="button-link" href={`/intake/${mail.id}`}>
+          The message as received
+        </PendingLink>
+      }
+    >
+      <p className="rti-hint">
+        {mail.original_subject ?? mail.subject}
+        <br />
+        From {who}
+        {address !== who && <span className="mono"> &lt;{address}&gt;</span>}
+        {mail.original_date_text && ` \u00b7 sent ${mail.original_date_text}`}
+        {' \u00b7 '}
+        {label(FORWARD_KIND_LABEL, mail.forward_kind)}
+        {mail.forward_kind !== 'none' && ` by ${mail.envelope_from}`}
+        {' \u00b7 arrived '}
+        {formatDateTime(mail.envelope_date)}
+      </p>
+      <div className="rti-asked complaint-text">{mail.body?.trim() || '(the message had no text)'}</div>
+    </Section>
   );
 }
 

@@ -291,7 +291,7 @@ async function main(): Promise<void> {
     await followups.sweepNoNextStep(tx, ctx);
 
     console.log(`  RTI ${rtiA.rtiNo} - ordinary, mid-clock, linked to a case`);
-    console.log(`  RTI ${rtiB.rtiNo} - past the thirty days, decided, not yet despatched`);
+    console.log(`  RTI ${rtiB.rtiNo} - past the thirty days, decided, not yet dispatched`);
     console.log(`  RTI ${rtiC.rtiNo} - s.11 consultation, windows colliding`);
   });
 

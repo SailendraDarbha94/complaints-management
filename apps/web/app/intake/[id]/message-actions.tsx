@@ -1,8 +1,11 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { PUBLIC_API_URL } from '@/lib/public-api';
+import { BusyButton } from '@/app/components/busy-button';
+import { useAction } from '@/app/components/use-action';
+
+type Doing = '/open-case' | '/file' | '/dismiss' | '/restore';
 
 /**
  * What to do with this message.
@@ -31,38 +34,45 @@ export function MessageActions({
   }>;
   cases: Array<{ id: string; caseNumber: string; summary: string }>;
 }) {
-  const router = useRouter();
   const [summary, setSummary] = useState(defaults.summary);
   const [name, setName] = useState(defaults.complainantName);
   const [email, setEmail] = useState(defaults.complainantEmail);
   const [caseFileId, setCaseFileId] = useState(candidates[0]?.caseFileId ?? cases[0]?.id ?? '');
   const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { pending: busy, error, run } = useAction();
+  // Which of the forms was sent. All of them stop taking clicks while one is in flight -
+  // opening a case and setting the message aside must not both land - but only the one
+  // pressed spins, and a refusal is shown beside the button that caused it.
+  const [doing, setDoing] = useState<Doing | null>(null);
 
-  async function post(path: string, body?: unknown) {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`${PUBLIC_API_URL}/v1/intake/${messageId}${path}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        credentials: 'include',
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
-      const payload = (await res.json().catch(() => ({}))) as {
-        message?: string;
-        caseFileId?: string;
-      };
-      if (!res.ok) throw new Error(payload.message ?? 'That did not go through.');
-      if (payload.caseFileId) router.push(`/cases/${payload.caseFileId}`);
-      else router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+  function post(path: Doing, body?: unknown) {
+    setDoing(path);
+    run(
+      async () => {
+        const res = await fetch(`${PUBLIC_API_URL}/v1/intake/${messageId}${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'include',
+          body: body === undefined ? undefined : JSON.stringify(body),
+        });
+        const payload = (await res.json().catch(() => ({}))) as {
+          message?: string;
+          caseFileId?: string;
+        };
+        if (!res.ok) throw new Error(payload.message ?? 'That did not go through.');
+        return payload.caseFileId;
+      },
+      // Inside the transition, so "Opening…" holds until the case page is on screen. The
+      // case exists by now; a button that woke up in the meantime would only invite a
+      // second press and a "that message is already on a case" for the officer's trouble.
+      (caseFileId, router) => {
+        if (caseFileId) router.push(`/cases/${caseFileId}`);
+        else router.refresh();
+      },
+    );
   }
+
+  const failed = (path: Doing) => (error && doing === path ? <p className="rti-error">{error}</p> : null);
 
   if (status !== 'unfiled') {
     return (
@@ -77,9 +87,9 @@ export function MessageActions({
                 Set aside, not deleted. The message stays on the record either way.
               </p>
               <div className="action-row">
-                <button type="button" disabled={busy} onClick={() => void post('/restore')}>
+                <BusyButton type="button" busy={busy} busyLabel="Putting back…" onClick={() => post('/restore')}>
                   Put it back in the tray
-                </button>
+                </BusyButton>
               </div>
             </>
           ) : (
@@ -104,7 +114,7 @@ export function MessageActions({
             className="action-form"
             onSubmit={(e) => {
               e.preventDefault();
-              void post('/open-case', {
+              post('/open-case', {
                 summary,
                 complainantName: name,
                 complainantEmail: email || null,
@@ -127,11 +137,16 @@ export function MessageActions({
               <label htmlFor="email">Their email</label>
               <input id="email" value={email} onChange={(e) => setEmail(e.target.value)} />
             </div>
-            {error && <p className="rti-error">{error}</p>}
+            {failed('/open-case')}
             <div className="action-buttons">
-              <button type="submit" disabled={busy || !summary.trim() || !name.trim()}>
-                {busy ? 'Opening…' : 'Open the case'}
-              </button>
+              <BusyButton
+                type="submit"
+                busy={busy && doing === '/open-case'}
+                busyLabel="Opening…"
+                disabled={busy || !summary.trim() || !name.trim()}
+              >
+                Open the case
+              </BusyButton>
             </div>
           </form>
         </div>
@@ -154,7 +169,7 @@ export function MessageActions({
               className="action-form"
               onSubmit={(e) => {
                 e.preventDefault();
-                void post('/file', { caseFileId });
+                post('/file', { caseFileId });
               }}
             >
               <div>
@@ -175,10 +190,16 @@ export function MessageActions({
                     ))}
                 </select>
               </div>
+              {failed('/file')}
               <div className="action-buttons">
-                <button type="submit" disabled={busy || !caseFileId}>
+                <BusyButton
+                  type="submit"
+                  busy={busy && doing === '/file'}
+                  busyLabel="Adding…"
+                  disabled={busy || !caseFileId}
+                >
                   Add it to this case
-                </button>
+                </BusyButton>
               </div>
             </form>
           </div>
@@ -194,7 +215,7 @@ export function MessageActions({
             className="action-form"
             onSubmit={(e) => {
               e.preventDefault();
-              void post('/dismiss', { reason });
+              post('/dismiss', { reason });
             }}
           >
             <p className="rti-hint">
@@ -209,10 +230,16 @@ export function MessageActions({
                 placeholder="Advertising; nothing to do with the Council"
               />
             </div>
+            {failed('/dismiss')}
             <div className="action-buttons">
-              <button type="submit" disabled={busy || reason.trim().length < 3}>
+              <BusyButton
+                type="submit"
+                busy={busy && doing === '/dismiss'}
+                busyLabel="Setting aside…"
+                disabled={busy || reason.trim().length < 3}
+              >
                 Set it aside
-              </button>
+              </BusyButton>
             </div>
           </form>
         </div>

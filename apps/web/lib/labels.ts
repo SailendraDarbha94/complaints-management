@@ -14,7 +14,7 @@ export const STATE_LABEL: Record<string, string> = {
   awaiting_respondent_reply: 'Awaiting the dentist',
   ready_for_committee: 'Ready for the committee',
   awaiting_expert_report: 'Awaiting GDCRI',
-  awaiting_order_despatch: 'Order to despatch',
+  awaiting_order_despatch: 'Order to dispatch',
   closed: 'Closed',
 };
 
@@ -50,7 +50,7 @@ export const MILESTONE_LABEL: Record<string, string> = {
   acknowledged: 'Acknowledged',
   documents_requested: 'Documents requested',
   documents_complete: 'Documents complete',
-  respondent_notice_despatched: 'Notice despatched to dentist',
+  respondent_notice_despatched: 'Notice dispatched to dentist',
   respondent_reply_received: 'Dentist replied',
   respondent_declared_ex_parte: 'Dentist declared ex parte',
   case_closed: 'Case closed',
@@ -61,7 +61,7 @@ export const MILESTONE_LABEL: Record<string, string> = {
   listed_for_sitting: 'Listed for a sitting',
   heard: 'Heard',
   decision_recorded: 'Decision recorded',
-  order_despatched: 'Order despatched',
+  order_despatched: 'Order dispatched',
 };
 
 export const LETTER_LABEL: Record<string, string> = {
@@ -97,7 +97,7 @@ export const EVENT_LABEL: Record<string, string> = {
   DECLARE_RESPONDENT_EX_PARTE: 'Declare ex parte',
   DROP_RESPONDENT: 'Drop a respondent',
   RECORD_DECISION: 'Record the decision',
-  DESPATCH_ORDER: 'Despatch the order',
+  DESPATCH_ORDER: 'Dispatch the order',
   REPORT_SETTLEMENT: 'Record a settlement',
   MARK_COMPLAINANT_UNRESPONSIVE: 'Close - complainant unresponsive',
   PUT_ON_HOLD: 'Put on hold',
@@ -227,15 +227,24 @@ export const RTI_STAGE_LABEL: Record<string, string> = {
 
 // ─── Inward mail ─────────────────────────────────────────────────────────────
 
-/** How the message reached us, in words rather than in parser vocabulary. */
+/**
+ * How the message reached us, in words rather than in parser vocabulary.
+ *
+ * A kind names the SHAPE of the forward, not the program that sent it, and several clients
+ * share a shape: the Council's own Roundcube draws the same 'Original Message' rule as
+ * Outlook desktop, and Zimbra and Yahoo write Gmail's 'Forwarded message' line. So those
+ * two kinds say only 'forwarded' - naming a mail program the officer never used is worse
+ * than naming none.
+ */
 export const FORWARD_KIND_LABEL: Record<string, string> = {
   rfc822_attachment: 'forwarded as an attachment',
-  gmail: 'forwarded from Gmail',
+  gmail: 'forwarded',
   outlook_web: 'forwarded from Outlook',
-  outlook_desktop: 'forwarded from Outlook',
+  outlook_desktop: 'forwarded',
   apple_mail: 'forwarded from Apple Mail',
   generic: 'forwarded',
   none: 'sent to us directly',
+  header_block: 'forwarded',
 };
 
 /** Why a message ended up on the case it is on. */

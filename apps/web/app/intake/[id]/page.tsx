@@ -1,7 +1,8 @@
-import Link from 'next/link';
+import type { Route } from 'next';
 import { notFound, redirect } from 'next/navigation';
 import { fetchCases, fetchTrayMessage, isUnauthorized, type TrayMessage } from '@/lib/api';
 import { FORWARD_KIND_LABEL, MATCH_RUNG_LABEL, formatDate, label } from '@/lib/labels';
+import { PendingLink } from '@/app/components/pending-link';
 import { MessageActions } from './message-actions';
 
 export const dynamic = 'force-dynamic';
@@ -29,17 +30,19 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
   if (!data.message) notFound();
 
   const m = data.message;
-  const who = m.original_from_name ?? m.original_from ?? m.envelope_from_name ?? m.envelope_from;
-  const address = m.original_from ?? m.envelope_from;
+  // Decided by the server, never the Council's own address. Null means the message does
+  // not say, and the officer is asked below rather than the case going to the wrong person.
+  const who = m.complainant?.name ?? null;
+  const address = m.complainant?.email ?? null;
   const what = m.original_subject ?? m.subject;
   const forwarded = m.forward_kind !== 'none';
 
   return (
     <main className="shell shell-wide">
       <nav className="crumbs">
-        <Link href="/today">Today</Link>
+        <PendingLink href="/today">Today</PendingLink>
         <span aria-hidden="true">/</span>
-        <Link href="/intake">Inward mail</Link>
+        <PendingLink href="/intake">Inward mail</PendingLink>
         <span aria-hidden="true">/</span>
         <span className="here">{what}</span>
       </nav>
@@ -48,7 +51,14 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
         <div>
           <h1>{what}</h1>
           <p className="case-summary">
-            From {who} {address !== who && <span className="mono">&lt;{address}&gt;</span>} &middot;{' '}
+            {who ? (
+              <>
+                From {who} {address && address !== who && <span className="mono">&lt;{address}&gt;</span>}
+              </>
+            ) : (
+              <>Complainant not known, via <span className="mono">{m.envelope_from}</span></>
+            )}{' '}
+            &middot;{' '}
             {label(FORWARD_KIND_LABEL, m.forward_kind)} &middot; arrived{' '}
             {formatDate(m.ingested_at)}
             {m.original_date_text && ` · sent ${m.original_date_text}`}
@@ -60,7 +70,7 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
         <div className="banner banner-ok">
           <span className="tag">Filed</span>
           <span>
-            On <Link href={`/cases/${m.case_file_id}`}>{m.case_number}</Link>
+            On <PendingLink href={`/cases/${m.case_file_id}` as Route}>{m.case_number}</PendingLink>
             {m.matched_rung && ` — ${label(MATCH_RUNG_LABEL, m.matched_rung)}`}.
           </span>
         </div>
@@ -69,6 +79,13 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
         <div className="banner banner-demo">
           <span className="tag">Set aside</span>
           <span>{m.dismissed_reason}</span>
+        </div>
+      )}
+      {!who && m.status === 'unfiled' && (
+        <div className="rti-warn">
+          This came from the Council&rsquo;s own address, and the original sender could not be
+          read from it. Enter the complainant&rsquo;s name and email before opening a case &mdash;
+          their details are usually in the letter below.
         </div>
       )}
       {m.suggestion_note && m.status === 'unfiled' && (
@@ -153,8 +170,8 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
             status={m.status}
             defaults={{
               summary: what,
-              complainantName: who,
-              complainantEmail: address,
+              complainantName: who ?? '',
+              complainantEmail: address ?? '',
             }}
             candidates={data.candidates}
             cases={cases.cases

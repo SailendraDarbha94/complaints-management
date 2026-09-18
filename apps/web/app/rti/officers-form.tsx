@@ -1,20 +1,19 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { PUBLIC_API_URL } from '@/lib/public-api';
 import { today } from '@/lib/today';
+import { BusyButton } from '../components/busy-button';
+import { useAction } from '../components/use-action';
 
 /** Recording who holds an office. Ends the previous holder's term rather than editing it. */
 export function OfficersForm({ collapsed }: { collapsed?: boolean }) {
-  const router = useRouter();
+  const action = useAction();
   const [open, setOpen] = useState(!collapsed);
   const [office, setOffice] = useState<'pio' | 'firstAppellateAuthority'>('pio');
   const [fullName, setFullName] = useState('');
   const [designation, setDesignation] = useState('');
   const [startsOn, setStartsOn] = useState(today);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   if (!open) {
     return (
@@ -24,35 +23,35 @@ export function OfficersForm({ collapsed }: { collapsed?: boolean }) {
     );
   }
 
-  async function submit(e: React.FormEvent) {
+  function submit(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`${PUBLIC_API_URL}/v1/rti/officers`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          office,
-          fullName,
-          designation: designation || null,
-          startsOn,
-        }),
-      });
-      if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as { message?: string };
-        throw new Error(payload.message ?? 'That did not go through.');
-      }
-      setFullName('');
-      setDesignation('');
-      if (collapsed) setOpen(false);
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+    action.run(
+      async () => {
+        const res = await fetch(`${PUBLIC_API_URL}/v1/rti/officers`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            office,
+            fullName,
+            designation: designation || null,
+            startsOn,
+          }),
+        });
+        if (!res.ok) {
+          const payload = (await res.json().catch(() => ({}))) as { message?: string };
+          throw new Error(payload.message ?? 'That did not go through.');
+        }
+      },
+      // Cleared (and, when collapsed, closed) together with the refresh, so the form does not
+      // empty itself while the panel still shows the old office holders.
+      (_result, router) => {
+        setFullName('');
+        setDesignation('');
+        if (collapsed) setOpen(false);
+        router.refresh();
+      },
+    );
   }
 
   return (
@@ -102,13 +101,23 @@ export function OfficersForm({ collapsed }: { collapsed?: boolean }) {
           />
         </div>
       </div>
-      {error && <p className="rti-error">{error}</p>}
+      {action.error && <p className="rti-error">{action.error}</p>}
       <div className="action-row">
-        <button type="submit" disabled={busy || !fullName.trim()}>
-          {busy ? 'Recording\u2026' : 'Record'}
-        </button>
+        <BusyButton
+          type="submit"
+          busy={action.pending}
+          busyLabel={'Recording\u2026'}
+          disabled={!fullName.trim()}
+        >
+          Record
+        </BusyButton>
         {collapsed && (
-          <button type="button" className="link-like" onClick={() => setOpen(false)}>
+          <button
+            type="button"
+            className="link-like"
+            onClick={() => setOpen(false)}
+            disabled={action.pending}
+          >
             Cancel
           </button>
         )}

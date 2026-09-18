@@ -313,7 +313,7 @@ export class RtiService {
       stage: 'rti_reply_due',
       dueOn,
       waitingOnKind: 'council_officer',
-      title: `${rtiNo}: statutory deadline - the RTI reply must be despatched by ${dueOn}`,
+      title: `${rtiNo}: statutory deadline - the RTI reply must be dispatched by ${dueOn}`,
       detail:
         `Received ${receivedOn}. Missing this is a deemed refusal under s.7(2), the ` +
         'information then becomes free under s.7(6), and s.20(1) exposes the Public ' +
@@ -770,7 +770,7 @@ export class RtiService {
     const row = await this.mustFind(tx, ctx, args.rtiRequestId);
     if (row.reply_despatched_on) {
       throw new ConflictError(
-        `The reply on this application was despatched on ${row.reply_despatched_on}. A ` +
+        `The reply on this application was dispatched on ${row.reply_despatched_on}. A ` +
           'decision already communicated is not re-decided here - the applicant’s remedy ' +
           'is the first appeal under s.19(1), and the council’s is a fresh, dated letter.',
       );
@@ -992,7 +992,7 @@ export class RtiService {
     const row = await this.mustFind(tx, ctx, args.rtiRequestId);
     if (row.reply_despatched_on) {
       throw new ConflictError(
-        `This reply is already recorded as despatched on ${row.reply_despatched_on}.`,
+        `This reply is already recorded as dispatched on ${row.reply_despatched_on}.`,
       );
     }
     if (!row.decision) {
@@ -1028,7 +1028,7 @@ export class RtiService {
     `);
 
     for (const stage of ['rti_reply_due', 'rti_prepare_reply'] as const) {
-      await this.satisfyStage(tx, ctx, args.rtiRequestId, stage, `Despatched ${args.despatchedOn}`);
+      await this.satisfyStage(tx, ctx, args.rtiRequestId, stage, `Dispatched ${args.despatchedOn}`);
     }
 
     const after = await this.mustFind(tx, ctx, args.rtiRequestId);
@@ -1037,7 +1037,7 @@ export class RtiService {
     if (clock.penaltyExposureRupees > 0) {
       const late = daysBetween(after.due_on, args.despatchedOn);
       warnings.push(
-        `Despatched ${late} ${late === 1 ? 'day' : 'days'} after the statutory date of ` +
+        `Dispatched ${late} ${late === 1 ? 'day' : 'days'} after the statutory date of ` +
           `${after.due_on}. Exposure under s.20(1) is Rs ` +
           `${clock.penaltyExposureRupees.toLocaleString('en-IN')}, imposed only by the ` +
           'Commission and only after a hearing, at which the burden of showing the officer ' +

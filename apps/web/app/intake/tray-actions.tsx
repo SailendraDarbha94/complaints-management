@@ -1,8 +1,11 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import type { Route } from 'next';
 import { PUBLIC_API_URL } from '@/lib/public-api';
+import { BusyButton } from '@/app/components/busy-button';
+import { PendingLink } from '@/app/components/pending-link';
+import { useAction } from '@/app/components/use-action';
 
 /**
  * The three things you can do with a message in the tray.
@@ -21,69 +24,108 @@ export function TrayActions({
   cases,
   suggestedCaseFileId,
   status,
+  complainant,
 }: {
   messageId: string;
   cases: Array<{ id: string; caseNumber: string; summary: string }>;
   suggestedCaseFileId: string | null;
   status: string;
+  complainant: { name: string; email: string } | null;
 }) {
-  const router = useRouter();
   const [pending, setPending] = useState<Pending>(null);
   const [caseFileId, setCaseFileId] = useState(suggestedCaseFileId ?? cases[0]?.id ?? '');
   const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // `busy`, not `pending`: that name already means which confirm step is open.
+  const { pending: busy, error, run } = useAction();
 
-  async function post(path: string, body?: unknown) {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`${PUBLIC_API_URL}/v1/intake/${messageId}${path}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        credentials: 'include',
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as { message?: string };
-        throw new Error(payload.message ?? 'That did not go through.');
-      }
-      setPending(null);
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+  function post(path: string, body?: unknown) {
+    run(
+      async () => {
+        const res = await fetch(`${PUBLIC_API_URL}/v1/intake/${messageId}${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'include',
+          body: body === undefined ? undefined : JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const payload = (await res.json().catch(() => ({}))) as { message?: string };
+          throw new Error(payload.message ?? 'That did not go through.');
+        }
+      },
+      // The confirm step closes as the refreshed tray arrives, not a beat before it with
+      // the message still sitting there looking unhandled.
+      (_result, router) => {
+        setPending(null);
+        router.refresh();
+      },
+    );
   }
 
   if (status === 'dismissed') {
     return (
-      <div className="row-actions">
-        <button type="button" className="link-button" disabled={busy} onClick={() => void post('/restore')}>
-          Put back
-        </button>
-      </div>
+      <>
+        <div className="row-actions">
+          <BusyButton
+            type="button"
+            className="link-button"
+            busy={busy}
+            busyLabel="Putting back…"
+            onClick={() => post('/restore')}
+          >
+            Put back
+          </BusyButton>
+        </div>
+        {/* Full width below the row, as the confirm steps are: the gutter beside the
+            button is too narrow to hold a sentence. */}
+        {error && (
+          <div className="row-form">
+            <span className="rti-error">{error}</span>
+          </div>
+        )}
+      </>
     );
   }
   if (status === 'filed') return <div className="row-actions" />;
 
-  if (pending === 'open') {
+  if (pending === 'open' && !complainant) {
+    // The server would refuse anyway; saying so here, with the way forward, is kinder
+    // than a button that fails.
+    return (
+      <div className="row-form">
+        <span>
+          The original sender could not be read from this message, and a case is never opened
+          in the Council&rsquo;s own name. <PendingLink href={`/intake/${messageId}` as Route}>Open the message</PendingLink>{' '}
+          to enter who complained.
+        </span>
+        <div className="action-buttons">
+          <button type="button" className="link-button" onClick={() => setPending(null)}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (pending === 'open' && complainant) {
     return (
       <form
         className="row-form"
         onSubmit={(e) => {
           e.preventDefault();
-          void post('/open-case');
+          post('/open-case');
         }}
       >
-        <span>Open a new case from this message? It will take the next case number.</span>
+        <span>
+          Open a new case for <strong>{complainant.name}</strong>{' '}
+          <span className="mono">&lt;{complainant.email}&gt;</span>? It will take the next case
+          number. <PendingLink href={`/intake/${messageId}` as Route}>Not them?</PendingLink>
+        </span>
         {error && <span className="rti-error">{error}</span>}
         <div className="action-buttons">
-          <button type="submit" disabled={busy}>
-            {busy ? 'Opening\u2026' : 'Open the case'}
-          </button>
-          <button type="button" className="link-button" onClick={() => setPending(null)}>
+          <BusyButton type="submit" busy={busy} busyLabel="Opening…">
+            Open the case
+          </BusyButton>
+          <button type="button" className="link-button" disabled={busy} onClick={() => setPending(null)}>
             Cancel
           </button>
         </div>
@@ -97,7 +139,7 @@ export function TrayActions({
         className="row-form"
         onSubmit={(e) => {
           e.preventDefault();
-          void post('/file', { caseFileId });
+          post('/file', { caseFileId });
         }}
       >
         {/* An input+datalist rather than a select: `.row-form` styles inputs and not
@@ -117,10 +159,10 @@ export function TrayActions({
         </datalist>
         {error && <span className="rti-error">{error}</span>}
         <div className="action-buttons">
-          <button type="submit" disabled={busy || !caseFileId}>
+          <BusyButton type="submit" busy={busy} busyLabel="Filing…" disabled={!caseFileId}>
             File it
-          </button>
-          <button type="button" className="link-button" onClick={() => setPending(null)}>
+          </BusyButton>
+          <button type="button" className="link-button" disabled={busy} onClick={() => setPending(null)}>
             Cancel
           </button>
         </div>
@@ -134,7 +176,7 @@ export function TrayActions({
         className="row-form"
         onSubmit={(e) => {
           e.preventDefault();
-          void post('/dismiss', { reason });
+          post('/dismiss', { reason });
         }}
       >
         <input
@@ -145,10 +187,10 @@ export function TrayActions({
         />
         {error && <span className="rti-error">{error}</span>}
         <div className="action-buttons">
-          <button type="submit" disabled={busy || reason.trim().length < 3}>
+          <BusyButton type="submit" busy={busy} busyLabel="Setting aside…" disabled={reason.trim().length < 3}>
             Set aside
-          </button>
-          <button type="button" className="link-button" onClick={() => setPending(null)}>
+          </BusyButton>
+          <button type="button" className="link-button" disabled={busy} onClick={() => setPending(null)}>
             Cancel
           </button>
         </div>

@@ -1,6 +1,6 @@
-import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { RTI_EXEMPTIONS } from '@ksdc/contracts';
+import { PendingLink } from '@/app/components/pending-link';
 import { fetchRtiFile, isUnauthorized, type RtiFile } from '@/lib/api';
 import {
   RTI_CHANNEL_LABEL,
@@ -41,9 +41,9 @@ export default async function RtiFilePage({ params }: { params: Promise<{ id: st
   return (
     <main className="shell shell-wide">
       <nav className="crumbs">
-        <Link href="/today">Today</Link>
+        <PendingLink href="/today">Today</PendingLink>
         <span aria-hidden="true">/</span>
-        <Link href="/rti">RTI</Link>
+        <PendingLink href="/rti">RTI</PendingLink>
         <span aria-hidden="true">/</span>
         <span className="here">{r.rti_no}</span>
       </nav>
@@ -206,9 +206,9 @@ export default async function RtiFilePage({ params }: { params: Promise<{ id: st
               ) : (
                 file.cases.map((c) => (
                   <div className="followup-row" key={c.case_file_id}>
-                    <Link className="case-link" href={`/cases/${c.case_file_id}`}>
+                    <PendingLink className="case-link" href={`/cases/${c.case_file_id}`}>
                       {c.case_number}
-                    </Link>
+                    </PendingLink>
                     <span className="meta">{c.summary}</span>
                   </div>
                 ))
@@ -249,7 +249,7 @@ export default async function RtiFilePage({ params }: { params: Promise<{ id: st
                     <strong>{l.subject}</strong>
                     <span className="meta">
                       {l.sent_at ? `Sent ${formatDate(l.sent_at)}` : 'Draft'}
-                      {l.despatch_no ? ` \u00b7 despatch ${l.despatch_no}` : ''}
+                      {l.despatch_no ? ` \u00b7 dispatch ${l.despatch_no}` : ''}
                     </span>
                   </div>
                 ))}
@@ -292,7 +292,7 @@ function Clock({
           </>
         ) : (
           <>
-            <strong>{clock.daysRemaining} days</strong> to despatch the reply
+            <strong>{clock.daysRemaining} days</strong> to dispatch the reply
           </>
         )}
       </span>

@@ -1,7 +1,8 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { BusyButton } from '@/app/components/busy-button';
+import { useAction } from '@/app/components/use-action';
 
 /**
  * Signing in, in whichever of two ways the council is configured for.
@@ -19,13 +20,14 @@ import { useState } from 'react';
  * cookies the route handler sets. The token itself never reaches this code.
  */
 export function SignInForm({ apiUrl, mode }: { apiUrl: string; mode: 'password' | 'code' }) {
-  const router = useRouter();
   const [step, setStep] = useState<'email' | 'code'>('email');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  // One action for the form; only one of its steps is ever on screen. It stays pending from
+  // the press until /today has replaced this page, so the button cannot come back in the
+  // second or two between the session being set and the queue appearing.
+  const action = useAction();
 
   async function post(path: string, body: unknown) {
     const res = await fetch(`${apiUrl}/v1/auth/${path}`, {
@@ -41,50 +43,48 @@ export function SignInForm({ apiUrl, mode }: { apiUrl: string; mode: 'password' 
     return res.json();
   }
 
-  async function requestCode(e: React.FormEvent) {
+  function requestCode(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      await post('code', { email });
-      setStep('code');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+    action.run(
+      () => post('code', { email }),
+      () => setStep('code'),
+    );
   }
 
-  async function verify(e: React.FormEvent) {
+  function verify(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      await post('verify', { email, code });
-      router.replace('/today');
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setCode('');
-    } finally {
-      setBusy(false);
-    }
+    action.run(
+      async () => {
+        try {
+          await post('verify', { email, code });
+        } catch (err) {
+          setCode('');
+          throw err;
+        }
+      },
+      (_result, router) => {
+        router.replace('/today');
+        router.refresh();
+      },
+    );
   }
 
-  async function signInWithPassword(e: React.FormEvent) {
+  function signInWithPassword(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      await post('password', { email, password });
-      router.replace('/today');
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setPassword('');
-    } finally {
-      setBusy(false);
-    }
+    action.run(
+      async () => {
+        try {
+          await post('password', { email, password });
+        } catch (err) {
+          setPassword('');
+          throw err;
+        }
+      },
+      (_result, router) => {
+        router.replace('/today');
+        router.refresh();
+      },
+    );
   }
 
   if (mode === 'password') {
@@ -110,10 +110,15 @@ export function SignInForm({ apiUrl, mode }: { apiUrl: string; mode: 'password' 
           autoComplete="current-password"
           required
         />
-        {error && <p className="form-error">{error}</p>}
-        <button type="submit" disabled={busy || !email || password.length < 10}>
-          {busy ? 'Signing in…' : 'Sign in'}
-        </button>
+        {action.error && <p className="form-error">{action.error}</p>}
+        <BusyButton
+          type="submit"
+          busy={action.pending}
+          busyLabel="Signing in…"
+          disabled={!email || password.length < 10}
+        >
+          Sign in
+        </BusyButton>
         <p className="form-note">
           Accounts are created by the Registrar. If you do not have one, ask the office
           rather than trying to register - there is no way to sign yourself up, by design.
@@ -136,10 +141,10 @@ export function SignInForm({ apiUrl, mode }: { apiUrl: string; mode: 'password' 
           required
           autoFocus
         />
-        {error && <p className="form-error">{error}</p>}
-        <button type="submit" disabled={busy || !email}>
-          {busy ? 'Sending…' : 'Email me a code'}
-        </button>
+        {action.error && <p className="form-error">{action.error}</p>}
+        <BusyButton type="submit" busy={action.pending} busyLabel="Sending…" disabled={!email}>
+          Email me a code
+        </BusyButton>
         <p className="form-note">
           There is no password. We email a code that works once, for ten minutes.
         </p>
@@ -166,17 +171,23 @@ export function SignInForm({ apiUrl, mode }: { apiUrl: string; mode: 'password' 
         required
         autoFocus
       />
-      {error && <p className="form-error">{error}</p>}
-      <button type="submit" disabled={busy || code.length < 6}>
-        {busy ? 'Checking…' : 'Sign in'}
-      </button>
+      {action.error && <p className="form-error">{action.error}</p>}
+      <BusyButton
+        type="submit"
+        busy={action.pending}
+        busyLabel="Checking…"
+        disabled={code.length < 6}
+      >
+        Sign in
+      </BusyButton>
       <button
         type="button"
         className="link-button"
+        disabled={action.pending}
         onClick={() => {
           setStep('email');
           setCode('');
-          setError(null);
+          action.setError(null);
         }}
       >
         Use a different address

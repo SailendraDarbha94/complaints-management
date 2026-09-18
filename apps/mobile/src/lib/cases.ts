@@ -148,7 +148,7 @@ const MILESTONE_WORDS: Record<string, string> = {
   acknowledged: 'Acknowledged',
   documents_requested: 'Documents requested from the complainant',
   documents_complete: 'Documents complete',
-  respondent_notice_despatched: 'Notice despatched to the dentist',
+  respondent_notice_despatched: 'Notice dispatched to the dentist',
   respondent_reply_received: 'The dentist replied',
   respondent_declared_ex_parte: 'Dentist declared ex parte',
   case_closed: 'Closed',
@@ -158,6 +158,7 @@ const MILESTONE_WORDS: Record<string, string> = {
   expert_report_shared: 'Expert opinion shared with the parties',
   listed_for_sitting: 'Listed for a sitting',
   heard: 'Heard by the committee',
+  order_despatched: 'Order dispatched',
 };
 
 export function milestoneWords(m: string): string {

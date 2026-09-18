@@ -1,7 +1,9 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { BusyButton } from '@/app/components/busy-button';
+import { PendingLink } from '@/app/components/pending-link';
+import { useAction } from '@/app/components/use-action';
 
 /**
  * The draft composer.
@@ -64,7 +66,6 @@ export function Composer({
   templates: TemplateOption[];
   respondents: Array<{ id: string; name: string; noticeCount: number }>;
 }) {
-  const router = useRouter();
   const [kind, setKind] = useState<string>(templates[0]?.kind ?? '');
   const [respondentId, setRespondentId] = useState<string>(respondents[0]?.id ?? '');
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -72,39 +73,43 @@ export function Composer({
   const [serviceMode, setServiceMode] = useState<string>('email');
   const [attached, setAttached] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+
+  // One per write, so the button that was pressed is the one that spins; `busy` holds
+  // everything else still meanwhile. Each clears the other's error when it starts, so the
+  // screen shows one error at a time, as it did when there was a single error slot.
+  const drafting = useAction();
+  const recording = useAction();
+  const busy = drafting.pending || recording.pending;
 
   const needsRespondent = RESPONDENT_KINDS.has(kind);
 
-  async function compose(e: React.FormEvent) {
+  function compose(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`${apiUrl}/v1/cases/${caseId}/letters`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          kind,
-          caseRespondentId: needsRespondent ? respondentId : null,
-        }),
-      });
-      if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as { message?: string };
-        throw new Error(payload.message ?? 'Could not draft that letter.');
-      }
-      const d = (await res.json()) as Draft;
-      setDraft(d);
-      setAttached(new Set());
-      setServiceMode(d.requiresRegistrarSignature ? 'speed_post' : 'email');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+    recording.setError(null);
+    drafting.run(
+      async () => {
+        const res = await fetch(`${apiUrl}/v1/cases/${caseId}/letters`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            kind,
+            caseRespondentId: needsRespondent ? respondentId : null,
+          }),
+        });
+        if (!res.ok) {
+          const payload = (await res.json().catch(() => ({}))) as { message?: string };
+          throw new Error(payload.message ?? 'Could not draft that letter.');
+        }
+        return (await res.json()) as Draft;
+      },
+      (d) => {
+        setDraft(d);
+        setAttached(new Set());
+        setServiceMode(d.requiresRegistrarSignature ? 'speed_post' : 'email');
+      },
+    );
   }
 
   async function copy(what: 'subject' | 'body' | 'both') {
@@ -116,37 +121,37 @@ export function Composer({
       setCopied(what);
       setTimeout(() => setCopied(null), 2000);
     } catch {
-      setError('Could not reach the clipboard. Select the text and copy it by hand.');
+      // Shown under the confirm button, where it has always appeared.
+      recording.setError('Could not reach the clipboard. Select the text and copy it by hand.');
     }
   }
 
-  async function confirmSent(e: React.FormEvent) {
+  function confirmSent(e: React.FormEvent) {
     e.preventDefault();
     if (!draft) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`${apiUrl}/v1/letters/${draft.correspondenceId}/sent`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          sentAt: sentOn,
-          serviceMode,
-          caseRespondentId: needsRespondent ? respondentId : null,
-        }),
-      });
-      if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as { message?: string };
-        throw new Error(payload.message ?? 'Could not record that.');
-      }
-      setDone(true);
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+    drafting.setError(null);
+    recording.run(
+      async () => {
+        const res = await fetch(`${apiUrl}/v1/letters/${draft.correspondenceId}/sent`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            sentAt: sentOn,
+            serviceMode,
+            caseRespondentId: needsRespondent ? respondentId : null,
+          }),
+        });
+        if (!res.ok) {
+          const payload = (await res.json().catch(() => ({}))) as { message?: string };
+          throw new Error(payload.message ?? 'Could not record that.');
+        }
+      },
+      (_result, router) => {
+        setDone(true);
+        router.refresh();
+      },
+    );
   }
 
   if (done) {
@@ -158,9 +163,9 @@ export function Composer({
             case has moved on.
           </p>
           <div className="action-buttons">
-            <a className="button-link" href={`/cases/${caseId}`}>
+            <PendingLink className="button-link" href={`/cases/${caseId}`}>
               Back to the case
-            </a>
+            </PendingLink>
             <button
               type="button"
               className="link-button"
@@ -192,6 +197,7 @@ export function Composer({
                 Letter
                 <select
                   value={kind}
+                  disabled={busy}
                   onChange={(e) => {
                     setKind(e.target.value);
                     setDraft(null);
@@ -214,6 +220,7 @@ export function Composer({
                     To which dentist
                     <select
                       value={respondentId}
+                      disabled={busy}
                       onChange={(e) => {
                         setRespondentId(e.target.value);
                         setDraft(null);
@@ -228,12 +235,17 @@ export function Composer({
                   </label>
                 ))}
 
-              <button type="submit" disabled={busy || (needsRespondent && respondents.length === 0)}>
-                {busy && !draft ? 'Drafting…' : 'Draft it'}
-              </button>
+              <BusyButton
+                type="submit"
+                busy={drafting.pending}
+                busyLabel="Drafting…"
+                disabled={recording.pending || (needsRespondent && respondents.length === 0)}
+              >
+                Draft it
+              </BusyButton>
             </form>
           )}
-          {error && !draft && <p className="form-error">{error}</p>}
+          {drafting.error && <p className="form-error">{drafting.error}</p>}
         </div>
       </section>
 
@@ -347,6 +359,7 @@ export function Composer({
                     type="date"
                     value={sentOn}
                     max={todayInKolkata()}
+                    disabled={busy}
                     onChange={(e) => setSentOn(e.target.value)}
                     required
                   />
@@ -354,7 +367,11 @@ export function Composer({
 
                 <label>
                   How it went
-                  <select value={serviceMode} onChange={(e) => setServiceMode(e.target.value)}>
+                  <select
+                    value={serviceMode}
+                    disabled={busy}
+                    onChange={(e) => setServiceMode(e.target.value)}
+                  >
                     {SERVICE_MODES.map(([value, text]) => (
                       <option key={value} value={value}>
                         {text}
@@ -371,11 +388,16 @@ export function Composer({
                   </p>
                 )}
 
-                {error && <p className="form-error">{error}</p>}
+                {recording.error && <p className="form-error">{recording.error}</p>}
 
-                <button type="submit" disabled={busy}>
-                  {busy ? 'Recording…' : 'I have sent this'}
-                </button>
+                <BusyButton
+                  type="submit"
+                  busy={recording.pending}
+                  busyLabel="Recording…"
+                  disabled={drafting.pending}
+                >
+                  I have sent this
+                </BusyButton>
               </form>
             </div>
           </section>

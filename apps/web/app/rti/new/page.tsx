@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import { PendingLink } from '../../components/pending-link';
 import { RtiIntakeForm } from './intake-form';
 
 export const dynamic = 'force-dynamic';
@@ -15,9 +15,9 @@ export default function NewRtiPage() {
   return (
     <main className="shell">
       <nav className="crumbs">
-        <Link href="/today">Today</Link>
+        <PendingLink href="/today">Today</PendingLink>
         <span aria-hidden="true">/</span>
-        <Link href="/rti">RTI</Link>
+        <PendingLink href="/rti">RTI</PendingLink>
         <span aria-hidden="true">/</span>
         <span className="here">New</span>
       </nav>

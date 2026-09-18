@@ -1,5 +1,5 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { PendingLink } from '@/app/components/pending-link';
 import { fetchCases, isUnauthorized, type CaseListRow } from '@/lib/api';
 import { STATE_LABEL, WAITING_ON_LABEL, formatDate, label } from '@/lib/labels';
 
@@ -27,7 +27,7 @@ export default async function CasesPage() {
   return (
     <main className="shell">
       <nav className="crumbs">
-        <Link href="/today">Today</Link>
+        <PendingLink href="/today">Today</PendingLink>
         <span aria-hidden="true">/</span>
         <span className="here">Cases</span>
       </nav>
@@ -37,8 +37,8 @@ export default async function CasesPage() {
           <h1>Cases</h1>
           <p className="case-summary">
             {open.length} open, {closed.length} closed.{' '}
-            <Link href="/register">The formal register</Link> has every column and exports
-            to CSV. <Link href="/rti">RTI applications</Link> are kept in their own book.
+            <PendingLink href="/register">The formal register</PendingLink> has every column and exports
+            to CSV. <PendingLink href="/rti">RTI applications</PendingLink> are kept in their own book.
           </p>
         </div>
       </header>
@@ -89,9 +89,9 @@ function CaseTable({
               <tr key={c.id}>
                 <td className="num mono">{c.register_sl_no}</td>
                 <td>
-                  <Link className="case-link" href={`/cases/${c.id}`}>
+                  <PendingLink className="case-link" href={`/cases/${c.id}`}>
                     {c.case_number}
-                  </Link>
+                  </PendingLink>
                   {c.on_hold && <span className="chip chip-hold">on hold</span>}
                   {c.is_backfilled && <span className="chip chip-reconstructed">from the book</span>}
                 </td>

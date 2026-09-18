@@ -1,8 +1,9 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { PUBLIC_API_URL } from '@/lib/public-api';
+import { BusyButton } from '@/app/components/busy-button';
+import { useAction } from '@/app/components/use-action';
 
 /**
  * "Check now."
@@ -11,45 +12,42 @@ import { PUBLIC_API_URL } from '@/lib/public-api';
  * have forwarded something and would rather not wait for the timer.
  */
 export function SyncButton() {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
+  const { pending, error, run } = useAction();
   const [said, setSaid] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  async function sync() {
-    setBusy(true);
-    setError(null);
+  function sync() {
     setSaid(null);
-    try {
-      const res = await fetch(`${PUBLIC_API_URL}/v1/intake/sync`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-      const payload = (await res.json().catch(() => ({}))) as {
-        message?: string;
-        ingested?: number;
-        filed?: number;
-      };
-      if (!res.ok) throw new Error(payload.message ?? 'Could not reach the mailbox.');
+    run(
+      async () => {
+        const res = await fetch(`${PUBLIC_API_URL}/v1/intake/sync`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        const payload = (await res.json().catch(() => ({}))) as {
+          message?: string;
+          ingested?: number;
+          filed?: number;
+        };
+        if (!res.ok) throw new Error(payload.message ?? 'Could not reach the mailbox.');
 
-      setSaid(
-        payload.ingested
+        return payload.ingested
           ? `${payload.ingested} new${payload.filed ? `, ${payload.filed} filed automatically` : ''}`
-          : 'Nothing new.',
-      );
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+          : 'Nothing new.';
+      },
+      // The tally and the new cards arrive together: "2 new" above a tray that does not
+      // yet show them reads as a miscount.
+      (tally, router) => {
+        setSaid(tally);
+        router.refresh();
+      },
+    );
   }
 
   return (
     <div>
-      <button type="button" className="action" onClick={() => void sync()} disabled={busy}>
-        {busy ? 'Checking\u2026' : 'Check for new mail'}
-      </button>
+      <BusyButton type="button" className="action" busy={pending} busyLabel="Checking…" onClick={sync}>
+        Check for new mail
+      </BusyButton>
       {said && <p className="action-why">{said}</p>}
       {error && <p className="rti-error">{error}</p>}
     </div>

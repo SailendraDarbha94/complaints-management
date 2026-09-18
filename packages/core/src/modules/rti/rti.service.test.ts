@@ -510,7 +510,7 @@ describe('the reply', () => {
           { rtiRequestId: id, despatchedOn: '2026-04-23' },
           at('2026-04-23'),
         ),
-      ).rejects.toThrow(/already recorded as despatched/i);
+      ).rejects.toThrow(/already recorded as dispatched/i);
     });
   });
 });

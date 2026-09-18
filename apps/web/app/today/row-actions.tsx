@@ -1,8 +1,17 @@
 'use client';
 
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
+import { BusyButton } from '@/app/components/busy-button';
+import { PendingLink } from '@/app/components/pending-link';
+import { useAction } from '@/app/components/use-action';
 import { PUBLIC_API_URL } from '@/lib/public-api';
 
 /**
@@ -23,7 +32,35 @@ import { PUBLIC_API_URL } from '@/lib/public-api';
  * otherwise.
  */
 
-type Pending = 'snooze' | 'drop' | null;
+type Confirming = 'snooze' | 'drop' | null;
+
+/**
+ * Today lists most reminders twice — once by urgency, once by who is being chased — and
+ * each copy has its own buttons. A Done pressed on one copy must hold the other copy too,
+ * or the same reminder can be posted twice from two places on one screen. This counts the
+ * actions in flight per follow-up, whichever copy started them.
+ */
+interface InFlight {
+  held: ReadonlyMap<string, number>;
+  hold: (followUpId: string, delta: 1 | -1) => void;
+}
+
+const InFlightContext = createContext<InFlight | null>(null);
+
+export function RowActionsScope({ children }: { children: ReactNode }) {
+  const [held, setHeld] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const hold = useCallback((followUpId: string, delta: 1 | -1) => {
+    setHeld((prev) => {
+      const next = new Map(prev);
+      const n = (next.get(followUpId) ?? 0) + delta;
+      if (n > 0) next.set(followUpId, n);
+      else next.delete(followUpId);
+      return next;
+    });
+  }, []);
+  const value = useMemo(() => ({ held, hold }), [held, hold]);
+  return <InFlightContext.Provider value={value}>{children}</InFlightContext.Provider>;
+}
 
 function inDays(days: number): string {
   const d = new Date();
@@ -47,43 +84,51 @@ export function RowActions({
   needsDecision: boolean;
   caseFileId: string | null;
 }) {
-  const router = useRouter();
-  const [pending, setPending] = useState<Pending>(null);
+  const [confirming, setConfirming] = useState<Confirming>(null);
   const [until, setUntil] = useState(() => inDays(7));
   const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // One action per row. It stays pending until the refreshed queue has replaced this row,
+  // because a Done that re-enables while the row is still on screen gets pressed again.
+  const action = useAction();
+  // Held for exactly as long as this copy's action is pending: released when it ends, on
+  // error as much as on success, and when the refreshed queue unmounts the row.
+  const inFlight = useContext(InFlightContext);
+  const hold = inFlight?.hold;
+  useEffect(() => {
+    if (!action.pending || !hold) return;
+    hold(followUpId, 1);
+    return () => hold(followUpId, -1);
+  }, [action.pending, followUpId, hold]);
+  const locked = action.pending || (inFlight?.held.has(followUpId) ?? false);
 
-  async function post(path: string, body: unknown) {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`${PUBLIC_API_URL}/v1/followups/${followUpId}/${path}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as { message?: string };
-        throw new Error(payload.message ?? 'That did not go through.');
-      }
-      setPending(null);
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+  function post(path: string, body: unknown) {
+    action.run(
+      async () => {
+        const res = await fetch(`${PUBLIC_API_URL}/v1/followups/${followUpId}/${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const payload = (await res.json().catch(() => ({}))) as { message?: string };
+          throw new Error(payload.message ?? 'That did not go through.');
+        }
+      },
+      (_result, router) => {
+        setConfirming(null);
+        router.refresh();
+      },
+    );
   }
 
-  if (pending === 'snooze') {
+  if (confirming === 'snooze') {
     return (
       <form
         className="row-form"
         onSubmit={(e) => {
           e.preventDefault();
-          void post('snooze', { until });
+          post('snooze', { until });
         }}
       >
         <label>
@@ -96,24 +141,29 @@ export function RowActions({
             required
           />
         </label>
-        <button type="submit" disabled={busy}>
-          {busy ? 'Saving…' : 'Snooze'}
-        </button>
-        <button type="button" className="link-button" onClick={() => setPending(null)}>
+        <BusyButton type="submit" busy={action.pending} busyLabel="Saving…" disabled={locked}>
+          Snooze
+        </BusyButton>
+        <button
+          type="button"
+          className="link-button"
+          disabled={locked}
+          onClick={() => setConfirming(null)}
+        >
           Cancel
         </button>
-        {error && <span className="form-error">{error}</span>}
+        {action.error && <span className="form-error">{action.error}</span>}
       </form>
     );
   }
 
-  if (pending === 'drop') {
+  if (confirming === 'drop') {
     return (
       <form
         className="row-form"
         onSubmit={(e) => {
           e.preventDefault();
-          void post('dismiss', { reason });
+          post('dismiss', { reason });
         }}
       >
         <label>
@@ -126,13 +176,23 @@ export function RowActions({
             required
           />
         </label>
-        <button type="submit" disabled={busy || reason.trim().length === 0}>
-          {busy ? 'Saving…' : 'Drop it'}
-        </button>
-        <button type="button" className="link-button" onClick={() => setPending(null)}>
+        <BusyButton
+          type="submit"
+          busy={action.pending}
+          busyLabel="Saving…"
+          disabled={locked || reason.trim().length === 0}
+        >
+          Drop it
+        </BusyButton>
+        <button
+          type="button"
+          className="link-button"
+          disabled={locked}
+          onClick={() => setConfirming(null)}
+        >
           Cancel
         </button>
-        {error && <span className="form-error">{error}</span>}
+        {action.error && <span className="form-error">{action.error}</span>}
       </form>
     );
   }
@@ -141,33 +201,40 @@ export function RowActions({
     <div className="row-actions">
       {needsDecision ? (
         caseFileId && (
-          <Link href={`/cases/${caseFileId}`} className="row-decide">
+          <PendingLink href={`/cases/${caseFileId}`} className="row-decide">
             Decide
-          </Link>
+          </PendingLink>
         )
       ) : (
         <>
-          <button
+          <BusyButton
             type="button"
-            disabled={busy}
+            busy={action.pending}
+            disabled={locked}
             aria-label={`Mark done: ${title}`}
-            onClick={() => void post('done', {})}
+            onClick={() => post('done', {})}
           >
             Done
-          </button>
+          </BusyButton>
           <button
             type="button"
-            onClick={() => setPending('snooze')}
+            disabled={locked}
+            onClick={() => setConfirming('snooze')}
             aria-label={`Snooze: ${title}`}
           >
             Snooze
           </button>
         </>
       )}
-      <button type="button" onClick={() => setPending('drop')} aria-label={`Drop: ${title}`}>
+      <button
+        type="button"
+        disabled={locked}
+        onClick={() => setConfirming('drop')}
+        aria-label={`Drop: ${title}`}
+      >
         Drop
       </button>
-      {error && <span className="form-error">{error}</span>}
+      {action.error && <span className="form-error">{action.error}</span>}
     </div>
   );
 }

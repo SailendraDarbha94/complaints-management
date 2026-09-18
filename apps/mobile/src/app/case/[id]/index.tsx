@@ -165,7 +165,7 @@ export default function CaseScreen() {
                   <Text style={styles.practice}>
                     The Council's practice is three notices before proceeding ex parte.
                     {' '}
-                    {r.notice_count === 1 ? 'One has' : `${r.notice_count} have`} been despatched.
+                    {r.notice_count === 1 ? 'One has' : `${r.notice_count} have`} been dispatched.
                   </Text>
                 ) : null}
               </View>

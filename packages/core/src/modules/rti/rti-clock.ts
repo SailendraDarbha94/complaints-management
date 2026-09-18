@@ -191,7 +191,7 @@ function warningsFor(
   } else if (!answered && derived.daysRemaining <= 7) {
     out.push(
       `${derived.daysRemaining} ${derived.daysRemaining === 1 ? 'day' : 'days'} left: the reply ` +
-        `must be despatched by ${row.dueOn}.`,
+        `must be dispatched by ${row.dueOn}.`,
     );
   }
 
@@ -210,7 +210,7 @@ function warningsFor(
     } else if (slack <= 3) {
       out.push(
         `The third party may reply up to ${derived.thirdPartyRepresentationDueOn}, leaving ` +
-          `${slack} ${slack === 1 ? 'day' : 'days'} to decide and despatch by ${row.dueOn}. ` +
+          `${slack} ${slack === 1 ? 'day' : 'days'} to decide and dispatch by ${row.dueOn}. ` +
           'Draft both outcomes now rather than waiting to see which arrives.',
       );
     }

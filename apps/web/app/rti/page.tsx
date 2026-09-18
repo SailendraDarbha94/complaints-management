@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import {
   fetchRtiRegister,
@@ -7,6 +6,7 @@ import {
   type RtiRequest,
 } from '@/lib/api';
 import { RTI_CHANNEL_LABEL, RTI_STATE_LABEL, label } from '@/lib/labels';
+import { PendingLink } from '../components/pending-link';
 import { OfficersPanel } from './officers-panel';
 
 export const dynamic = 'force-dynamic';
@@ -42,7 +42,7 @@ export default async function RtiRegisterPage() {
   return (
     <main className="shell">
       <nav className="crumbs">
-        <Link href="/today">Today</Link>
+        <PendingLink href="/today">Today</PendingLink>
         <span aria-hidden="true">/</span>
         <span className="here">RTI</span>
       </nav>
@@ -56,9 +56,9 @@ export default async function RtiRegisterPage() {
             Commission counts them.
           </p>
         </div>
-        <Link className="action" href="/rti/new">
+        <PendingLink className="action" href="/rti/new">
           Log an application
-        </Link>
+        </PendingLink>
       </header>
 
       <OfficersPanel />
@@ -112,9 +112,9 @@ function Table({ title, rows, answered }: { title: string; rows: Row[]; answered
             {rows.map((r) => (
               <tr key={r.id}>
                 <td>
-                  <Link className="case-link" href={`/rti/${r.id}`}>
+                  <PendingLink className="case-link" href={`/rti/${r.id}`}>
                     {r.rti_no}
-                  </Link>
+                  </PendingLink>
                   {r.life_or_liberty && <span className="chip chip-hold">48 hours</span>}
                 </td>
                 <td className="mono">{shortDate(r.received_on)}</td>

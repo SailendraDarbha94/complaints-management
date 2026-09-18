@@ -359,7 +359,7 @@ export class CorrespondenceService {
           stage: 'await_despatch_entry',
           caseFileId: letter.case_file_id,
           waitingOnKind: 'council_officer',
-          title: 'Enter the outward despatch number from the office register',
+          title: 'Enter the outward dispatch number from the office register',
           detail: `For the letter "${letter.kind}" recorded as sent on ${args.sentAt.toISOString().slice(0, 10)}.`,
           dedupeSuffix: letter.id,
         },
@@ -405,7 +405,7 @@ export class CorrespondenceService {
     for (const f of live.rows) {
       await this.followups.satisfy(tx, ctx, {
         followUpId: f.id,
-        note: `Despatch no. ${args.despatchNo}`,
+        note: `Dispatch no. ${args.despatchNo}`,
       });
     }
   }

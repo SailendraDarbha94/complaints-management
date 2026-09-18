@@ -403,6 +403,16 @@ ul.plain > li + li {
   background: var(--seal-soft);
 }
 
+/* While another action on the case is being recorded, the rest are shut, and look it. */
+.action:disabled,
+.action:disabled:hover {
+  opacity: 0.45;
+  cursor: not-allowed;
+  border-color: var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+}
+
 .compose-pick button[type='submit'],
 .compose-sent button[type='submit'],
 .upload button[type='submit'],
@@ -411,7 +421,9 @@ ul.plain > li + li {
   border-color: var(--stamp);
   color: #fff;
 }
-button[type='submit']:disabled {
+/* A Cancel or a "use this one" link is shut while a save is in flight; it should look it. */
+button[type='submit']:disabled,
+.link-button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -660,6 +672,29 @@ label.checkbox {
   align-self: flex-start;
 }
 
+/*
+ * Naming a dentist, opened in the body of the Respondents panel in the 300px side column.
+ * It sits above the list, as the upload form does on Documents, so it is ruled off below
+ * rather than above; the rule spans the panel, so no max-width. Every field takes the full
+ * width, not the browser's default size, and the buttons wrap before they would be clipped.
+ */
+.respondent-form {
+  max-width: none;
+  margin: 0 0 14px;
+  padding: 0 0 14px;
+  border-top: 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.respondent-form input:not([type='checkbox']) {
+  width: 100%;
+}
+.respondent-form .rti-hint {
+  margin: 4px 0 0;
+}
+.respondent-form .action-buttons {
+  flex-wrap: wrap;
+}
+
 /* ── Today: acting on a row without leaving the queue ─────────────────── */
 
 .row-actions {
@@ -901,6 +936,20 @@ label.checkbox {
   margin-bottom: 14px;
   font-size: 0.92rem;
   color: var(--ink);
+}
+
+/* The complaint on the case page: whole, but not so tall it buries everything below. */
+.complaint-text {
+  max-height: 32rem;
+  overflow-y: auto;
+}
+
+/* A letter in the case's Letters table, opened in place. */
+.letter-body summary {
+  cursor: pointer;
+}
+.letter-body[open] .rti-letter {
+  margin-top: 8px;
 }
 
 .rti-letter {

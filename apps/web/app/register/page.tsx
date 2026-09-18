@@ -1,5 +1,5 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { PendingLink } from '@/app/components/pending-link';
 import { PUBLIC_API_URL, fetchRegister, isUnauthorized, type RegisterRow } from '@/lib/api';
 
 export const dynamic = 'force-dynamic';
@@ -40,7 +40,7 @@ export default async function RegisterPage({
   return (
     <main className="shell shell-wide">
       <nav className="crumbs">
-        <Link href="/today">Today</Link>
+        <PendingLink href="/today">Today</PendingLink>
         <span aria-hidden="true">/</span>
         <span className="here">Register</span>
       </nav>

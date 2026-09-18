@@ -102,7 +102,7 @@ export const KSDC_CONFIG: CouncilConfig = {
       escalationGapDays: 5,
       terminalAction: 'none',
       isStatutory: false,
-      label: 'Despatch the decision letters to the parties',
+      label: 'Dispatch the decision letters to the parties',
     },
     {
       stage: 'await_compliance',
@@ -122,7 +122,7 @@ export const KSDC_CONFIG: CouncilConfig = {
       escalationGapDays: 2,
       terminalAction: 'none',
       isStatutory: false,
-      label: 'Enter the outward despatch number from the office register',
+      label: 'Enter the outward dispatch number from the office register',
     },
     {
       stage: 'await_registrar_signature',
@@ -209,7 +209,7 @@ export const KSDC_CONFIG: CouncilConfig = {
       escalationGapDays: 1,
       terminalAction: 'none',
       isStatutory: true,
-      label: 'Statutory deadline: the RTI reply must be despatched',
+      label: 'Statutory deadline: the RTI reply must be dispatched',
     },
     {
       stage: 'rti_prepare_reply',

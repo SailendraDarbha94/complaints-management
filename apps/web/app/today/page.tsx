@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import {
   API_URL,
@@ -10,8 +9,9 @@ import {
   type Session,
   type TodayResponse,
 } from '@/lib/api';
+import { PendingLink } from '../components/pending-link';
 import { SignOutButton } from '../components/sign-out';
-import { RowActions } from './row-actions';
+import { RowActions, RowActionsScope } from './row-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,13 +43,13 @@ export default async function TodayPage() {
           <span className="council">Karnataka State Dental Council</span>
           <h1>Today</h1>
           <nav className="crumbs" style={{ marginTop: 6, marginBottom: 0 }}>
-            <Link href="/intake">Inward mail</Link>
+            <PendingLink href="/intake">Inward mail</PendingLink>
             <span aria-hidden="true">/</span>
-            <Link href="/cases">Cases</Link>
+            <PendingLink href="/cases">Cases</PendingLink>
             <span aria-hidden="true">/</span>
-            <Link href="/rti">RTI</Link>
+            <PendingLink href="/rti">RTI</PendingLink>
             <span aria-hidden="true">/</span>
-            <Link href="/register">Register</Link>
+            <PendingLink href="/register">Register</PendingLink>
           </nav>
         </div>
         <span className="date">
@@ -110,7 +110,9 @@ export default async function TodayPage() {
           Every open case has a next step scheduled, and none of them is due yet.
         </div>
       ) : (
-        <>
+        // Most reminders appear in both lists; the scope keeps one copy's buttons held
+        // while the other copy's action is in flight.
+        <RowActionsScope>
           {byUrgency.map((group) => (
             <Group key={group.key} group={group} />
           ))}
@@ -119,7 +121,7 @@ export default async function TodayPage() {
           {data.byWaitingOn.map((group) => (
             <Group key={`w-${group.key}`} group={group} showUrgencyChip />
           ))}
-        </>
+        </RowActionsScope>
       )}
     </main>
   );
@@ -174,17 +176,17 @@ function Row({ item, showUrgencyChip }: { item: QueueItem; showUrgencyChip?: boo
         {item.isStatutory && <span className="statutory"> · statutory</span>}
         <span className="meta">
           {item.caseFileId && item.caseNumber ? (
-            <Link className="case-link" href={`/cases/${item.caseFileId}`}>
+            <PendingLink className="case-link" href={`/cases/${item.caseFileId}`}>
               {item.caseNumber}
-            </Link>
+            </PendingLink>
           ) : item.rtiRequestId && item.rtiNo ? (
             // An RTI timer belongs to an application, not to a case. The Today screen is
             // still one list: an officer with four complaints and an RTI application does
             // not keep two queues in their head, and a statutory deadline on a separate
             // screen is a statutory deadline nobody looks at.
-            <Link className="case-link" href={`/rti/${item.rtiRequestId}`}>
+            <PendingLink className="case-link" href={`/rti/${item.rtiRequestId}`}>
               {item.rtiNo}
-            </Link>
+            </PendingLink>
           ) : (
             (item.caseNumber ?? 'No case')
           )}

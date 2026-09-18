@@ -275,7 +275,7 @@ export class CaseLifecycleService {
       case 'ISSUE_RESPONDENT_NOTICE': {
         if (!input.notice) {
           throw new DomainError(
-            'Issuing a notice requires confirmation that it was despatched: the service ' +
+            'Issuing a notice requires confirmation that it was dispatched: the service ' +
               'mode and the date it went out. The counter never moves on a draft.',
           );
         }

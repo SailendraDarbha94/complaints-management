@@ -1,7 +1,8 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { BusyButton } from '@/app/components/busy-button';
+import { useAction } from '@/app/components/use-action';
 
 /**
  * What the officer can do to this case, right now.
@@ -44,55 +45,54 @@ export function CaseActions({
   events: EventOption[];
   respondents: Array<{ id: string; name: string }>;
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState<EventOption | null>(null);
   const [reason, setReason] = useState('');
   const [closureReason, setClosureReason] = useState<string>('withdrawn');
   const [respondentId, setRespondentId] = useState<string>(respondents[0]?.id ?? '');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Pending until the refreshed case - new state, new buttons - is on screen. Ending at
+  // the response left "Record: Close the case" pressable over the old page.
+  const action = useAction();
 
   if (events.length === 0) return null;
 
   function start(option: EventOption) {
     setOpen(option);
     setReason('');
-    setError(null);
+    action.setError(null);
     setRespondentId(respondents[0]?.id ?? '');
   }
 
-  async function submit(e: React.FormEvent) {
+  function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!open) return;
-    setBusy(true);
-    setError(null);
 
-    try {
-      const body: Record<string, unknown> = {};
-      if (open.requiresReason) body.reason = reason;
-      // needsRespondent, not scope: ISSUE_RESPONDENT_NOTICE is case-scoped but is still
-      // served on one dentist, and this form has always shown a picker for it. Keying on
-      // scope meant the picked dentist was collected and then thrown away.
-      if (needsRespondent) body.caseRespondentId = respondentId;
-      if (NEEDS_CLOSURE_REASON.has(open.event)) body.closureReason = closureReason;
+    const event = open.event;
+    const body: Record<string, unknown> = {};
+    if (open.requiresReason) body.reason = reason;
+    // needsRespondent, not scope: ISSUE_RESPONDENT_NOTICE is case-scoped but is still
+    // served on one dentist, and this form has always shown a picker for it. Keying on
+    // scope meant the picked dentist was collected and then thrown away.
+    if (needsRespondent) body.caseRespondentId = respondentId;
+    if (NEEDS_CLOSURE_REASON.has(event)) body.closureReason = closureReason;
 
-      const res = await fetch(`${apiUrl}/v1/cases/${caseId}/events/${open.event}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as { message?: string };
-        throw new Error(payload.message ?? 'That did not work. Try again.');
-      }
-      setOpen(null);
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+    action.run(
+      async () => {
+        const res = await fetch(`${apiUrl}/v1/cases/${caseId}/events/${event}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const payload = (await res.json().catch(() => ({}))) as { message?: string };
+          throw new Error(payload.message ?? 'That did not work. Try again.');
+        }
+      },
+      (_result, router) => {
+        setOpen(null);
+        router.refresh();
+      },
+    );
   }
 
   const needsRespondent = open?.scope === 'respondent' || open?.event === 'ISSUE_RESPONDENT_NOTICE';
@@ -110,6 +110,9 @@ export function CaseActions({
               type="button"
               className={`action ${e.event.startsWith('CLOSE') || e.event === 'REOPEN' ? 'action-grave' : ''}`}
               title={e.description}
+              // Opening another event mid-record would swap the form out from under the
+              // request, and the refresh would then close the one the officer just opened.
+              disabled={action.pending}
               onClick={() => start(e)}
             >
               {e.label}
@@ -130,7 +133,15 @@ export function CaseActions({
               ) : (
                 <label>
                   Which dentist
-                  <select value={respondentId} onChange={(ev) => setRespondentId(ev.target.value)}>
+                  <select
+                    value={respondentId}
+                    onChange={(ev) => setRespondentId(ev.target.value)}
+                    // The body was built at the click. Another dentist picked, or a reason
+                    // corrected, while it is in flight would be dropped, and the form would
+                    // then close as though the edit had been recorded. So the fields freeze
+                    // with the buttons.
+                    disabled={action.pending}
+                  >
                     {respondents.map((r) => (
                       <option key={r.id} value={r.id}>
                         {r.name}
@@ -143,7 +154,11 @@ export function CaseActions({
             {NEEDS_CLOSURE_REASON.has(open.event) && (
               <label>
                 Closure reason
-                <select value={closureReason} onChange={(ev) => setClosureReason(ev.target.value)}>
+                <select
+                  value={closureReason}
+                  onChange={(ev) => setClosureReason(ev.target.value)}
+                  disabled={action.pending}
+                >
                   {CLOSURE_REASONS.map(([value, text]) => (
                     <option key={value} value={value}>
                       {text}
@@ -162,6 +177,7 @@ export function CaseActions({
                   rows={3}
                   required
                   autoFocus
+                  disabled={action.pending}
                   placeholder="What happened, in the words you would use in the register."
                 />
               </label>
@@ -169,19 +185,29 @@ export function CaseActions({
 
             {open.event === 'ISSUE_RESPONDENT_NOTICE' && (
               <p className="form-note">
-                This records a notice as despatched and moves that dentist&rsquo;s notice
+                This records a notice as dispatched and moves that dentist&rsquo;s notice
                 count. If you have not actually sent it yet, draft the letter first and
                 confirm it from there.
               </p>
             )}
 
-            {error && <p className="form-error">{error}</p>}
+            {action.error && <p className="form-error">{action.error}</p>}
 
             <div className="action-buttons">
-              <button type="submit" disabled={busy || (needsRespondent && respondents.length === 0)}>
-                {busy ? 'Recording…' : `Record: ${open.label}`}
-              </button>
-              <button type="button" className="link-button" onClick={() => setOpen(null)}>
+              <BusyButton
+                type="submit"
+                busy={action.pending}
+                busyLabel="Recording…"
+                disabled={needsRespondent && respondents.length === 0}
+              >
+                {`Record: ${open.label}`}
+              </BusyButton>
+              <button
+                type="button"
+                className="link-button"
+                disabled={action.pending}
+                onClick={() => setOpen(null)}
+              >
                 Cancel
               </button>
             </div>
