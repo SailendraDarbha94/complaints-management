@@ -150,6 +150,11 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
                                 Not stored
                                 <span className="meta">{a.skipped_reason}</span>
                               </>
+                            ) : m.status === 'filed' ? (
+                              // Filed, but the file store did not take it last time. The
+                              // reader retries it; saying "when you file this"
+                              // about a message already on a case would be untrue.
+                              'Kept, not on the case yet — it is added automatically within a few minutes'
                             ) : (
                               'Held, goes on the case when you file this'
                             )}

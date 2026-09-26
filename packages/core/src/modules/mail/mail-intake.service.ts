@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-import type { ParsedMail } from 'mailparser';
+import type { Attachment, ParsedMail } from 'mailparser';
 import type { Tx } from '@ksdc/db';
 import type { IntakeSource, MailForwardKind, MailMatchRung, MailStatus } from '@ksdc/contracts';
 import { ConflictError, DomainError } from '../../common/domain-error.js';
@@ -14,6 +14,8 @@ import { STAGING_PREFIX, sniff, MAX_UPLOAD_BYTES } from '../documents/storage.js
 import type { StoragePort } from '../documents/storage.js';
 import { pgTextArray } from '../../common/pg-array.js';
 import { snippetOf, unwrapForward } from './forwarded.js';
+import { parseMessage } from './parse.js';
+import { imageSize } from './image-size.js';
 import { matchMessage, type MatchCandidate } from './matching.js';
 import {
   intakeAccountOf,
@@ -71,6 +73,50 @@ const ACCOUNT_NOTICE_SENDERS = new Set([
   'noreply@google.com',
   'mail-noreply@google.com',
 ]);
+
+/**
+ * What makes an image a signature logo rather than evidence.
+ *
+ * Every forward from the office carries the sender's signature images, and so does most
+ * mail from clinics; stored, each one became a "complaint material" document on the case.
+ * But a photograph of a bill, or a screenshot of a UPI payment, pasted into the body of a
+ * complaint is embedded in exactly the same way - and losing THAT to a rule about logos is
+ * far worse than a logo on the file. So all three must hold: embedded in the body (cid:),
+ * small in bytes, and small in pixels. Size in bytes alone was not enough - a cropped
+ * screenshot weighs what a logo weighs - while its shape gives it away.
+ */
+const SIGNATURE_IMAGE_MAX_BYTES = 25 * 1024;
+const SIGNATURE_IMAGE_MAX_PX = 200;
+
+function isSignatureImage(a: Attachment, bytes: Buffer): boolean {
+  if (!a.related || !/^image\//i.test(a.contentType) || bytes.length > SIGNATURE_IMAGE_MAX_BYTES) {
+    return false;
+  }
+  const size = imageSize(bytes);
+  // Size unknown: kept. A logo on the case is clutter; a screenshot thrown away is lost.
+  return size !== null && Math.max(size.width, size.height) <= SIGNATURE_IMAGE_MAX_PX;
+}
+
+/**
+ * Text from mail, made storable. Postgres text cannot hold U+0000, and a malformed
+ * encoded-word in a header decodes to it - so one broken subject line failed the whole
+ * message, on every attempt, while it waited to be read.
+ */
+function noNul<T extends string | null | undefined>(s: T): T {
+  return (typeof s === 'string' ? s.replace(/\u0000/g, '') : s) as T;
+}
+
+/**
+ * What a signature logo is recorded as. One exact string, because the tray matches on it:
+ * the card's "N not stored" warning is for a file somebody may have needed, and a logo on
+ * nearly every forward would teach the officer to ignore that warning.
+ */
+const SIGNATURE_LOGO_REASON =
+  'A small image inside the message itself - almost always an email signature logo. ' +
+  'Not stored; it is still in the mailbox if it was anything else.';
+
+/** How deep to open emails attached inside emails. Real forwards nest one or two levels. */
+const MAX_EMBED_DEPTH = 3;
 
 /** The fixed identity every automatic write is attributed to. Created in migration 0013. */
 export const MAIL_ROBOT_USER_ID = '00000000-0000-4000-8000-000000000001';
@@ -211,18 +257,18 @@ export class MailIntakeService {
         suggested_case_file_id, suggestion_note, created_by
       ) VALUES (
         ${id}::uuid, ${ctx.councilId}::uuid, ${meta.gmMsgId ?? null},
-        ${parsed.messageId ?? null}, ${rawSha256}, ${meta.mailbox},
+        ${noNul(parsed.messageId ?? null)}, ${rawSha256}, ${meta.mailbox},
         ${meta.uid ?? null}, ${meta.uidValidity ?? null},
-        ${envelope?.address?.toLowerCase() ?? 'unknown'}, ${envelope?.name || null},
-        ${parsed.to && 'text' in parsed.to ? parsed.to.text : null},
-        ${parsed.date ?? new Date()}, ${parsed.subject ?? '(no subject)'},
-        ${parsed.inReplyTo ?? null},
-        ${pgTextArray(([] as string[]).concat(parsed.references ?? []))}::text[],
-        ${bodyText || null}, ${parsed.html || null}, ${snippet},
-        ${original.kind}::mail_forward_kind, ${original.fromAddress}, ${original.fromName},
-        ${original.to}, ${original.subject}, ${original.date}, ${original.dateText},
-        ${original.body},
-        ${match.candidates[0]?.caseFileId ?? null}::uuid, ${match.note}, ${ctx.userId ?? null}
+        ${noNul(envelope?.address?.toLowerCase() ?? 'unknown')}, ${noNul(envelope?.name || null)},
+        ${noNul(parsed.to && 'text' in parsed.to ? parsed.to.text : null)},
+        ${parsed.date ?? new Date()}, ${noNul(parsed.subject ?? '(no subject)')},
+        ${noNul(parsed.inReplyTo ?? null)},
+        ${pgTextArray(([] as string[]).concat(parsed.references ?? []).map(noNul))}::text[],
+        ${noNul(bodyText || null)}, ${noNul(parsed.html || null)}, ${noNul(snippet)},
+        ${original.kind}::mail_forward_kind, ${noNul(original.fromAddress)},
+        ${noNul(original.fromName)}, ${noNul(original.to)}, ${noNul(original.subject)},
+        ${original.date}, ${noNul(original.dateText)}, ${noNul(original.body)},
+        ${match.candidates[0]?.caseFileId ?? null}::uuid, ${noNul(match.note)}, ${ctx.userId ?? null}
       )
     `);
 
@@ -262,6 +308,11 @@ export class MailIntakeService {
         receivedAt: parsed.date ?? new Date(),
         messageId: parsed.messageId ?? null,
       });
+      // The attachments go with it, exactly as when the officer files by hand. They did not,
+      // once: a complainant's reply quoting the case number - the usual way the bills the
+      // Council asked for arrive - filed itself and closed the "waiting for documents"
+      // reminder, while the bills stayed behind on the message and never reached the case.
+      await this.fileAttachments(tx, ctx, id, match.autoFile.caseFileId);
       autoFiledTo = match.autoFile.caseFileId;
     }
 
@@ -282,6 +333,49 @@ export class MailIntakeService {
   }
 
   /**
+   * A message that could not be ingested, written down so that it cannot vanish.
+   *
+   * The read cursor is the highest UID in the tray, so a message whose ingest fails is only
+   * retried until a later message succeeds; after that the reader is past it for good. A
+   * complaint that tripped on some malformed part was then lost, with one line in a log and
+   * nothing on screen. This puts a card in the tray instead - that it arrived, that it could
+   * not be read, and that the original is in the mailbox - and, being a row with a UID, it
+   * also lets the cursor move on honestly.
+   */
+  async recordUnreadable(
+    tx: Tx,
+    ctx: EngineContext,
+    parsed: ParsedMail | null,
+    meta: IngestMeta,
+    reason: string,
+  ): Promise<string | null> {
+    const envelope = parsed?.from?.value?.[0];
+    const inserted = await tx.execute<{ id: string }>(sql`
+      INSERT INTO mail_message (
+        id, council_id, gm_msg_id, raw_sha256, mailbox, uid, uid_validity,
+        envelope_from, envelope_from_name, envelope_date, subject, snippet,
+        suggestion_note, created_by
+      ) VALUES (
+        ${randomUUID()}::uuid, ${ctx.councilId}::uuid, ${meta.gmMsgId ?? null},
+        ${createHash('sha256').update(meta.raw).digest('hex')}, ${meta.mailbox},
+        ${meta.uid ?? null}, ${meta.uidValidity ?? null},
+        ${noNul(envelope?.address?.toLowerCase() ?? 'unknown')}, ${noNul(envelope?.name || null)},
+        ${parsed?.date ?? new Date()}, ${noNul(parsed?.subject ?? '(no subject)')},
+        ${'This message could not be read automatically. Open it in the mailbox.'},
+        ${noNul(
+          `Could not be read automatically (${reason.slice(0, 200)}). Nothing from it is on ` +
+            'any case and its attachments were not kept - open it in the mailbox, and ' +
+            'forward it again if it is a complaint.',
+        )},
+        ${ctx.userId ?? null}
+      )
+      ON CONFLICT DO NOTHING
+      RETURNING id
+    `);
+    return inserted.rows[0]?.id ?? null;
+  }
+
+  /**
    * Put each attachment somewhere it can be retrieved from later.
    *
    * Refused types are RECORDED rather than dropped. The register accepts PDFs and images;
@@ -295,48 +389,148 @@ export class MailIntakeService {
     mailMessageId: string,
     parsed: ParsedMail,
   ): Promise<{ stored: number; skipped: number }> {
-    let stored = 0;
-    let skipped = 0;
+    const tally = { stored: 0, skipped: 0 };
+    await this.stageFrom(tx, ctx, mailMessageId, parsed.attachments ?? [], 0, tally, null);
+    return tally;
+  }
 
-    for (const a of parsed.attachments ?? []) {
-      // The forwarded original itself is not an attachment of the complaint; it IS the
-      // complaint, and it has already been unwrapped into the message's own columns.
-      if (a.contentType === 'message/rfc822') continue;
+  /**
+   * One level of attachments, opening any email attached inside it.
+   *
+   * An email forwarded AS AN ATTACHMENT arrives as a single message/rfc822 part, and the
+   * complainant's bills are inside it: mailparser does not lift them out to the outer
+   * message. This used to skip that part - reasoning, correctly, that the attached email is
+   * the complaint and had been unwrapped already - and with it every file the complainant
+   * had attached, without a trace. So each attached email is opened, to MAX_EMBED_DEPTH.
+   *
+   * Whose files they are matters as much as keeping them. When two complaints are forwarded
+   * together as attachments, the first is read as the complaint and the second is somebody
+   * else's: staging its files here would put another patient's X-ray on this complainant's
+   * case. So `elsewhere`, when set, says these files belong to a different email. They are
+   * recorded with that reason and never staged, so they cannot be filed with this message.
+   */
+  private async stageFrom(
+    tx: Tx,
+    ctx: EngineContext,
+    mailMessageId: string,
+    attachments: Attachment[],
+    depth: number,
+    tally: { stored: number; skipped: number },
+    elsewhere: string | null,
+  ): Promise<void> {
+    const emails = attachments.filter((a) => a.contentType === 'message/rfc822').length;
+    let embedded = 0;
 
+    for (const a of attachments) {
       const bytes = a.content as Buffer;
-      const filename = a.filename || `attachment-${stored + skipped + 1}`;
-      const sha256 = createHash('sha256').update(bytes).digest('hex');
+
+      if (a.contentType === 'message/rfc822') {
+        embedded++;
+        let inner: ParsedMail | null = null;
+        if (depth < MAX_EMBED_DEPTH) {
+          try {
+            inner = await parseMessage(bytes);
+          } catch {
+            inner = null;
+          }
+        }
+        if (!inner) {
+          await this.recordAttachment(tx, ctx, mailMessageId, tally, a, bytes, null,
+            depth < MAX_EMBED_DEPTH
+              ? 'An email attached to this one could not be opened. It is still in the mailbox.'
+              : 'An email attached several emails deep. It is still in the mailbox.');
+          tally.skipped++;
+          continue;
+        }
+
+        // Inside another email's attachments: everything below it is that email's too.
+        if (elsewhere) {
+          await this.stageFrom(tx, ctx, mailMessageId, inner.attachments ?? [], depth + 1, tally, elsewhere);
+          continue;
+        }
+
+        const label = `"${inner.subject ?? 'no subject'}" from ${inner.from?.text ?? 'an unknown sender'}`;
+
+        // The first attached email at the top level, when it names a sender, is the one
+        // unwrapForward() read as the complaint: its text is already this message's. Any
+        // other attached email is written down, so that it cannot vanish either.
+        const isTheComplaint = depth === 0 && embedded === 1 && Boolean(inner.from?.value?.[0]?.address);
+        if (!isTheComplaint) {
+          await this.recordAttachment(tx, ctx, mailMessageId, tally, a, bytes, null,
+            `Another email attached to this one (${label}). Its text is not kept here - read it ` +
+              'in the mailbox.');
+          tally.skipped++;
+        }
+
+        // Its files are this complaint's when it IS the complaint, when it was the only email
+        // attached, or when it sits inside the complaint (a clinic's email the complainant
+        // attached to theirs). A second complaint forwarded alongside keeps its own.
+        const belongsHere = isTheComplaint || depth > 0 || emails === 1;
+        await this.stageFrom(tx, ctx, mailMessageId, inner.attachments ?? [], depth + 1, tally,
+          belongsHere
+            ? null
+            : `Attached to the other email (${label}), not to this complaint, so it is not ` +
+                'filed with it. It is in the mailbox.');
+        continue;
+      }
 
       let stagingKey: string | null = null;
       let skippedReason: string | null = null;
 
-      if (bytes.length === 0) {
+      if (elsewhere) {
+        skippedReason = elsewhere;
+      } else if (bytes.length === 0) {
         skippedReason = 'The file was empty.';
       } else if (bytes.length > MAX_UPLOAD_BYTES) {
         skippedReason =
           `${Math.round(bytes.length / 1_048_576)} MB, over the ` +
           `${MAX_UPLOAD_BYTES / 1_048_576} MB limit.`;
+      } else if (isSignatureImage(a, bytes)) {
+        // Before the type check, not after it: a GIF or WebP logo is not a kind the register
+        // stores, and would otherwise be reported as a file it refused - a warning on the
+        // card for nothing. Recorded, not dropped, so the officer can still see it came.
+        skippedReason = SIGNATURE_LOGO_REASON;
       } else if (!sniff(bytes)) {
         // Sniffed from the bytes, never trusted from the declared type - the same rule
         // the browser upload path follows.
         skippedReason = `Not a kind the register stores (declared ${a.contentType}).`;
       } else {
+        // Not caught. If the store will not take a file, the whole message fails and the
+        // sweep stops at it and tries again (see sweepMailbox). Recording it as "not stored"
+        // instead looked kinder and was not: the message then filed itself without the bill
+        // and closed the reminder that was waiting for it, and nothing ever retried it.
         stagingKey = `${STAGING_PREFIX}${randomUUID()}`;
         await this.storage.write(stagingKey, bytes, a.contentType);
       }
 
-      await tx.execute(sql`
-        INSERT INTO mail_attachment (council_id, mail_message_id, filename, declared_type,
-                                     size_bytes, sha256, staging_key, skipped_reason)
-        VALUES (${ctx.councilId}::uuid, ${mailMessageId}::uuid, ${filename},
-                ${a.contentType}, ${bytes.length}, ${sha256}, ${stagingKey}, ${skippedReason})
-      `);
-
-      if (stagingKey) stored++;
-      else skipped++;
+      await this.recordAttachment(tx, ctx, mailMessageId, tally, a, bytes, stagingKey, skippedReason);
+      if (stagingKey) tally.stored++;
+      else tally.skipped++;
     }
+  }
 
-    return { stored, skipped };
+  private async recordAttachment(
+    tx: Tx,
+    ctx: EngineContext,
+    mailMessageId: string,
+    tally: { stored: number; skipped: number },
+    a: Attachment,
+    bytes: Buffer,
+    stagingKey: string | null,
+    skippedReason: string | null,
+  ): Promise<void> {
+    // Numbered, so two unnamed files on one message can still be told apart.
+    const n = tally.stored + tally.skipped + 1;
+    const filename =
+      a.filename || (a.contentType === 'message/rfc822' ? `attached-email-${n}.eml` : `attachment-${n}`);
+    await tx.execute(sql`
+      INSERT INTO mail_attachment (council_id, mail_message_id, filename, declared_type,
+                                   size_bytes, sha256, staging_key, skipped_reason)
+      VALUES (${ctx.councilId}::uuid, ${mailMessageId}::uuid, ${noNul(filename)},
+              ${noNul(a.contentType)}, ${bytes.length},
+              ${createHash('sha256').update(bytes).digest('hex')}, ${stagingKey},
+              ${noNul(skippedReason)})
+    `);
   }
 
   // ─── Acting on a message ───────────────────────────────────────────────────
@@ -507,7 +701,8 @@ export class MailIntakeService {
              (SELECT count(*)::int FROM mail_attachment a
                WHERE a.mail_message_id = m.id AND a.staging_key IS NOT NULL) AS attachment_count,
              (SELECT count(*)::int FROM mail_attachment a
-               WHERE a.mail_message_id = m.id AND a.skipped_reason IS NOT NULL) AS skipped_count
+               WHERE a.mail_message_id = m.id AND a.skipped_reason IS NOT NULL
+                 AND a.skipped_reason <> ${SIGNATURE_LOGO_REASON}) AS skipped_count
       FROM mail_message m
       LEFT JOIN case_file sc ON sc.id = m.suggested_case_file_id
       WHERE m.council_id = ${ctx.councilId}::uuid AND m.status = ${status}::mail_status
@@ -605,18 +800,35 @@ export class MailIntakeService {
   ): Promise<void> {
     const correspondenceId = await this.correspondence.recordInbound(tx, ctx, {
       caseFileId: args.caseFileId,
-      subject: args.subject,
-      body: args.body,
-      fromEmail: args.fromEmail,
+      subject: noNul(args.subject),
+      body: noNul(args.body),
+      fromEmail: noNul(args.fromEmail),
       receivedAt: args.receivedAt,
     });
 
     // The Message-ID goes on the letter so a later reply in the same thread can find it.
+    // Only if no letter has it already: it is unique per council, and a Message-ID can
+    // legitimately repeat (see ingest) - so setting it blindly made filing the second such
+    // message fail outright, which for a message filing itself meant never reaching the tray.
     if (args.messageId) {
-      await tx.execute(sql`
-        UPDATE correspondence SET message_id = ${args.messageId}
-        WHERE council_id = ${ctx.councilId}::uuid AND id = ${correspondenceId}::uuid
-      `);
+      const messageId = noNul(args.messageId);
+      try {
+        // A savepoint as well as the NOT EXISTS: two filings running at once (the reader
+        // and the officer's "check now") can both pass the check, and the loser must lose
+        // only the thread marker, not the filing.
+        await tx.transaction(async (sp) => {
+          await sp.execute(sql`
+            UPDATE correspondence SET message_id = ${messageId}
+            WHERE council_id = ${ctx.councilId}::uuid AND id = ${correspondenceId}::uuid
+              AND NOT EXISTS (
+                SELECT 1 FROM correspondence other
+                WHERE other.council_id = ${ctx.councilId}::uuid AND other.message_id = ${messageId}
+              )
+          `);
+        });
+      } catch {
+        // Another letter holds this Message-ID. It keeps it; this one files without.
+      }
     }
 
     await tx.execute(sql`
@@ -638,11 +850,13 @@ export class MailIntakeService {
   /**
    * Promote each staged attachment to a case document.
    *
-   * commit() moves the object out of staging BEFORE any row is written, so a failure here
-   * leaves the bytes at their permanent key with nothing pointing at them and the staging
-   * key gone. Each attachment is therefore committed independently and a failure on one
-   * does not take the others - the message still files, and the officer sees which files
-   * did not make it.
+   * Each in its own savepoint, so a failure on one takes neither the others nor the filing
+   * with it: the message still files, the file that did not make it stays staged and shows
+   * on the message page as not yet on the case, and fileHeldAttachments() tries it again on
+   * the next sweep. This matters most when a reply files ITSELF - there the whole message
+   * used to depend on every one of its attachments reaching the store, and a message that
+   * fails to ingest does not reach the tray at all. commit() writes its rows before it moves
+   * the file, so a rolled-back savepoint leaves the file where the staging key says it is.
    */
   private async fileAttachments(
     tx: Tx,
@@ -659,21 +873,66 @@ export class MailIntakeService {
 
     let filed = 0;
     for (const a of rows.rows) {
-      const committed = await this.documents.commit(tx, ctx, {
-        caseFileId,
-        storageKey: a.staging_key,
-        title: a.filename,
-        originalFilename: a.filename,
-        documentClass: 'complaint_material',
-      });
-      await tx.execute(sql`
-        UPDATE mail_attachment SET document_id = ${committed.documentId}::uuid
-        WHERE id = ${a.id}::uuid
-      `);
-      filed++;
+      try {
+        await tx.transaction(async (sp) => {
+          const committed = await this.documents.commit(sp, ctx, {
+            caseFileId,
+            storageKey: a.staging_key,
+            title: a.filename,
+            originalFilename: a.filename,
+            documentClass: 'complaint_material',
+          });
+          await sp.execute(sql`
+            UPDATE mail_attachment SET document_id = ${committed.documentId}::uuid
+            WHERE id = ${a.id}::uuid
+          `);
+        });
+        filed++;
+      } catch (err) {
+        this.log.warn(
+          `${a.filename} did not reach the case yet, will retry: ` +
+            (err instanceof Error ? err.message : String(err)),
+        );
+      }
     }
     return filed;
   }
+
+  /**
+   * Try again: attachments of messages already on a case that did not reach it.
+   *
+   * Called by every sweep. Normally there are none; after a moment when the file store did
+   * not answer, this is what puts the complainant's bills on the case without anybody
+   * having to notice they were missing.
+   */
+  async fileHeldAttachments(tx: Tx, ctx: EngineContext): Promise<number> {
+    // Newest first, so a file that can never be moved (its staged copy gone) cannot hold
+    // the front of the queue and starve the ones that can.
+    const held = await tx.execute<{ mail_message_id: string; case_file_id: string }>(sql`
+      SELECT m.id AS mail_message_id, m.case_file_id
+      FROM mail_message m
+      JOIN mail_attachment a ON a.mail_message_id = m.id
+      WHERE m.council_id = ${ctx.councilId}::uuid AND m.status = 'filed'
+        AND a.staging_key IS NOT NULL AND a.document_id IS NULL
+      GROUP BY m.id, m.case_file_id
+      ORDER BY max(a.created_at) DESC
+      LIMIT 20
+    `);
+    let filed = 0;
+    const now = Date.now();
+    for (const h of held.rows) {
+      // At most every ten minutes per message, not on every thirty-second sweep: a file
+      // that keeps failing should be retried, not fill the log.
+      const last = this.heldRetries.get(h.mail_message_id);
+      if (last !== undefined && now - last < 10 * 60_000) continue;
+      this.heldRetries.set(h.mail_message_id, now);
+      filed += await this.fileAttachments(tx, ctx, h.mail_message_id, h.case_file_id);
+    }
+    return filed;
+  }
+
+  /** When each message's held files were last retried. In memory: a restart just retries. */
+  private readonly heldRetries = new Map<string, number>();
 
   /**
    * A reply arriving is the thing the case was waiting for.

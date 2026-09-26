@@ -231,6 +231,14 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
 
           <Section title="Documents">
             <DocumentUpload caseId={c.id} apiUrl={PUBLIC_API_URL} />
+            {data.heldAttachments > 0 && (
+              <p className="rti-hint">
+                {data.heldAttachments === 1
+                  ? 'One file from the email is kept but not on the case yet'
+                  : `${data.heldAttachments} files from the email are kept but not on the case yet`}
+                {' — they are added automatically within a few minutes.'}
+              </p>
+            )}
             {data.documents.length === 0 ? (
               <p className="muted">No documents filed.</p>
             ) : (

@@ -1,5 +1,6 @@
 import { ImapFlow, type FetchMessageObject } from 'imapflow';
-import { simpleParser, type ParsedMail } from 'mailparser';
+import type { ParsedMail } from 'mailparser';
+import { parseMessage } from './parse.js';
 import { Logger } from '../../common/logger.js';
 
 /**
@@ -35,7 +36,9 @@ export interface FetchedMessage {
   gmMsgId: string | null;
   /** The complete raw source. Never truncated — a partial read gives a useless hash. */
   raw: Buffer;
-  parsed: ParsedMail;
+  /** Null when the message could not be parsed at all - see parseError. */
+  parsed: ParsedMail | null;
+  parseError?: string;
 }
 
 /** Where the reader had got to. Both halves are needed; see `resumeFrom`. */
@@ -163,15 +166,25 @@ export class Mailbox {
         if (msg.uid < startUid) continue;
         if (!msg.source) continue;
 
+        // A message the parser refuses (an oversized header, a malformed structure) is
+        // handed on unparsed rather than thrown. Thrown, it aborted the fetch - on every
+        // sweep, since the cursor never moved past it - and no mail after it was ever read.
+        let parsed: ParsedMail | null = null;
+        let parseError: string | undefined;
+        try {
+          parsed = await parseMessage(msg.source);
+        } catch (err) {
+          parseError = err instanceof Error ? err.message : String(err);
+        }
+
         messages.push({
           uid: msg.uid,
           uidValidity,
           mailbox: mailboxKey(this.config, box.path),
           gmMsgId: gmailIdOf(msg),
           raw: msg.source,
-          // keepCidLinks, or every inline signature logo is inlined as a base64 data URI
-          // and a routine email grows by megabytes.
-          parsed: await simpleParser(msg.source, { keepCidLinks: true }),
+          parsed,
+          parseError,
         });
         if (msg.uid > highest) highest = msg.uid;
       }

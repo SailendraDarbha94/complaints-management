@@ -27,12 +27,19 @@ export function SyncButton() {
           message?: string;
           ingested?: number;
           filed?: number;
+          failed?: number;
         };
         if (!res.ok) throw new Error(payload.message ?? 'Could not reach the mailbox.');
 
-        return payload.ingested
+        // A message that could not be read is still a card in the tray, so it is reported
+        // here too; "Nothing new." above a new card would read as a miscount.
+        const unread = payload.failed
+          ? `${payload.failed} could not be read — see the tray`
+          : null;
+        const fresh = payload.ingested
           ? `${payload.ingested} new${payload.filed ? `, ${payload.filed} filed automatically` : ''}`
-          : 'Nothing new.';
+          : null;
+        return [fresh, unread].filter(Boolean).join('; ') || 'Nothing new.';
       },
       // The tally and the new cards arrive together: "2 new" above a tray that does not
       // yet show them reads as a miscount.

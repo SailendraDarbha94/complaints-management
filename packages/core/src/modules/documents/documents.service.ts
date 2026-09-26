@@ -104,7 +104,6 @@ export class DocumentsService {
     // The permanent key is a UUID and nothing else: no patient name, no filename. Keys
     // reach logs, browser history and support tickets.
     const finalKey = `${DOCUMENTS_PREFIX}${ctx.councilId}/${randomUUID()}`;
-    await this.storage.move(args.storageKey, finalKey);
 
     let documentId = args.documentId;
     if (documentId) {
@@ -143,6 +142,13 @@ export class DocumentsService {
       UPDATE document SET current_version_id = ${version.rows[0]!.id}::uuid
       WHERE id = ${documentId}::uuid
     `);
+
+    // The move comes LAST, after every row is written. Storage is not part of the
+    // transaction: moved first, a row that then failed to insert rolled back and left the
+    // file under its permanent key with nothing pointing at it - indistinguishable from a
+    // real case document - and the staging key it came from gone, so a retry could never
+    // find it. Moved last, a failed move rolls the rows back and leaves the file staged.
+    await this.storage.move(args.storageKey, finalKey);
 
     return {
       documentId,

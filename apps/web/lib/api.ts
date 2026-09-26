@@ -225,6 +225,8 @@ export interface CaseDetail {
   letters: CaseLetter[];
   /** Mail filed on the case, oldest first. The first is the complaint as it was received. */
   mail: CaseMail[];
+  /** Files from this case's mail that are kept but not on the case yet; retried automatically. */
+  heldAttachments: number;
   documents: CaseDocument[];
   followups: Array<{
     id: string;

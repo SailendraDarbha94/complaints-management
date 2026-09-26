@@ -43,7 +43,8 @@ async function once(): Promise<void> {
   const services = await getServices();
   const r = await sweepMailbox(services.mail);
   log.log(`${r.fetched} fetched, ${r.ingested} new, ${r.filed} filed automatically`);
-  if (r.failed > 0) throw new Error(`${r.failed} message(s) could not be ingested`);
+  if (r.failed > 0) throw new Error(`${r.failed} message(s) could not be read - see the tray`);
+  if (r.deferred > 0) throw new Error("a message failed to ingest and will be tried again - see the log above");
 }
 
 async function watch(): Promise<void> {

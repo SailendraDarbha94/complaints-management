@@ -1,4 +1,5 @@
-import { simpleParser, type ParsedMail } from 'mailparser';
+import type { ParsedMail } from 'mailparser';
+import { parseMessage } from './parse.js';
 import type { MailForwardKind } from '@ksdc/contracts';
 
 /**
@@ -394,7 +395,7 @@ export async function unwrapForward(parsed: ParsedMail): Promise<ForwardedOrigin
   const embedded = (parsed.attachments ?? []).find((a) => a.contentType === 'message/rfc822');
   if (embedded?.content) {
     try {
-      const inner = await simpleParser(embedded.content as Buffer, { keepCidLinks: true });
+      const inner = await parseMessage(embedded.content as Buffer);
       const from = inner.from?.value?.[0];
       if (from?.address) {
         return {

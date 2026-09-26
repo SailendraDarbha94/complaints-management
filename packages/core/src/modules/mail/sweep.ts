@@ -22,7 +22,10 @@ export interface SweepResult {
   ingested: number;
   /** How many filed themselves because they quoted a case number. */
   filed: number;
+  /** Written down as unreadable: a card in the tray says so. */
   failed: number;
+  /** Failed this time and will be tried again; the sweep stopped at it. */
+  deferred: number;
 }
 
 export function mailboxOrThrow() {
@@ -96,6 +99,15 @@ export async function sweepMailbox(mail: MailIntakeService): Promise<SweepResult
   const actor = { councilId, userId: MAIL_ROBOT_USER_ID };
   const ctx = { councilId, userId: MAIL_ROBOT_USER_ID, config: council.config };
 
+  // Attachments of filed messages that did not reach their case last time - a moment when
+  // the file store did not answer. First, and in its own transaction: it must not depend
+  // on the mailbox being reachable, and nothing it does can undo an ingest.
+  try {
+    await withCouncil(actor, (tx) => mail.fileHeldAttachments(tx, ctx));
+  } catch (err) {
+    log.error(`held attachments: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   // The same key the messages are stored under - account and folder together. See
   // mailboxKey() for the bug that keying on the folder alone caused.
   const cursor = await withCouncil(actor, (tx) =>
@@ -106,36 +118,96 @@ export async function sweepMailbox(mail: MailIntakeService): Promise<SweepResult
   let ingested = 0;
   let filed = 0;
   let failed = 0;
+  let deferred = 0;
 
   for (const message of messages) {
-    // One transaction per message. A message that fails — a malformed part, an attachment
-    // storage rejects — must not take the rest of the sweep with it. And because the
-    // cursor is derived from what was actually written rather than from a stored
-    // high-water mark, a failed message is retried next sweep instead of skipped forever.
+    const meta = {
+      mailbox: message.mailbox,
+      uid: message.uid,
+      uidValidity: message.uidValidity,
+      gmMsgId: message.gmMsgId,
+      raw: message.raw,
+    };
+    const key = `${message.mailbox}#${message.uidValidity}#${message.uid}`;
+    const subject = message.parsed?.subject ?? '(no subject)';
+
+    const writeDown = async (reason: string): Promise<boolean> => {
+      try {
+        await withCouncil(actor, (tx) =>
+          mail.recordUnreadable(tx, ctx, message.parsed, meta, reason),
+        );
+        failed++;
+        return true;
+      } catch (err) {
+        log.error(
+          `uid ${message.uid} could not even be recorded as unreadable: ` +
+            (err instanceof Error ? err.message : String(err)),
+        );
+        return false;
+      }
+    };
+
+    // Not parseable at all. That will not change by waiting, so it is written down now.
+    if (!message.parsed) {
+      log.error(`uid ${message.uid}: ${message.parseError ?? 'could not be parsed'}`);
+      if (!(await writeDown(message.parseError ?? 'could not be parsed'))) break;
+      continue;
+    }
+    const parsed = message.parsed;
+
     try {
-      const result = await withCouncil(actor, (tx) =>
-        mail.ingest(tx, ctx, message.parsed, {
-          mailbox: message.mailbox,
-          uid: message.uid,
-          uidValidity: message.uidValidity,
-          gmMsgId: message.gmMsgId,
-          raw: message.raw,
-        }),
-      );
+      const result = await withCouncil(actor, (tx) => mail.ingest(tx, ctx, parsed, meta));
+      failures.delete(key);
       if (result.duplicate) continue;
       ingested++;
       if (result.autoFiledTo) filed++;
     } catch (err) {
-      failed++;
-      log.error(
-        `uid ${message.uid} ("${message.parsed.subject ?? '(no subject)'}"): ` +
-          (err instanceof Error ? err.message : String(err)),
-      );
+      const reason = err instanceof Error ? err.message : String(err);
+      const seen = failures.get(key) ?? { count: 0, since: Date.now() };
+      seen.count++;
+      failures.set(key, seen);
+      log.error(`uid ${message.uid} ("${subject}"), attempt ${seen.count}: ${reason}`);
+
+      if (!givesUp(seen, Date.now())) {
+        // Stop the sweep HERE and try again next time. The cursor is the highest UID in
+        // the tray, so ingesting any later message would move it past this one for good -
+        // which is how a failed complaint used to vanish. Most failures are a moment when
+        // the database or the file store did not answer, and are gone by the next check.
+        deferred++;
+        break;
+      }
+
+      // Failing for long enough, and on nothing else, to be about this message itself.
+      // Written down, so it cannot vanish and so the mail behind it can be read.
+      if (!(await writeDown(reason))) break;
+      failures.delete(key);
     }
   }
 
-  if (ingested > 0 || failed > 0) {
-    log.log(`${ingested} new, ${filed} filed automatically, ${failed} failed`);
+  if (ingested > 0 || failed > 0 || deferred > 0) {
+    log.log(
+      `${ingested} new, ${filed} filed automatically, ${failed} could not be read` +
+        (deferred ? ', 1 to try again' : ''),
+    );
   }
-  return { fetched: messages.length, ingested, filed, failed };
+  return { fetched: messages.length, ingested, filed, failed, deferred };
+}
+
+/**
+ * Messages that failed to ingest, by mailbox + UIDVALIDITY + UID, for as long as this
+ * process runs. Held in memory on purpose: after a restart a message simply gets its full
+ * allowance of attempts again, which errs towards reading it rather than giving up on it.
+ */
+const failures = new Map<string, { count: number; since: number }>();
+
+/**
+ * When a message that keeps failing is written down as unreadable rather than retried.
+ *
+ * Both limits, not either: ten attempts is five minutes at the default poll, and an outage
+ * of the database or the file store can last longer than that. Giving up during an outage
+ * would turn every message that arrived in it into an empty "could not be read" card; the
+ * cost of waiting is only that mail behind a genuinely broken message waits ten minutes.
+ */
+export function givesUp(seen: { count: number; since: number }, now: number): boolean {
+  return seen.count >= 10 && now - seen.since >= 10 * 60_000;
 }

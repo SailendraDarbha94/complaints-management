@@ -65,6 +65,14 @@ export const GET = withAuth<{ id: string }>(async ({ params, tx, ctx, services }
   // part of this file, and it belongs where the officer is already looking.
   const rtiRequests = await services.rti.forCase(tx, ctx, id);
 
+  // Files that came with this case's mail but have not reached the file store yet - kept,
+  // and retried by the mail reader. Said on the case, because the officer is here and the
+  // message page is not where anyone looks once a case is open.
+  const held = await tx.execute<{ n: number }>(sql`
+    SELECT count(*)::int AS n FROM mail_attachment a
+    JOIN mail_message m ON m.id = a.mail_message_id
+    WHERE m.case_file_id = ${id}::uuid AND a.staging_key IS NOT NULL AND a.document_id IS NULL`);
+
   return {
     case: row,
     parties: parties.rows,
@@ -73,6 +81,7 @@ export const GET = withAuth<{ id: string }>(async ({ params, tx, ctx, services }
     history: history.rows,
     letters: letters.rows,
     mail: mail.rows,
+    heldAttachments: held.rows[0]?.n ?? 0,
     documents,
     followups,
     rtiRequests,

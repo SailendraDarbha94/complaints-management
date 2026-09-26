@@ -11,7 +11,8 @@ import { FollowupService, type EngineContext } from '../followups/followup.servi
 import { LocalStorage } from '../documents/storage.js';
 import { seedCouncilAndOfficer } from '../../test-support/fixtures.js';
 import { MailIntakeService } from './mail-intake.service.js';
-import { councilForMailbox } from './sweep.js';
+import { councilForMailbox, givesUp } from './sweep.js';
+import { parseMessage } from './parse.js';
 
 /**
  * The inward tray, against a real database.
@@ -484,6 +485,459 @@ describe('attachments', () => {
       `);
       expect(rows.rows[0]!.filename).toBe('notes.docx');
       expect(rows.rows[0]!.skipped_reason).toMatch(/not a kind the register stores/i);
+    });
+  });
+
+  // ── The three ways attachments went missing or went astray ──────────────────
+  //
+  // Found by reading the code when the officer asked what happens to attachments. Each was
+  // silent: nothing on screen said a file had not reached the case, or that one had which
+  // did not belong there.
+
+  /** Lines of a MIME message, joined as a mail server hands them over. */
+  const mime = (lines: string[]) => Buffer.from(lines.join('\r\n'), 'utf8');
+
+  const pngPart = (filename: string, bytes: Buffer, extra: string[] = []) => [
+    'Content-Type: image/png',
+    'Content-Transfer-Encoding: base64',
+    ...extra,
+    `Content-Disposition: attachment; filename="${filename}"`,
+    '',
+    bytes.toString('base64'),
+  ];
+
+  /** The complainant's own email: a letter with a bill attached. */
+  const complaintEmail = (subject: string, from = 'A. Patient <a.patient@example.in>') =>
+    [
+      `From: ${from}`,
+      'To: registrar@mlks.test',
+      `Subject: ${subject}`,
+      'Date: Tue, 16 Sep 2026 19:12:00 +0530',
+      'Content-Type: multipart/mixed; boundary="in"',
+      '',
+      '--in',
+      'Content-Type: text/plain; charset=utf-8',
+      '',
+      'The bridge came loose twice. The bill is attached.',
+      '--in',
+      ...pngPart('bill.png', PNG),
+      '--in--',
+      '',
+    ].join('\r\n');
+
+  it('files the attachments with a reply that files itself by quoting the case number', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const opened = await mail.openCase(tx, ctx, {
+        mailMessageId: (await ingest(tx, await forward(GMAIL_FORWARD))).mailMessageId,
+      });
+      seq++;
+      const bytes = mime([
+        'From: Kavitha Devi <kdevi@example.in>',
+        'To: intake@mlks.test',
+        `Subject: Re: Documents required [${opened.caseNumber}]`,
+        `Message-ID: <reply-${seq}@mail.test>`,
+        'Date: Thu, 18 Sep 2026 09:00:00 +0530',
+        'Content-Type: multipart/mixed; boundary="b1"',
+        '',
+        '--b1',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        'Here are the bills you asked for.',
+        '--b1',
+        ...pngPart('bill.png', PNG),
+        '--b1--',
+        '',
+      ]);
+      const out = await ingest(tx, { parsed: await simpleParser(bytes), raw: bytes });
+
+      expect(out.autoFiledTo).toBe(opened.caseFileId);
+      // On the case, not merely held on the message - the reminder for documents is closed
+      // by the same filing, so anything less leaves the case waiting on a file it has.
+      const docs = await documents.listForCase(tx, ctx, opened.caseFileId);
+      expect(docs.map((d) => d.filename)).toContain('bill.png');
+      const rows = await tx.execute<{ document_id: string | null }>(sql`
+        SELECT document_id FROM mail_attachment WHERE mail_message_id = ${out.mailMessageId}::uuid
+      `);
+      expect(rows.rows[0]!.document_id).not.toBeNull();
+    });
+  });
+
+  it('keeps the bills inside an email that was forwarded AS an attachment', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      seq++;
+      const bytes = mime([
+        'From: Dental Officer <officer@mlks.test>',
+        'To: intake@mlks.test',
+        'Subject: Fwd: Treatment complaint',
+        `Message-ID: <fwd-att-${seq}@mail.test>`,
+        'Date: Wed, 17 Sep 2026 10:14:00 +0530',
+        'Content-Type: multipart/mixed; boundary="out"',
+        '',
+        '--out',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        'Please log the attached.',
+        '--out',
+        'Content-Type: message/rfc822',
+        'Content-Disposition: attachment; filename="complaint.eml"',
+        '',
+        complaintEmail('Treatment complaint'),
+        '--out--',
+        '',
+      ]);
+      const out = await ingest(tx, { parsed: await simpleParser(bytes), raw: bytes });
+
+      // The attached email is the complaint - unwrapped, not listed as a file of its own.
+      const rows = await tx.execute<{ filename: string; staging_key: string | null }>(sql`
+        SELECT filename, staging_key FROM mail_attachment
+        WHERE mail_message_id = ${out.mailMessageId}::uuid
+      `);
+      expect(rows.rows.map((r) => r.filename)).toEqual(['bill.png']);
+      expect(rows.rows[0]!.staging_key).toMatch(/^staging\//);
+
+      const opened = await mail.openCase(tx, ctx, { mailMessageId: out.mailMessageId });
+      expect(opened.documentsFiled).toBe(1);
+      const parties = await tx.execute<{ email: string | null }>(sql`
+        SELECT p.email FROM case_party cp JOIN party p ON p.id = cp.party_id
+        WHERE cp.case_file_id = ${opened.caseFileId}::uuid AND cp.role = 'complainant'
+      `);
+      expect(parties.rows[0]!.email).toBe('a.patient@example.in');
+    });
+  });
+
+  it('writes down a SECOND attached email, and never files its files with this complaint', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      seq++;
+      const bytes = mime([
+        'From: Dental Officer <officer@mlks.test>',
+        'To: intake@mlks.test',
+        'Subject: Fwd: Two emails from the same patient',
+        `Message-ID: <fwd-two-${seq}@mail.test>`,
+        'Date: Wed, 17 Sep 2026 10:14:00 +0530',
+        'Content-Type: multipart/mixed; boundary="out"',
+        '',
+        '--out',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        'Both attached.',
+        '--out',
+        'Content-Type: message/rfc822',
+        '',
+        complaintEmail('First complaint'),
+        '--out',
+        'Content-Type: message/rfc822',
+        '',
+        complaintEmail('Follow-up with another bill'),
+        '--out--',
+        '',
+      ]);
+      const out = await ingest(tx, { parsed: await simpleParser(bytes), raw: bytes });
+
+      const rows = await tx.execute<{ filename: string; skipped_reason: string | null }>(sql`
+        SELECT filename, skipped_reason FROM mail_attachment
+        WHERE mail_message_id = ${out.mailMessageId}::uuid ORDER BY created_at, filename
+      `);
+      const second = rows.rows.find((r) => r.skipped_reason?.startsWith('Another email'));
+      expect(second?.skipped_reason).toMatch(/Follow-up with another bill/);
+
+      // Two complaints forwarded together may be two different patients. Only the first -
+      // the one read as the complaint - has its bill staged; the other email's bill is
+      // written down against that email and can never be filed on this complainant's case.
+      expect(out.attachmentsStored).toBe(1);
+      expect(out.attachmentsSkipped).toBe(2);
+      const theirs = rows.rows.find((r) => r.skipped_reason?.startsWith('Attached to the other email'));
+      expect(theirs?.filename).toBe('bill.png');
+      expect(theirs?.skipped_reason).toMatch(/Follow-up with another bill/);
+
+      const opened = await mail.openCase(tx, ctx, { mailMessageId: out.mailMessageId });
+      expect(opened.documentsFiled).toBe(1);
+    });
+  });
+
+  it('keeps two complaints apart when the attached emails are marked inline', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      // mailparser's default dissolves an INLINE attached email into its parent, lifting its
+      // files up beside the parent's own - so both patients' bills looked like this
+      // complaint's. The mailbox parses with parseMessage(), which keeps them apart.
+      seq++;
+      const bytes = mime([
+        'From: Dental Officer <officer@mlks.test>',
+        'To: intake@mlks.test',
+        'Subject: Fwd: Two complaints',
+        `Message-ID: <fwd-inline-${seq}@mail.test>`,
+        'Date: Wed, 17 Sep 2026 10:14:00 +0530',
+        'Content-Type: multipart/mixed; boundary="out"',
+        '',
+        '--out',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        'Both attached.',
+        '--out',
+        'Content-Type: message/rfc822',
+        'Content-Disposition: inline',
+        '',
+        complaintEmail('First complaint'),
+        '--out',
+        'Content-Type: message/rfc822',
+        'Content-Disposition: inline',
+        '',
+        complaintEmail('A different patient', 'B. Other <b.other@example.in>'),
+        '--out--',
+        '',
+      ]);
+      const out = await ingest(tx, { parsed: await parseMessage(bytes), raw: bytes });
+
+      expect(out.attachmentsStored).toBe(1);
+      const rows = await tx.execute<{ skipped_reason: string | null }>(sql`
+        SELECT skipped_reason FROM mail_attachment
+        WHERE mail_message_id = ${out.mailMessageId}::uuid AND staging_key IS NULL
+      `);
+      expect(rows.rows.some((r) => /Attached to the other email.*A different patient/.test(r.skipped_reason ?? ''))).toBe(true);
+    });
+  });
+
+  /** A forward whose HTML shows an image by cid: - how signatures carry their logos. */
+  async function withEmbeddedImage(bytes: Buffer, type = 'image/png') {
+    seq++;
+    const raw = mime([
+      'From: Dental Officer <officer@mlks.test>',
+      'To: intake@mlks.test',
+      `Subject: Fwd: embedded ${seq}`,
+      `Message-ID: <embedded-${seq}@mail.test>`,
+      'Date: Wed, 17 Sep 2026 10:14:00 +0530',
+      'Content-Type: multipart/related; boundary="r"',
+      '',
+      '--r',
+      'Content-Type: text/html; charset=utf-8',
+      '',
+      '<p>Please log this.</p><p>Registrar<br><img src="cid:img1"></p>',
+      '--r',
+      `Content-Type: ${type}`,
+      'Content-Transfer-Encoding: base64',
+      'Content-ID: <img1>',
+      'Content-Disposition: inline; filename="image001.png"',
+      '',
+      bytes.toString('base64'),
+      '--r--',
+      '',
+    ]);
+    return { parsed: await simpleParser(raw, { keepCidLinks: true }), raw };
+  }
+
+  it('does not file a signature logo as complaint material, but says it came', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const out = await ingest(tx, await withEmbeddedImage(PNG));
+      expect(out.attachmentsStored).toBe(0);
+      expect(out.attachmentsSkipped).toBe(1);
+      const rows = await tx.execute<{ skipped_reason: string | null }>(sql`
+        SELECT skipped_reason FROM mail_attachment WHERE mail_message_id = ${out.mailMessageId}::uuid
+      `);
+      expect(rows.rows[0]!.skipped_reason).toMatch(/signature logo/);
+
+      // Listed on the message, but no "not stored" warning on the card for it.
+      const card = (await mail.tray(tx, ctx)).find((c) => c.id === out.mailMessageId);
+      expect(card!.skipped_count).toBe(0);
+    });
+  });
+
+  it('still keeps a photograph pasted into the body, which is embedded the same way', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      // A photo of a bill or of a patient's mouth runs to hundreds of kilobytes. The logo
+      // rule is about size as well as placement so that this is never caught by it.
+      const photo = Buffer.concat([PNG, Buffer.alloc(200 * 1024, 7)]);
+      const out = await ingest(tx, await withEmbeddedImage(photo));
+      expect(out.attachmentsStored).toBe(1);
+      expect(out.attachmentsSkipped).toBe(0);
+    });
+  });
+
+  /** The one-pixel PNG with its header rewritten to claim a size, padded to a weight. */
+  function pngSized(width: number, height: number, pad = 0): Buffer {
+    const b = Buffer.concat([PNG, Buffer.alloc(pad, 7)]);
+    b.writeUInt32BE(width, 16);
+    b.writeUInt32BE(height, 20);
+    return b;
+  }
+
+  it('keeps a small SCREENSHOT pasted into the body, which weighs what a logo weighs', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      // A crop of a UPI payment confirmation: 12 KB, but 640 x 180 pixels. Filed by weight
+      // alone it was a "logo", and the complainant's proof of payment was hidden.
+      const out = await ingest(tx, await withEmbeddedImage(pngSized(640, 180, 12 * 1024)));
+      expect(out.attachmentsStored).toBe(1);
+    });
+  });
+
+  it('knows a GIF logo too, though GIF is not a kind the register stores', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const gif = Buffer.alloc(2048, 0);
+      gif.write('GIF89a', 0, 'latin1');
+      gif.writeUInt16LE(120, 6);
+      gif.writeUInt16LE(40, 8);
+      const out = await ingest(tx, await withEmbeddedImage(gif, 'image/gif'));
+
+      const rows = await tx.execute<{ skipped_reason: string | null }>(sql`
+        SELECT skipped_reason FROM mail_attachment WHERE mail_message_id = ${out.mailMessageId}::uuid
+      `);
+      // A logo, not "a kind the register does not store" - which would put a warning on
+      // the card of every forward from a sender with a GIF in their signature.
+      expect(rows.rows[0]!.skipped_reason).toMatch(/signature logo/);
+      const card = (await mail.tray(tx, ctx)).find((c) => c.id === out.mailMessageId);
+      expect(card!.skipped_count).toBe(0);
+    });
+  });
+});
+
+describe('when something fails part way', () => {
+  // From an adversarial review of the attachment fixes. Each of these used to turn a
+  // passing hiccup - or one malformed header - into a message that never reached the tray.
+
+  /** A file store that refuses the first `failures` moves, then behaves. */
+  class FlakyStorage extends LocalStorage {
+    constructor(private failures: number) {
+      super();
+    }
+    override async move(fromKey: string, toKey: string): Promise<void> {
+      if (this.failures > 0) {
+        this.failures--;
+        throw new Error('the file store did not answer');
+      }
+      return super.move(fromKey, toKey);
+    }
+  }
+
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+
+  async function replyWithBill(caseNumber: string, messageId?: string) {
+    seq++;
+    const bytes = Buffer.from(
+      [
+        'From: Kavitha Devi <kdevi@example.in>',
+        'To: intake@mlks.test',
+        `Subject: Re: Documents required [${caseNumber}] ${seq}`,
+        `Message-ID: ${messageId ?? `<reply-${seq}@mail.test>`}`,
+        'Date: Thu, 18 Sep 2026 09:00:00 +0530',
+        'Content-Type: multipart/mixed; boundary="b1"',
+        '',
+        '--b1',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        'Here are the bills.',
+        '--b1',
+        'Content-Type: image/png',
+        'Content-Transfer-Encoding: base64',
+        'Content-Disposition: attachment; filename="bill.png"',
+        '',
+        PNG.toString('base64'),
+        '--b1--',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    return { parsed: await simpleParser(bytes), raw: bytes };
+  }
+
+  it('files a reply even when its bill cannot be moved onto the case, and moves it next sweep', async () => {
+    const flaky = new FlakyStorage(1);
+    const flakyMail = new MailIntakeService(
+      flaky, intake, correspondence, new DocumentsService(flaky), followups,
+    );
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const opened = await mail.openCase(tx, ctx, {
+        mailMessageId: (await ingest(tx, await forward(GMAIL_FORWARD))).mailMessageId,
+      });
+      const m = await replyWithBill(opened.caseNumber);
+      const out = await flakyMail.ingest(tx, ctx, m.parsed, {
+        mailbox: 'INBOX', uid: ++seq, uidValidity: '1', raw: m.raw,
+      });
+
+      // The reply is on the case; only the bill is waiting.
+      expect(out.autoFiledTo).toBe(opened.caseFileId);
+      const before = await documents.listForCase(tx, ctx, opened.caseFileId);
+      expect(before.map((d) => d.filename)).not.toContain('bill.png');
+
+      // The failed move left the file staged - the rows were rolled back, not the file lost
+      // - so the retry finds it and puts it on the case.
+      expect(await flakyMail.fileHeldAttachments(tx, ctx)).toBe(1);
+      const after = await documents.listForCase(tx, ctx, opened.caseFileId);
+      expect(after.map((d) => d.filename)).toContain('bill.png');
+    });
+  });
+
+  it('fails the whole message, to be retried, when the file store will not take a file', async () => {
+    // Recording the file as "not stored" and carrying on looked kinder. It was not: the
+    // reply then filed itself without the bill and closed the reminder waiting for it.
+    class RefusingStorage extends LocalStorage {
+      override async write(): Promise<void> {
+        throw new Error('the file store did not answer');
+      }
+    }
+    const refusing = new RefusingStorage();
+    const refusingMail = new MailIntakeService(
+      refusing, intake, correspondence, new DocumentsService(refusing), followups,
+    );
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const opened = await mail.openCase(tx, ctx, {
+        mailMessageId: (await ingest(tx, await forward(GMAIL_FORWARD))).mailMessageId,
+      });
+      const m = await replyWithBill(opened.caseNumber);
+      await expect(
+        tx.transaction((sp) =>
+          refusingMail.ingest(sp, ctx, m.parsed, { mailbox: 'INBOX', uid: ++seq, uidValidity: '1', raw: m.raw }),
+        ),
+      ).rejects.toThrow(/did not answer/);
+    });
+  });
+
+  it('keeps retrying a failing message for ten minutes and ten attempts before giving up', () => {
+    const start = 1_000_000;
+    // Many quick failures during an outage: not yet.
+    expect(givesUp({ count: 25, since: start }, start + 5 * 60_000)).toBe(false);
+    // A long time, but few attempts (the reader was stopped): not yet.
+    expect(givesUp({ count: 3, since: start }, start + 60 * 60_000)).toBe(false);
+    // Both: this is about the message, not the moment.
+    expect(givesUp({ count: 10, since: start }, start + 10 * 60_000)).toBe(true);
+  });
+
+  it('writes down a message it could not read, so it cannot vanish behind the cursor', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const m = await forward('Some body.', 'Fwd: something that broke');
+      const meta = { mailbox: 'INBOX', uid: ++seq, uidValidity: '1', raw: m.raw };
+      const id = await mail.recordUnreadable(tx, ctx, m.parsed, meta, 'a malformed part');
+      expect(id).not.toBeNull();
+
+      const card = (await mail.tray(tx, ctx)).find((c) => c.id === id);
+      expect(card!.subject).toBe('Fwd: something that broke');
+      expect(card!.suggestion_note).toMatch(/could not be read automatically \(a malformed part\)/i);
+      // And it is the same message as far as the reader is concerned: seeing it again is a
+      // duplicate, not a second card.
+      expect((await mail.ingest(tx, ctx, m.parsed, meta)).duplicate).toBe(true);
+    });
+  });
+
+  it('files two replies that share a Message-ID, rather than failing the second', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const opened = await mail.openCase(tx, ctx, {
+        mailMessageId: (await ingest(tx, await forward(GMAIL_FORWARD))).mailMessageId,
+      });
+      const first = await ingest(tx, await replyWithBill(opened.caseNumber, '<same@mail.test>'));
+      const second = await ingest(tx, await replyWithBill(opened.caseNumber, '<same@mail.test>'));
+      expect(first.autoFiledTo).toBe(opened.caseFileId);
+      expect(second.autoFiledTo).toBe(opened.caseFileId);
+    });
+  });
+
+  it('stores a subject whose encoded-word decodes to a NUL, instead of failing on it', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      // "=?UTF-8?B?YQBi?=" is a, NUL, b. Postgres text cannot hold the NUL.
+      const out = await ingest(tx, await forward('Body.', 'Fwd: =?UTF-8?B?YQBi?='));
+      const row = await tx.execute<{ subject: string }>(sql`
+        SELECT subject FROM mail_message WHERE id = ${out.mailMessageId}::uuid
+      `);
+      expect(row.rows[0]!.subject).toBe('Fwd: ab');
     });
   });
 });
