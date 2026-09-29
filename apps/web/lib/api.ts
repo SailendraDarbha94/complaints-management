@@ -217,6 +217,19 @@ export interface CaseDetail {
     legacy_register_ref: string | null;
     register_sl_no: number;
     fiscal_year: string;
+    /**
+     * Set when the case was cancelled as opened in error - a duplicate, a message that was
+     * not a complaint, a test. Nothing is deleted: the case keeps its number and the state
+     * it was in, drops off every working list, and stays in the register marked cancelled.
+     * All three are cleared together when it is restored.
+     */
+    deleted_at: string | null;
+    /** Why, in the officer's words. Required whenever deleted_at is set. */
+    deletion_reason: string | null;
+    /** Who cancelled it (app_user id). */
+    deleted_by: string | null;
+    /** That person's name or email, for the banner. Absent if the API did not resolve it. */
+    deleted_by_name?: string | null;
   } | null;
   parties: CaseParty[];
   respondents: CaseRespondent[];
@@ -329,7 +342,15 @@ export interface RtiFile {
   request: RtiRequest | null;
   clock: RtiClock;
   exemptions: Array<{ id: string; section: string; applies_to: string; reasoning: string }>;
-  cases: Array<{ case_file_id: string; case_number: string; summary: string; note: string | null }>;
+  /** Cancelled cases included: deleted_at set means cancelled as opened in error. */
+  cases: Array<{
+    case_file_id: string;
+    case_number: string;
+    summary: string;
+    note: string | null;
+    deleted_at: string | null;
+    deletion_reason: string | null;
+  }>;
   letters: Array<{
     id: string;
     kind: string;
@@ -435,6 +456,12 @@ export interface TrayMessage {
     matched_rung: string | null;
     case_file_id: string | null;
     case_number: string | null;
+    /**
+     * Set when that case was cancelled as opened in error. The message is then back in
+     * the tray (status unfiled) with case_file_id still saying where it had been.
+     */
+    case_deleted_at: string | null;
+    case_deletion_reason: string | null;
     dismissed_reason: string | null;
   }) | null;
   attachments: Array<{
@@ -444,6 +471,8 @@ export interface TrayMessage {
     size_bytes: number;
     sha256: string;
     document_id: string | null;
+    /** 'stored', or 'misfiled_withdrawn' when it was taken off the case as misfiled. */
+    document_status: string | null;
     skipped_reason: string | null;
   }>;
   candidates: Array<{

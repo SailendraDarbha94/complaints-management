@@ -13,6 +13,8 @@ import type { DocumentsService } from '../documents/documents.service.js';
 import { STAGING_PREFIX, sniff, MAX_UPLOAD_BYTES } from '../documents/storage.js';
 import type { StoragePort } from '../documents/storage.js';
 import { pgTextArray } from '../../common/pg-array.js';
+import { assertCaseLive, CaseCancelledError } from '../cases/case-guard.js';
+import { returnedToTrayNote } from './cancelled-case.js';
 import { snippetOf, unwrapForward } from './forwarded.js';
 import { parseMessage } from './parse.js';
 import { imageSize } from './image-size.js';
@@ -70,6 +72,9 @@ function asDate(value: Date | string): Date {
  */
 const ACCOUNT_NOTICE_SENDERS = new Set([
   'no-reply@accounts.google.com',
+  // Google's "you shared some Google Account data with ..." notices, seen on the intake
+  // mailbox on 2026-09-29 when an app was signed in to with it.
+  'noreply-accounts@google.com',
   'noreply@google.com',
   'mail-noreply@google.com',
 ]);
@@ -171,6 +176,12 @@ export type MailAttachmentRow = {
   size_bytes: number;
   sha256: string;
   document_id: string | null;
+  /**
+   * The status of the document it became, when it became one. A file withdrawn from the
+   * case as misfiled is not "on the case file", and is not copied onward when a message
+   * leaves a cancelled case either (see restageFromCancelledCase).
+   */
+  document_status: string | null;
   skipped_reason: string | null;
 };
 
@@ -296,12 +307,29 @@ export class MailIntakeService {
     }
 
     // Rungs 1 and 2 only. The sender rung suggests and never files - see matching.ts.
+    //
+    // The matcher leaves cancelled cases out, but it read without a lock, and the staging
+    // above can take a while. A case cancelled in that gap would take this message out of
+    // the tray and onto a case nobody looks at - after cancel() had already sent that
+    // case's other mail back. So the case is checked again under its row lock (see
+    // case-guard), and a message whose case has just gone goes to the tray instead of
+    // failing: a message that fails to ingest does not reach the tray at all. Its page
+    // re-runs the matcher live, and says there which cancelled case it quotes.
+    let autoFile = match.autoFile;
+    if (autoFile) {
+      try {
+        await assertCaseLive(tx, ctx, autoFile.caseFileId);
+      } catch (err) {
+        if (!(err instanceof CaseCancelledError)) throw err;
+        autoFile = null;
+      }
+    }
     let autoFiledTo: string | null = null;
-    if (match.autoFile) {
+    if (autoFile) {
       await this.attachToCase(tx, ctx, {
         mailMessageId: id,
-        caseFileId: match.autoFile.caseFileId,
-        rung: match.autoFile.rung,
+        caseFileId: autoFile.caseFileId,
+        rung: autoFile.rung,
         subject: parsed.subject ?? '(no subject)',
         body: original.body ?? bodyText,
         fromEmail: original.fromAddress ?? envelope?.address ?? null,
@@ -312,8 +340,8 @@ export class MailIntakeService {
       // once: a complainant's reply quoting the case number - the usual way the bills the
       // Council asked for arrive - filed itself and closed the "waiting for documents"
       // reminder, while the bills stayed behind on the message and never reached the case.
-      await this.fileAttachments(tx, ctx, id, match.autoFile.caseFileId);
-      autoFiledTo = match.autoFile.caseFileId;
+      await this.fileAttachments(tx, ctx, id, autoFile.caseFileId);
+      autoFiledTo = autoFile.caseFileId;
     }
 
     this.log.log(
@@ -631,6 +659,11 @@ export class MailIntakeService {
   ): Promise<{ documentsFiled: number }> {
     const m = await this.mustFind(tx, ctx, args.mailMessageId);
     if (m.status === 'filed') throw new ConflictError('That message is already on a case.');
+    // The picker no longer offers a cancelled case, but a tab opened before the case was
+    // cancelled still does. Filing onto it would put the message - and its attachments -
+    // on a case no list leads to, and take the message out of the tray where it was
+    // visible. See case-guard.
+    await assertCaseLive(tx, ctx, args.caseFileId);
 
     await this.attachToCase(tx, ctx, {
       mailMessageId: m.id,
@@ -692,26 +725,50 @@ export class MailIntakeService {
     ctx: EngineContext,
     status: MailStatus = 'unfiled',
   ): Promise<TrayRow[]> {
-    const rows = await tx.execute<Omit<TrayRow, 'complainant'> & { mailbox: string | null }>(sql`
+    // The suggestion was stored at ingest, and the case it names may have been cancelled
+    // as opened in error since. Such a case is not offered - the join below drops it - and
+    // nor is the note that came with it, which describes a suggestion no longer being made.
+    // The message page re-runs the matcher live and needs none of this.
+    //
+    // A message sent back from a case cancelled as opened in error says so instead, on the
+    // card: without it the officer would meet a message they had already dealt with, back
+    // in the tray with no explanation. See mail/cancelled-case. Only while it is unfiled -
+    // one set aside since has been dealt with, and its own reason says how.
+    const rows = await tx.execute<
+      Omit<TrayRow, 'complainant'> & {
+        mailbox: string | null;
+        returned_from: string | null;
+        returned_reason: string | null;
+      }
+    >(sql`
       SELECT m.id, m.subject, m.snippet, m.envelope_from, m.envelope_from_name,
              m.envelope_date, m.ingested_at, m.forward_kind, m.mailbox,
              m.original_from, m.original_from_name, m.original_subject, m.original_date_text,
-             m.status, m.suggestion_note, m.suggested_case_file_id,
+             m.status,
+             CASE WHEN m.suggested_case_file_id IS NOT NULL AND sc.id IS NULL THEN NULL
+                  ELSE m.suggestion_note END AS suggestion_note,
+             sc.id AS suggested_case_file_id,
              sc.case_number AS suggested_case_number,
+             CASE WHEN m.status = 'unfiled' THEN pc.case_number END AS returned_from,
+             CASE WHEN m.status = 'unfiled' THEN pc.deletion_reason END AS returned_reason,
              (SELECT count(*)::int FROM mail_attachment a
                WHERE a.mail_message_id = m.id AND a.staging_key IS NOT NULL) AS attachment_count,
              (SELECT count(*)::int FROM mail_attachment a
                WHERE a.mail_message_id = m.id AND a.skipped_reason IS NOT NULL
                  AND a.skipped_reason <> ${SIGNATURE_LOGO_REASON}) AS skipped_count
       FROM mail_message m
-      LEFT JOIN case_file sc ON sc.id = m.suggested_case_file_id
+      LEFT JOIN case_file sc ON sc.id = m.suggested_case_file_id AND sc.deleted_at IS NULL
+      LEFT JOIN case_file pc ON pc.id = m.case_file_id AND pc.deleted_at IS NOT NULL
       WHERE m.council_id = ${ctx.councilId}::uuid AND m.status = ${status}::mail_status
       ORDER BY m.ingested_at DESC
       LIMIT 200
     `);
     const council = await this.councilAddresses(tx, ctx);
-    return rows.rows.map(({ mailbox, ...row }) => ({
+    return rows.rows.map(({ mailbox, returned_from, returned_reason, ...row }) => ({
       ...row,
+      suggestion_note: returned_from
+        ? returnedToTrayNote(returned_from, returned_reason)
+        : row.suggestion_note,
       complainant: suggestedComplainant(
         row,
         ownAddressesOf({ ...council, intakeAccount: intakeAccountOf(mailbox) }),
@@ -733,8 +790,11 @@ export class MailIntakeService {
     if (!m) return null;
 
     const attachments = await tx.execute<MailAttachmentRow>(sql`
-      SELECT id, filename, declared_type, size_bytes, sha256, document_id, skipped_reason
-      FROM mail_attachment WHERE mail_message_id = ${id}::uuid ORDER BY created_at
+      SELECT a.id, a.filename, a.declared_type, a.size_bytes, a.sha256, a.document_id,
+             d.status::text AS document_status, a.skipped_reason
+      FROM mail_attachment a
+      LEFT JOIN document d ON d.id = a.document_id
+      WHERE a.mail_message_id = ${id}::uuid ORDER BY a.created_at
     `);
 
     // Re-run live rather than reading what was suggested at ingest: a case opened since
@@ -864,6 +924,8 @@ export class MailIntakeService {
     mailMessageId: string,
     caseFileId: string,
   ): Promise<number> {
+    await this.restageFromCancelledCase(tx, ctx, mailMessageId, caseFileId);
+
     const rows = await tx.execute<{ id: string; filename: string; staging_key: string }>(sql`
       SELECT id, filename, staging_key FROM mail_attachment
       WHERE council_id = ${ctx.councilId}::uuid AND mail_message_id = ${mailMessageId}::uuid
@@ -899,6 +961,76 @@ export class MailIntakeService {
   }
 
   /**
+   * A message back in the tray from a case cancelled as opened in error, being filed again:
+   * its files are already documents - on the cancelled case. Stage a copy of each, so the
+   * loop in fileAttachments() files it on the new case exactly as it would a fresh one.
+   *
+   * This is the duplicate the feature exists for. The complainant's email, with the bills
+   * and the OPG, was opened as a second case by mistake; that case is cancelled, and the
+   * message is added to the real one. Without this the email would reach the real case and
+   * its evidence would not - staying on a case no list leads to, out of the committee's
+   * bundle.
+   *
+   * Copied, not moved. The document on the cancelled case is part of that case's record -
+   * the register still lists the case, and its page still shows what it held - so it is
+   * left exactly where it is. The copy is the same bytes, and commit() re-hashes them, so
+   * the two can be shown to be the same file. The attachment then points at its new
+   * document; the old link is in the audit trail.
+   *
+   * Not a file withdrawn from the cancelled case as misfiled: that was the officer saying
+   * it does not belong to this complainant, and a copy would undo it.
+   *
+   * A file whose copy cannot be made now is left pointing at the cancelled case and said
+   * in the log. It is not retried: the original is safe where it is, which is the one
+   * thing that must not go wrong here.
+   */
+  private async restageFromCancelledCase(
+    tx: Tx,
+    ctx: EngineContext,
+    mailMessageId: string,
+    caseFileId: string,
+  ): Promise<void> {
+    const rows = await tx.execute<{
+      id: string;
+      filename: string;
+      storage_key: string;
+      mime_type: string;
+    }>(sql`
+      SELECT a.id, a.filename, dv.storage_key, dv.mime_type
+      FROM mail_attachment a
+      JOIN document d ON d.id = a.document_id
+      JOIN document_version dv ON dv.id = d.current_version_id
+      JOIN case_file c ON c.id = d.case_file_id
+      WHERE a.council_id = ${ctx.councilId}::uuid AND a.mail_message_id = ${mailMessageId}::uuid
+        AND c.deleted_at IS NOT NULL AND d.case_file_id <> ${caseFileId}::uuid
+        AND d.status = 'stored'
+      ORDER BY a.created_at
+    `);
+
+    for (const a of rows.rows) {
+      // Only the store is inside the try. A failed SQL statement cannot be caught and
+      // carried on from - it aborts the whole transaction - so the row is written after.
+      const stagingKey = `${STAGING_PREFIX}${randomUUID()}`;
+      try {
+        const bytes = await this.storage.read(a.storage_key);
+        await this.storage.write(stagingKey, bytes, a.mime_type);
+      } catch (err) {
+        this.log.warn(
+          `${a.filename} could not be copied from the cancelled case, and stays there: ` +
+            (err instanceof Error ? err.message : String(err)),
+        );
+        continue;
+      }
+      // From here it is an ordinary held file: if commit() then fails, the reader retries
+      // it from this staged copy like any other (fileHeldAttachments).
+      await tx.execute(sql`
+        UPDATE mail_attachment SET staging_key = ${stagingKey}, document_id = NULL
+        WHERE id = ${a.id}::uuid
+      `);
+    }
+  }
+
+  /**
    * Try again: attachments of messages already on a case that did not reach it.
    *
    * Called by every sweep. Normally there are none; after a moment when the file store did
@@ -908,10 +1040,17 @@ export class MailIntakeService {
   async fileHeldAttachments(tx: Tx, ctx: EngineContext): Promise<number> {
     // Newest first, so a file that can never be moved (its staged copy gone) cannot hold
     // the front of the queue and starve the ones that can.
+    //
+    // Not onto a cancelled case: documents.commit() refuses one, so retrying would fail
+    // every ten minutes for ever and fill the log with it. Cancelling sends the case's mail
+    // back to the tray, so status = 'filed' already leaves such messages out; the join is
+    // the second line, not the first. Either way the files stay staged: they go with the
+    // message to whichever case it is added to, or back onto this one if it is restored.
     const held = await tx.execute<{ mail_message_id: string; case_file_id: string }>(sql`
       SELECT m.id AS mail_message_id, m.case_file_id
       FROM mail_message m
       JOIN mail_attachment a ON a.mail_message_id = m.id
+      JOIN case_file c ON c.id = m.case_file_id AND c.deleted_at IS NULL
       WHERE m.council_id = ${ctx.councilId}::uuid AND m.status = 'filed'
         AND a.staging_key IS NOT NULL AND a.document_id IS NULL
       GROUP BY m.id, m.case_file_id
@@ -990,6 +1129,11 @@ export class MailIntakeService {
       matched_rung: MailMatchRung | null;
       case_file_id: string | null;
       case_number: string | null;
+      // Set when the case the message is (or was) on has been cancelled as opened in
+      // error. The message page says so rather than showing a green "Filed" over a case
+      // nobody can reach from a list. See mail/cancelled-case.
+      case_deleted_at: Date | null;
+      case_deletion_reason: string | null;
       suggestion_note: string | null;
       dismissed_reason: string | null;
       mailbox: string | null;
@@ -999,7 +1143,9 @@ export class MailIntakeService {
              m.ingested_at, m.forward_kind, m.original_from, m.original_from_name,
              m.original_to, m.original_subject, m.original_date, m.original_date_text,
              m.original_body, m.status, m.matched_rung, m.case_file_id,
-             c.case_number, m.suggestion_note, m.dismissed_reason, m.mailbox
+             c.case_number, c.deleted_at AS case_deleted_at,
+             c.deletion_reason AS case_deletion_reason,
+             m.suggestion_note, m.dismissed_reason, m.mailbox
       FROM mail_message m
       LEFT JOIN case_file c ON c.id = m.case_file_id
       WHERE m.council_id = ${ctx.councilId}::uuid AND m.id = ${id}::uuid

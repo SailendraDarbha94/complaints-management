@@ -8,9 +8,15 @@ export const dynamic = 'force-dynamic';
 export const GET = withAuth<{ id: string }>(async ({ params, tx, ctx, services }) => {
   const { id } = params;
 
-  const caseRows = await tx.execute<{ state: CaseState }>(
-    sql`SELECT * FROM case_file WHERE id = ${id}::uuid`,
-  );
+  // A case cancelled as opened in error is returned like any other - it is on no list, but
+  // a direct link must still open it and explain itself. deleted_at, deletion_reason and
+  // deleted_by come with the *; the name is resolved here so the banner can say who,
+  // rather than printing a uuid. Name first, email when an account has no name yet.
+  const caseRows = await tx.execute<{ state: CaseState; deleted_at: Date | null }>(sql`
+    SELECT c.*, coalesce(nullif(btrim(u.full_name), ''), u.email) AS deleted_by_name
+    FROM case_file c
+    LEFT JOIN app_user u ON u.id = c.deleted_by
+    WHERE c.id = ${id}::uuid`);
   const row = caseRows.rows[0];
   if (!row) return { case: null };
 
@@ -85,7 +91,9 @@ export const GET = withAuth<{ id: string }>(async ({ params, tx, ctx, services }
     documents,
     followups,
     rtiRequests,
-    // Drives every button on every client, so no UI re-implements a guard.
-    availableEvents: services.lifecycle.availableFor(row.state, ctx),
+    // Drives every button on every client, so no UI re-implements a guard. None on a
+    // cancelled case: the engine refuses every event on one (see case-guard), and a button
+    // whose only outcome is a refusal is worse than no button.
+    availableEvents: row.deleted_at ? [] : services.lifecycle.availableFor(row.state, ctx),
   };
 });

@@ -136,17 +136,55 @@ export async function matchMessage(
   // ── Rung 3. Suggestion only. ──────────────────────────────────────────────
   const bySender = await casesBySender(tx, ctx, args.senderAddresses);
 
+  const senderNote = bySender.length
+    ? `${bySender.length === 1 ? 'One case has' : `${bySender.length} cases have`} this ` +
+      'sender on file. Check before filing — the address alone does not prove which.'
+    : null;
+
+  // Our own reference, on a case cancelled as opened in error. It is never filed there -
+  // casesByNumber leaves cancelled cases out, so nothing above could match it - but it is
+  // said, because it is the likeliest reason a reply quoting a perfectly good number did
+  // not file itself: the complainant answering the acknowledgement sent from a duplicate.
+  const cancelled = await cancelledByNumber(tx, ctx, [...subjectRefs, ...bodyRefs]);
+  if (cancelled.length) {
+    return {
+      autoFile: null,
+      candidates: bySender,
+      note:
+        `This quotes ${cancelled.join(', ')}, which was cancelled as opened in error, so it ` +
+        'has not been filed there.' +
+        (senderNote ? ` ${senderNote}` : ''),
+    };
+  }
+
   const note = foreign.length
     ? `This quotes ${foreign.join(', ')}, which is another authority's reference, not ours.`
-    : bySender.length
-      ? `${bySender.length === 1 ? 'One case has' : `${bySender.length} cases have`} this ` +
-        'sender on file. Check before filing — the address alone does not prove which.'
-      : null;
+    : senderNote;
 
   return { autoFile: null, candidates: bySender, note };
 }
 
-/** Rung 1 and 2: the reference token. Index hit on case_file_number_uq. */
+/** Which of these references belong to cases cancelled as opened in error. */
+async function cancelledByNumber(tx: Tx, ctx: EngineContext, refs: string[]): Promise<string[]> {
+  if (refs.length === 0) return [];
+  const rows = await tx.execute<{ case_number: string }>(sql`
+    SELECT c.case_number
+    FROM case_file c
+    WHERE c.council_id = ${ctx.councilId}::uuid
+      AND c.case_number = ANY(${pgTextArray(refs)}::text[])
+      AND c.deleted_at IS NOT NULL
+    ORDER BY c.case_number
+  `);
+  return rows.rows.map((r) => r.case_number);
+}
+
+/**
+ * Rung 1 and 2: the reference token. Index hit on case_file_number_uq.
+ *
+ * Cancelled cases are left out here and in casesBySender: a case opened in error is on no
+ * working list, and filing a message onto one - automatically or by a suggestion the
+ * officer accepts - would take it out of the tray and put it where nobody looks.
+ */
 async function casesByNumber(
   tx: Tx,
   ctx: EngineContext,

@@ -3,6 +3,7 @@ import { RTI_EXEMPTIONS } from '@ksdc/contracts';
 import { PendingLink } from '@/app/components/pending-link';
 import { fetchRtiFile, isUnauthorized, type RtiFile } from '@/lib/api';
 import {
+  CANCELLED_LABEL,
   RTI_CHANNEL_LABEL,
   RTI_DECISION_LABEL,
   RTI_STAGE_LABEL,
@@ -204,14 +205,34 @@ export default async function RtiFilePage({ params }: { params: Promise<{ id: st
                   gap to be filled.
                 </p>
               ) : (
-                file.cases.map((c) => (
-                  <div className="followup-row" key={c.case_file_id}>
-                    <PendingLink className="case-link" href={`/cases/${c.case_file_id}`}>
-                      {c.case_number}
-                    </PendingLink>
-                    <span className="meta">{c.summary}</span>
-                  </div>
-                ))
+                file.cases.map((c) =>
+                  c.deleted_at ? (
+                    // Cancelled as opened in error since it was linked. Shown, not hidden:
+                    // the case record is still information the Council holds and may have
+                    // to disclose, and the reason usually names the case it duplicated -
+                    // the one the reply is really about. Struck through and chipped as the
+                    // register marks it, and linked, because its page still opens.
+                    <div className="followup-row" key={c.case_file_id}>
+                      <span>
+                        <PendingLink className="case-link" href={`/cases/${c.case_file_id}`}>
+                          <s>{c.case_number}</s>
+                        </PendingLink>{' '}
+                        <span className="chip chip-cancelled">{CANCELLED_LABEL.toLowerCase()}</span>
+                      </span>
+                      <span className="meta">
+                        {c.summary} &middot; cancelled as opened in error
+                        {c.deletion_reason ? `: ${c.deletion_reason}` : ''}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="followup-row" key={c.case_file_id}>
+                      <PendingLink className="case-link" href={`/cases/${c.case_file_id}`}>
+                        {c.case_number}
+                      </PendingLink>
+                      <span className="meta">{c.summary}</span>
+                    </div>
+                  ),
+                )
               )}
             </div>
           </section>

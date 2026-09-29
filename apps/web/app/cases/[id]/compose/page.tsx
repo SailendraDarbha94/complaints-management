@@ -1,7 +1,7 @@
 import { notFound, redirect } from 'next/navigation';
 import { PendingLink } from '@/app/components/pending-link';
 import { PUBLIC_API_URL, fetchCase, fetchTemplates, isUnauthorized } from '@/lib/api';
-import { LETTER_LABEL, label } from '@/lib/labels';
+import { CANCELLED_LABEL, LETTER_LABEL, label } from '@/lib/labels';
 import { Composer } from './composer';
 
 export const dynamic = 'force-dynamic';
@@ -61,18 +61,32 @@ export default async function ComposePage({ params }: { params: Promise<{ id: st
         </div>
       </header>
 
-      <Composer
-        caseId={c.id}
-        apiUrl={PUBLIC_API_URL}
-        templates={relevant.map((t) => ({
-          kind: t.kind,
-          name: label(LETTER_LABEL, t.kind),
-          requiresRegistrarSignature: t.requires_registrar_signature,
-        }))}
-        respondents={data.respondents
-          .filter((r) => !r.dropped_at)
-          .map((r) => ({ id: r.id, name: r.full_name, noticeCount: r.notice_count }))}
-      />
+      {c.deleted_at ? (
+        // The case page hides "Draft a letter" on a cancelled case, but this page is still
+        // one bookmark or back-button away. The API refuses the draft; saying so here first
+        // spares the officer writing a letter only to be told no at the end.
+        <div className="banner banner-void">
+          <span className="tag">{CANCELLED_LABEL}</span>
+          <span>
+            This case was cancelled as opened in error, so no letter can be drafted on it. If
+            it is needed after all, restore it from{' '}
+            <PendingLink href={`/cases/${c.id}`}>the case</PendingLink> first.
+          </span>
+        </div>
+      ) : (
+        <Composer
+          caseId={c.id}
+          apiUrl={PUBLIC_API_URL}
+          templates={relevant.map((t) => ({
+            kind: t.kind,
+            name: label(LETTER_LABEL, t.kind),
+            requiresRegistrarSignature: t.requires_registrar_signature,
+          }))}
+          respondents={data.respondents
+            .filter((r) => !r.dropped_at)
+            .map((r) => ({ id: r.id, name: r.full_name, noticeCount: r.notice_count }))}
+        />
+      )}
     </main>
   );
 }

@@ -1,7 +1,7 @@
 import type { Route } from 'next';
 import { notFound, redirect } from 'next/navigation';
 import { fetchCases, fetchTrayMessage, isUnauthorized, type TrayMessage } from '@/lib/api';
-import { FORWARD_KIND_LABEL, MATCH_RUNG_LABEL, formatDate, label } from '@/lib/labels';
+import { CANCELLED_LABEL, FORWARD_KIND_LABEL, MATCH_RUNG_LABEL, formatDate, label } from '@/lib/labels';
 import { PendingLink } from '@/app/components/pending-link';
 import { MessageActions } from './message-actions';
 
@@ -36,6 +36,12 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
   const address = m.complainant?.email ?? null;
   const what = m.original_subject ?? m.subject;
   const forwarded = m.forward_kind !== 'none';
+  // The case this message is on, or was on, has been cancelled as opened in error.
+  // Cancelling sends a case's mail back to the tray - unfiled, with case_file_id still
+  // saying where it had been - so it can be added to the right case or marked not a
+  // complaint. A green "Filed" over that case, and a promise that its files will reach it
+  // "within a few minutes", would both be untrue; this page says what happened instead.
+  const voided = Boolean(m.case_file_id && m.case_deleted_at);
 
   return (
     <main className="shell shell-wide">
@@ -66,7 +72,26 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
         </div>
       </header>
 
-      {m.status === 'filed' && m.case_file_id && (
+      {voided && (
+        <div className="banner banner-void" role="status">
+          <span className="tag">{m.status === 'unfiled' ? 'Back in the tray' : CANCELLED_LABEL}</span>
+          <div className="void-text">
+            <p>
+              {m.status === 'filed' ? 'Filed on ' : m.status === 'unfiled' ? 'This was on ' : 'This had been on '}
+              <PendingLink href={`/cases/${m.case_file_id}` as Route}>{m.case_number}</PendingLink>, which
+              was cancelled as opened in error.
+            </p>
+            {m.case_deletion_reason && <p className="void-reason">{m.case_deletion_reason}</p>}
+            {m.status === 'unfiled' && (
+              <p className="meta">
+                Its text and files stay on that case as a record. Add it to the right case &mdash;
+                its files go with it &mdash; or mark it not a complaint.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+      {m.status === 'filed' && m.case_file_id && !voided && (
         <div className="banner banner-ok">
           <span className="tag">Filed</span>
           <span>
@@ -143,13 +168,30 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
                           <td>{a.filename}</td>
                           <td className="num mono">{readableSize(a.size_bytes)}</td>
                           <td>
-                            {a.document_id ? (
+                            {a.document_id && a.document_status === 'misfiled_withdrawn' ? (
+                              // Taken off the case by the officer. Not "on the case file",
+                              // and not copied onward if the message is filed elsewhere.
+                              'Withdrawn from the case as misfiled'
+                            ) : a.document_id && voided ? (
+                              <>
+                                On {m.case_number}, which was cancelled
+                                <span className="meta">
+                                  {m.status === 'unfiled'
+                                    ? 'A copy goes on the case you add this to.'
+                                    : 'It stays there with the rest of that case.'}
+                                </span>
+                              </>
+                            ) : a.document_id ? (
                               'On the case file'
                             ) : a.skipped_reason ? (
                               <>
                                 Not stored
                                 <span className="meta">{a.skipped_reason}</span>
                               </>
+                            ) : m.status === 'filed' && voided ? (
+                              // The reader never puts a file on a cancelled case, so the
+                              // "within a few minutes" below would be a promise not kept.
+                              'Kept with the message; the case it is on was cancelled'
                             ) : m.status === 'filed' ? (
                               // Filed, but the file store did not take it last time. The
                               // reader retries it; saying "when you file this"

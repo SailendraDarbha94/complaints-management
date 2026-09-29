@@ -19,7 +19,20 @@ export interface RegisterRow {
   [column: string]: string | number | null;
 }
 
+/** The value the register's "Status" column carries for a case cancelled as opened in error. */
+export const REGISTER_CANCELLED_STATUS = 'cancelled';
+
 export class RegisterService {
+  /**
+   * The book, row by row.
+   *
+   * Cases cancelled as opened in error ARE included, marked "cancelled" in the Status
+   * column with the reason and date in the last two (see migration 0016). This is the one
+   * list that must keep them: every number the register issued stays in the register, and
+   * a number that simply vanished would be a gap in a legal book with nothing to explain
+   * it. `includeClosed: false` is the "still open" view, and a cancelled case is not open,
+   * so that view leaves it out along with the closed ones.
+   */
   async rows(
     tx: Tx,
     _ctx: EngineContext,
@@ -29,7 +42,8 @@ export class RegisterService {
       SELECT r.* FROM v_case_register r
       JOIN case_file c ON c.id = r.case_file_id
       WHERE (${opts.fiscalYear ?? null}::text IS NULL OR c.fiscal_year = ${opts.fiscalYear ?? null})
-        AND (${opts.includeClosed ?? true}::boolean OR c.state <> 'closed')
+        AND (${opts.includeClosed ?? true}::boolean
+             OR (c.state <> 'closed' AND c.deleted_at IS NULL))
       ORDER BY r."Sl. No."
     `);
     return result.rows;
@@ -85,6 +99,20 @@ export class RegisterService {
           `${reconstructed} case(s) carry dates that were reconstructed from the physical ` +
             'register or estimated, rather than recorded as they happened. The "Dates ' +
             'reconstructed" column names which.',
+        ),
+      );
+    }
+    // Said on the face of the export for the same reason: a reader who finds a row marked
+    // cancelled must not have to guess whether it was a case the Council dropped. It was
+    // never a case, and the number was kept rather than reused.
+    const cancelled = rows.filter((r) => r['Status'] === REGISTER_CANCELLED_STATUS).length;
+    if (cancelled > 0) {
+      lines.push(
+        csvCell(
+          `${cancelled} case number(s) were cancelled as opened in error - a duplicate, a ` +
+            'message that was not a complaint, or a test entry. They keep their numbers so ' +
+            'the numbering has no gap; the "Cancellation reason" and "Cancelled on" columns ' +
+            'say why and when. Nothing was deleted.',
         ),
       );
     }

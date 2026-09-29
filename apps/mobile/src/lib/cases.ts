@@ -30,6 +30,26 @@ export interface CaseRow {
   created_at: string;
 }
 
+/**
+ * The case as the detail screen reads it: the list's columns plus the cancellation.
+ *
+ * A case opened in error - a duplicate, a test, a letter that was never a complaint - is
+ * CANCELLED, never deleted (migration 0016). The row stays and keeps its number, because
+ * the register is numbered and a gap would need explaining; it carries deleted_at and the
+ * officer's deletion_reason. The list never returns such a case. The detail can, because a
+ * link to it still exists somewhere - a message, a member's notes - and following it must
+ * say what happened to the case rather than fail or, worse, show it as live.
+ *
+ * deleted_by is deliberately left out. It is an app_user id, and app_user is never granted
+ * to a phone (0010), so there is no name to put to it and a bare uuid on a case file is
+ * noise. Only the office writes to the register, so "the office" is the whole answer a
+ * member needs; the web's case page names the officer.
+ */
+export interface CaseFileRow extends CaseRow {
+  deleted_at: string | null;
+  deletion_reason: string | null;
+}
+
 export interface PartyOnCase {
   role: string;
   note: string | null;
@@ -71,19 +91,34 @@ export interface DocumentRow {
 }
 
 export interface CaseFile {
-  file: CaseRow;
+  file: CaseFileRow;
   parties: PartyOnCase[];
   respondents: RespondentRow[];
   milestones: MilestoneRow[];
   documents: DocumentRow[];
 }
 
-/** The list. Open cases only, newest first - there are never more than about ten. */
+/**
+ * The list. Open cases only, newest first - there are never more than about ten.
+ *
+ * "Open" is two filters, not one. closed_at is a case that ran its course; deleted_at is a
+ * case cancelled as opened in error. The second was never before the committee, so it has
+ * no place in a member's list or in the count at the top of it (the count is this list's
+ * length, so filtering here is filtering there).
+ *
+ * The filter has to be HERE, not in the row policy. jwt_council_isolation decides whose
+ * rows a member may read, and a cancelled case is still their council's row - which is
+ * what lets a link to one open and explain itself (see CaseFileRow). Hiding it from the
+ * list is a choice about what a working list shows, and that is this query's job.
+ *
+ * deleted_at has existed on case_file since 0000, so this is safe to ship before 0016.
+ */
 export async function listCases(): Promise<CaseRow[]> {
   const { data, error } = await supabase()
     .from('case_file')
     .select('id, case_number, summary, state, on_hold, hold_reason, held_since, is_backfilled, register_sl_no, created_at')
     .is('closed_at', null)
+    .is('deleted_at', null)
     .order('register_sl_no', { ascending: false });
 
   if (error) throw new Error(error.message);
@@ -125,7 +160,9 @@ export async function getCase(id: string): Promise<CaseFile> {
   if (file.error) throw new Error(file.error.message);
 
   return {
-    file: file.data as CaseRow,
+    // `select('*')`, so the cancellation columns come with it. Before 0016 is applied
+    // deletion_reason is simply absent; the screen treats a missing reason as no reason.
+    file: file.data as CaseFileRow,
     parties: (parties.data ?? []) as unknown as PartyOnCase[],
     respondents: (respondents.data ?? []) as unknown as RespondentRow[],
     milestones: (milestones.data ?? []) as MilestoneRow[],

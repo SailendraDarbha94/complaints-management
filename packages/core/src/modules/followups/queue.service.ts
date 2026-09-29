@@ -139,6 +139,8 @@ export class QueueService {
       WHERE f.council_id = ${ctx.councilId}::uuid
         AND f.status IN ('open', 'snoozed')
         -- A case on hold is suppressed, not chased: sub judice, or a party indisposed.
+        -- A case cancelled as opened in error is not a case at all. Cancelling stops its
+        -- follow-ups too, so this is the second line of defence, not the first.
         AND (c.id IS NULL OR (c.on_hold = false AND c.deleted_at IS NULL))
         -- A closed RTI file is finished. There is no on_hold for one: nothing suspends a
         -- statutory period, and pretending otherwise is how the thirty days is missed.

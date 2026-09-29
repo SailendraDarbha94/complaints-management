@@ -1012,6 +1012,25 @@ describe('the mail provider writing about its own account', () => {
     });
   });
 
+  it('also sets aside Google telling the account holder it shared data with an app', async () => {
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      seq++;
+      const bytes = raw(
+        {
+          From: 'Google <noreply-accounts@google.com>',
+          To: 'intake@mlks.test',
+          Subject: 'You shared some Google Account data with Example App',
+          'Message-ID': `<google-share-${seq}@google.com>`,
+          Date: 'Mon, 29 Sep 2026 10:00:00 +0530',
+          'Content-Type': 'text/plain; charset=utf-8',
+        },
+        'You gave Example App access to some of your Google Account data.',
+      );
+      const out = await ingest(tx, { parsed: await simpleParser(bytes), raw: bytes });
+      expect(out.status).toBe('dismissed');
+    });
+  });
+
   it('does not touch mail that merely mentions Google', async () => {
     await withCouncil({ councilId, userId: officer }, async (tx) => {
       const out = await ingest(

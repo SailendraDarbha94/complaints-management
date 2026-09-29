@@ -292,6 +292,107 @@ export class FollowupService {
   }
 
   /**
+   * Stop chasing everything on a case, because the case should never have been opened.
+   *
+   * `cancelled`, the status a manual dismissal uses, with the same attribution: when, by
+   * whom, and a note saying why - so the chase ladder on a cancelled case reads as "stopped
+   * because the case was cancelled", not as obligations that silently evaporated.
+   *
+   * Every live row, whatever its stage. This is what keeps a cancelled case off the Today
+   * screen and out of the daily tick: both only ever look at live rows, so once none are
+   * left there is nothing for either to find.
+   *
+   * `at` is stamped on each row as satisfied_at and must be the SAME instant written to
+   * case_file.deleted_at; `note` must be exactly what reopenAfterCancellation is later given.
+   * The two together are how a restore finds these rows and no others.
+   */
+  async cancelForCase(
+    tx: Tx,
+    ctx: EngineContext,
+    args: { caseFileId: string; note: string; at: Date },
+  ): Promise<number> {
+    const rows = await tx
+      .update(followUp)
+      .set({
+        status: 'cancelled',
+        satisfiedAt: args.at,
+        satisfiedBy: ctx.userId ?? null,
+        resolutionNote: args.note,
+      })
+      .where(
+        and(
+          eq(followUp.councilId, ctx.councilId),
+          eq(followUp.caseFileId, args.caseFileId),
+          inArray(followUp.status, [...LIVE]),
+        ),
+      )
+      .returning({ id: followUp.id });
+    return rows.length;
+  }
+
+  /**
+   * Put back the chase a cancellation stopped, when the cancellation is undone.
+   *
+   * Restoring a case is a safety net - the officer asked that taking a case off the lists
+   * never be one careless click - and a net that brings the case back with nothing
+   * scheduled on it is only half a net. So each row cancelled BY THAT cancellation comes
+   * back as a NEW row, as escalation does: the cancelled row stays cancelled, so the record
+   * still shows the chase was stopped and when.
+   *
+   * "By that cancellation" is the exact satisfied_at cancelForCase stamped (the case's
+   * deleted_at) AND the exact note it wrote. The timestamp alone is not enough, and a test
+   * found out why: a reminder dismissed by hand just before the case was cancelled can carry
+   * the very same millisecond (Date has only millisecond resolution, and on Windows its
+   * clock can move more coarsely still) - and it came back to life on restore. A
+   * dismissal's note is the officer's own words, never this one, so the pair picks out the
+   * cancellation's rows and nothing else.
+   *
+   * The due date is the ORIGINAL one. A case that sat cancelled for a fortnight by mistake
+   * was genuinely not chased for a fortnight, and a restored reminder that is now overdue
+   * says so - the same principle that stops a snooze from moving due_on. A row that was
+   * snoozed comes back snoozed until the same day, for the same reason.
+   *
+   * `no_next_step` flags are not brought back: they are the sweep's judgement, and the
+   * sweep runs straight after this, flagging the case again if nothing else is live and
+   * leaving it alone if something is. Anything whose dedupe key is already live again is
+   * skipped rather than duplicated (ON CONFLICT against follow_up_dedupe_uq).
+   */
+  async reopenAfterCancellation(
+    tx: Tx,
+    ctx: EngineContext,
+    args: { caseFileId: string; cancelledAt: Date; note: string },
+    now?: Date,
+  ): Promise<number> {
+    const today = this.today(ctx.config, now);
+    const reopened = await tx.execute<{ id: string }>(sql`
+      INSERT INTO follow_up (
+        council_id, case_file_id, case_respondent_id, rti_request_id, stage,
+        waiting_on_kind, waiting_on_party_id, assignee_user_id, title, detail,
+        opened_on, due_on, is_statutory, status, escalation_level,
+        snoozed_until, snooze_count, dedupe_key, created_by
+      )
+      SELECT f.council_id, f.case_file_id, f.case_respondent_id, f.rti_request_id, f.stage,
+             f.waiting_on_kind, f.waiting_on_party_id, f.assignee_user_id, f.title, f.detail,
+             ${today}::date, f.due_on, f.is_statutory,
+             CASE WHEN f.snoozed_until > ${today}::date
+                  THEN 'snoozed'::followup_status ELSE 'open'::followup_status END,
+             f.escalation_level,
+             CASE WHEN f.snoozed_until > ${today}::date THEN f.snoozed_until END,
+             f.snooze_count, f.dedupe_key, ${ctx.userId ?? null}::uuid
+      FROM follow_up f
+      WHERE f.council_id = ${ctx.councilId}::uuid
+        AND f.case_file_id = ${args.caseFileId}::uuid
+        AND f.status = 'cancelled'
+        AND f.satisfied_at = ${args.cancelledAt}::timestamptz
+        AND f.resolution_note = ${args.note}
+        AND f.stage <> 'no_next_step'
+      ON CONFLICT DO NOTHING
+      RETURNING id
+    `);
+    return reopened.rows.length;
+  }
+
+  /**
    * The daily tick.
    *
    * Wakes snoozed rows whose snooze has expired, then escalates anything overdue. It
@@ -327,6 +428,15 @@ export class FollowupService {
           eq(followUp.councilId, ctx.councilId),
           eq(followUp.status, 'open'),
           sql`${followUp.dueOn} < ${today}::date`,
+          // Never on a case cancelled as opened in error. There should be nothing live on
+          // one - cancel() stops it all, and the case row lock keeps a write racing the
+          // cancel from opening more after it (see case-guard) - but this is the step that
+          // ends in an ex parte proposal against a named dentist, on a case no list shows,
+          // so it does not rest on "should".
+          sql`NOT EXISTS (
+            SELECT 1 FROM case_file c
+            WHERE c.id = ${followUp.caseFileId} AND c.deleted_at IS NOT NULL
+          )`,
         ),
       );
 
@@ -450,6 +560,8 @@ export class FollowupService {
       WHERE c.council_id = ${ctx.councilId}::uuid
         AND c.state <> 'closed'
         AND c.on_hold = false
+        -- Cancelled as opened in error: nothing is SUPPOSED to be scheduled on it, and
+        -- flagging it every night would put a case that does not exist at the top of Today.
         AND c.deleted_at IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM follow_up f

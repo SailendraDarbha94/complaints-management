@@ -9,6 +9,7 @@ import { FollowupService } from '../followups/followup.service.js';
 import { CaseLifecycleService } from '../cases/case-lifecycle.service.js';
 import { buildMergeContext } from './merge-context.js';
 import { ConflictError, DomainError } from '../../common/domain-error.js';
+import { assertCaseLive } from '../cases/case-guard.js';
 
 /**
  * Drafting and recording the council's letters.
@@ -175,6 +176,10 @@ export class CorrespondenceService {
       now?: Date;
     },
   ): Promise<DraftResult> {
+    // A letter drafted on a cancelled case would sit on a page no list leads to, and the
+    // next click on it would be "I have sent this". See case-guard.
+    await assertCaseLive(tx, ctx, args.caseFileId);
+
     const template = await tx.execute<{
       template_id: string;
       version_id: string;
@@ -324,6 +329,10 @@ export class CorrespondenceService {
       // basis of an ex parte finding against a named dentist.
       throw new ConflictError('This letter is already recorded as sent.');
     }
+    // Before sent_at is written, not left to lifecycle.apply() below: that would catch the
+    // letters that move the case, but an acknowledgement moves nothing and would otherwise
+    // be recorded as sent on a case that no longer exists as far as any list is concerned.
+    if (letter.case_file_id) await assertCaseLive(tx, ctx, letter.case_file_id);
 
     await tx.execute(sql`
       UPDATE correspondence SET sent_at = ${args.sentAt} WHERE id = ${letter.id}::uuid
@@ -376,6 +385,10 @@ export class CorrespondenceService {
    * The software never generates this. It belongs to a book shared with certificates and
    * circulars issued by people who will never touch this system, and minting our own
    * would put our 298 against a clerk's handwritten 298.
+   *
+   * Allowed on a cancelled case: the letter went out and the office stamped it, and that
+   * stays true of a case opened in error. The outward book is shared with people who will
+   * never see this software, and its entry has to be findable from ours.
    */
   async recordDespatch(
     tx: Tx,

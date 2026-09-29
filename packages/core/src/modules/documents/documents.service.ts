@@ -14,6 +14,7 @@ import {
   sniff,
 } from './storage.js';
 import { DomainError } from '../../common/domain-error.js';
+import { assertCaseLive } from '../cases/case-guard.js';
 
 /**
  * Case documents.
@@ -85,6 +86,9 @@ export class DocumentsService {
     if (!args.storageKey.startsWith('staging/')) {
       throw new DomainError('Only a freshly uploaded object can be committed.');
     }
+    // Before the file is read or moved: a document refused for a cancelled case stays in
+    // staging, exactly as one refused for its type does. See case-guard.
+    await assertCaseLive(tx, ctx, args.caseFileId);
 
     const size = await this.storage.size(args.storageKey);
     if (size === 0) throw new DomainError('That file is empty.');
@@ -206,6 +210,10 @@ export class DocumentsService {
 
   /**
    * The 11pm mistake: patient A's OPG filed on patient B's case.
+   *
+   * Allowed on a cancelled case, unlike commit(): it corrects what is already on the file
+   * rather than adding to it, and patient A's X-ray is no less misfiled for sitting on a
+   * case that should never have been opened.
    *
    * Nothing is deleted — the application role has no DELETE grant, and on a legal record
    * deletion is the wrong instinct anyway. The object moves to a quarantine prefix that

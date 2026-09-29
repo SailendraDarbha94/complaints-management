@@ -39,6 +39,11 @@ export default async function CasesPage() {
             {open.length} open, {closed.length} closed.{' '}
             <PendingLink href="/register">The formal register</PendingLink> has every column and exports
             to CSV. <PendingLink href="/rti">RTI applications</PendingLink> are kept in their own book.
+            {/* The API leaves cancelled cases out of this list (deleted_at IS NULL), so
+                nothing here filters them. This sentence is for the officer who has just
+                cancelled one and comes looking: it has not vanished, it has moved. */}{' '}
+            A case cancelled as opened in error is not listed here; the register keeps it,
+            marked cancelled.
           </p>
         </div>
       </header>

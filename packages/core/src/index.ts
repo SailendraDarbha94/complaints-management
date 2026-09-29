@@ -75,7 +75,17 @@ export { TokenService, generateSigningKeys, type AccessClaims } from './modules/
 
 // The domain.
 export { CaseIntakeService, type IntakeInput } from './modules/cases/case-intake.service.js';
-export { CaseLifecycleService } from './modules/cases/case-lifecycle.service.js';
+export {
+  CaseLifecycleService,
+  CANCEL_REASON_MIN_LENGTH,
+  CANCEL_EVENT,
+  RESTORE_EVENT,
+  type CancelResult,
+  type RestoreResult,
+} from './modules/cases/case-lifecycle.service.js';
+export { workingCaseList, type CaseListRow } from './modules/cases/case-list.js';
+// A case cancelled as opened in error is frozen; every write onto a case asks this first.
+export { assertCaseLive, CaseCancelledError, type LiveCase } from './modules/cases/case-guard.js';
 export {
   RespondentService,
   type AddRespondentInput,
@@ -85,7 +95,7 @@ export { FollowupService, type EngineContext } from './modules/followups/followu
 export { QueueService } from './modules/followups/queue.service.js';
 export { CorrespondenceService } from './modules/correspondence/correspondence.service.js';
 export { DocumentsService } from './modules/documents/documents.service.js';
-export { RegisterService } from './modules/register/register.service.js';
+export { RegisterService, REGISTER_CANCELLED_STATUS } from './modules/register/register.service.js';
 
 // RTI: its own register, its own clock, its own composer. See modules/rti.
 export {

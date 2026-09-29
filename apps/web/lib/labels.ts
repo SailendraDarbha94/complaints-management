@@ -18,6 +18,17 @@ export const STATE_LABEL: Record<string, string> = {
   closed: 'Closed',
 };
 
+/**
+ * A case cancelled as opened in error.
+ *
+ * Not a state, so not in STATE_LABEL: cancelling leaves the case in the state it was in,
+ * so that restoring it puts it back exactly where it stood. Every screen that shows a
+ * state therefore asks `deleted_at` first and says this instead - and says the same word,
+ * on the case, in the register and in its chip, because a legal record that calls one
+ * thing by two names is telling its reader two things.
+ */
+export const CANCELLED_LABEL = 'Cancelled';
+
 export const WAITING_ON_LABEL: Record<string, string> = {
   council_officer: 'On my desk',
   complainant: 'Waiting on the complainant',
@@ -106,6 +117,14 @@ export const EVENT_LABEL: Record<string, string> = {
   REOPEN: 'Reopen',
   REFER_TO_EXPERT: 'Refer to GDCRI',
   RECORD_EXPERT_REPORT: 'Record the GDCRI report',
+  // Not transitions, but written to the same history (see CANCEL_EVENT and RESTORE_EVENT in
+  // @ksdc/core), so the case page's chronology prints them from here - and without an
+  // entry, label() would print the raw key into a record the officer reads and prints.
+  // Spelled out rather than imported: this file reaches the browser through client
+  // components, and @ksdc/core would bring the database driver with it. labels.test.ts
+  // holds the two spellings together instead.
+  CANCEL_OPENED_IN_ERROR: 'Cancelled - opened in error',
+  RESTORE_CANCELLED_CASE: 'Restored after cancellation',
 };
 
 export const CLOSURE_REASON_LABEL: Record<string, string> = {

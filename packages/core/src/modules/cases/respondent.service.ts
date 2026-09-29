@@ -5,6 +5,7 @@ import type { PartyRole } from '@ksdc/contracts';
 import { ConflictError, DomainError } from '../../common/domain-error.js';
 import { Logger } from '../../common/logger.js';
 import type { EngineContext } from '../followups/followup.service.js';
+import { assertCaseLive } from './case-guard.js';
 
 /**
  * Naming the dentist a complaint is about.
@@ -110,20 +111,29 @@ export class RespondentService {
              coalesce(rd.registration_no, NULL) AS registration_no,
              coalesce(rd.clinic_name, NULL) AS clinic_name,
              p.email, p.mobile,
+             -- The HISTORY counts only cases that stand. A case cancelled as opened in
+             -- error was never a complaint against this dentist, and "named on two other
+             -- cases" in front of a committee must not include a duplicate or a test.
              (SELECT count(DISTINCT cp2.case_file_id)::int
-                FROM case_party cp2
+                FROM case_party cp2 JOIN case_file c1 ON c1.id = cp2.case_file_id
                WHERE cp2.party_id = p.id
-                 AND cp2.role IN ('respondent_dentist','respondent_establishment')) AS prior_cases,
+                 AND cp2.role IN ('respondent_dentist','respondent_establishment')
+                 AND c1.deleted_at IS NULL) AS prior_cases,
              (SELECT coalesce(array_agg(x.case_number ORDER BY x.register_sl_no DESC), '{}')
                 FROM (SELECT DISTINCT c2.case_number, c2.register_sl_no
                         FROM case_party cp3 JOIN case_file c2 ON c2.id = cp3.case_file_id
                        WHERE cp3.party_id = p.id
                          AND cp3.role IN ('respondent_dentist','respondent_establishment')
+                         AND c2.deleted_at IS NULL
                        ORDER BY c2.register_sl_no DESC LIMIT 4) x) AS prior_case_numbers,
              'seen_before'::text AS source
       FROM party p
       LEFT JOIN registered_dentist rd ON rd.id = p.registered_dentist_id
       WHERE p.council_id = ${ctx.councilId}::uuid
+        -- The PERSON is still offered when their only case was cancelled, deliberately.
+        -- Their party row exists either way, and createParty() refuses a second record
+        -- with the same registration number, telling the officer to pick this one from
+        -- the suggestions - so hiding them here would leave a dentist nobody can name.
         AND EXISTS (
           SELECT 1 FROM case_party cp
            WHERE cp.party_id = p.id
@@ -163,7 +173,10 @@ export class RespondentService {
       because:
         r.source === 'register'
           ? 'in the register of dentists'
-          : `named on ${(r.prior_case_numbers ?? []).join(', ') || `${r.prior_cases} other case(s)`}`,
+          : r.prior_cases === 0
+            ? // Known, but only from a case cancelled as opened in error - see above.
+              'named before only on a case cancelled as opened in error'
+            : `named on ${(r.prior_case_numbers ?? []).join(', ') || `${r.prior_cases} other case(s)`}`,
     }));
   }
 
@@ -180,10 +193,13 @@ export class RespondentService {
     ctx: EngineContext,
     input: AddRespondentInput,
   ): Promise<{ caseRespondentId: string; partyId: string; fullName: string }> {
+    // A cancelled case is refused by name rather than as "not in the register", which is
+    // what the old `deleted_at IS NULL` filter here used to say: it IS in the register,
+    // and the officer needs to know that restoring it is the way on. See case-guard.
+    await assertCaseLive(tx, ctx, input.caseFileId);
     const caseRow = await tx.execute<{ id: string; state: string; closed_at: Date | null }>(
       sql`SELECT id, state::text, closed_at FROM case_file
-          WHERE council_id = ${ctx.councilId}::uuid AND id = ${input.caseFileId}::uuid
-            AND deleted_at IS NULL`,
+          WHERE council_id = ${ctx.councilId}::uuid AND id = ${input.caseFileId}::uuid`,
     );
     if (!caseRow.rows[0]) throw new DomainError('That case is not in the register.');
     if (caseRow.rows[0].closed_at) {

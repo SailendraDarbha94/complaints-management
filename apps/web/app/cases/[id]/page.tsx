@@ -10,6 +10,7 @@ import {
   type CaseMilestone,
 } from '@/lib/api';
 import {
+  CANCELLED_LABEL,
   CLOSURE_REASON_LABEL,
   DOCUMENT_CLASS_LABEL,
   EVENT_LABEL,
@@ -26,6 +27,7 @@ import {
   label,
 } from '@/lib/labels';
 import { RespondentsPanel } from './add-respondent';
+import { CancelCasePanel, RestoreCase } from './cancel-case';
 import { CaseActions } from './case-actions';
 import { DocumentUpload } from './document-upload';
 
@@ -57,6 +59,15 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
     (Date.now() - new Date(c.waiting_since).getTime()) / 86_400_000,
   );
 
+  // Cancelled as opened in error. The page still opens - by direct link, from the register,
+  // from an old bookmark - because the record is still the record. But every control that
+  // writes to the case is hidden below, not merely left to be refused: a button that looks
+  // available and then says no is worse than no button. The API refuses those writes too;
+  // this is so the officer is never offered them.
+  const cancelled = Boolean(c.deleted_at);
+  // Nobody is waiting on a cancelled case, and it is on nobody's clock.
+  const stopped = cancelled || c.state === 'closed';
+
   return (
     <main className="shell">
       <nav className="crumbs">
@@ -69,21 +80,32 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
 
       <header className="case-head">
         <div>
-          <h1>{c.case_number}</h1>
+          {/* Struck through, as the register strikes the row: the number stays in the book,
+              visibly not a live case. */}
+          <h1 className={cancelled ? 'is-cancelled' : undefined}>{c.case_number}</h1>
           <p className="case-summary">{c.summary}</p>
         </div>
         <dl className="case-status">
           <div>
             <dt>Status</dt>
-            <dd>{label(STATE_LABEL, c.state)}</dd>
+            {cancelled ? (
+              <dd>
+                {CANCELLED_LABEL}
+                {/* The state is kept, not overwritten, and Restore returns the case to it -
+                    so it is worth saying where that is. */}
+                <span className="meta">{label(STATE_LABEL, c.state)} when cancelled</span>
+              </dd>
+            ) : (
+              <dd>{label(STATE_LABEL, c.state)}</dd>
+            )}
           </div>
           <div>
             <dt>Waiting on</dt>
-            <dd>{label(WAITING_ON_LABEL, c.waiting_on)}</dd>
+            <dd>{cancelled ? '-' : label(WAITING_ON_LABEL, c.waiting_on)}</dd>
           </div>
           <div>
             <dt>Days waiting</dt>
-            <dd className="mono">{c.state === 'closed' ? '-' : daysWaiting}</dd>
+            <dd className="mono">{stopped ? '-' : daysWaiting}</dd>
           </div>
           <div>
             <dt>Sl. No.</dt>
@@ -91,6 +113,31 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
           </div>
         </dl>
       </header>
+
+      {cancelled && (
+        // First, above every other banner: it changes what everything else on the page
+        // means. Says what, when, who and why, and offers the way back beside it.
+        <div className="banner banner-void" role="status">
+          <span className="tag">{CANCELLED_LABEL}</span>
+          <div className="void-text">
+            <p>
+              Cancelled as opened in error on {formatDateTime(c.deleted_at)}
+              {c.deleted_by_name ? ` by ${c.deleted_by_name}` : ''}.
+            </p>
+            {c.deletion_reason && <p className="void-reason">{c.deletion_reason}</p>}
+            <p className="meta">
+              It is off every list and nothing more can be recorded on it. It keeps its
+              number, and the register shows it as cancelled with this reason.
+              {/* Cancelling sent its mail back to the tray (see mail/cancelled-case in
+                  @ksdc/core). Said here, or the officer meets a message they had dealt
+                  with back in Inward mail and cannot tell why. */}
+              {data.mail.length > 0 &&
+                ' The email filed on it went back to Inward mail, to be added to the right case or marked not a complaint.'}
+            </p>
+          </div>
+          <RestoreCase caseId={c.id} apiUrl={PUBLIC_API_URL} />
+        </div>
+      )}
 
       {c.on_hold && (
         <div className="banner banner-demo">
@@ -124,7 +171,11 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
           <Section title="What happens next">
             {data.followups.length === 0 ? (
               <p className="muted">
-                Nothing is scheduled against this case. The nightly sweep will flag it.
+                {/* Cancelling stops every follow-up, and the sweep passes cancelled cases
+                    by - so for one of those, "the sweep will flag it" would be untrue. */}
+                {cancelled
+                  ? 'Nothing is scheduled. A cancelled case is not followed up.'
+                  : 'Nothing is scheduled against this case. The nightly sweep will flag it.'}
               </p>
             ) : (
               <ul className="plain">
@@ -167,17 +218,22 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
             </Section>
           )}
 
-          <CaseActions
-            caseId={c.id}
-            apiUrl={PUBLIC_API_URL}
-            events={data.availableEvents.map((e) => ({ ...e, label: label(EVENT_LABEL, e.event) }))}
-            respondents={data.respondents.map((r) => ({ id: r.id, name: r.full_name }))}
-          />
+          {/* availableEvents is derived from the state alone, and a cancelled case keeps
+              its state - so the list would still offer "Close the case" and the rest.
+              Hidden here rather than trusting that list for this. */}
+          {!cancelled && (
+            <CaseActions
+              caseId={c.id}
+              apiUrl={PUBLIC_API_URL}
+              events={data.availableEvents.map((e) => ({ ...e, label: label(EVENT_LABEL, e.event) }))}
+              respondents={data.respondents.map((r) => ({ id: r.id, name: r.full_name }))}
+            />
+          )}
 
           <Section
             title="Letters"
             action={
-              c.state === 'closed' ? undefined : (
+              stopped ? undefined : (
                 <PendingLink className="button-link" href={`/cases/${c.id}/compose`}>
                   Draft a letter
                 </PendingLink>
@@ -230,13 +286,17 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
           </Section>
 
           <Section title="Documents">
-            <DocumentUpload caseId={c.id} apiUrl={PUBLIC_API_URL} />
+            {!cancelled && <DocumentUpload caseId={c.id} apiUrl={PUBLIC_API_URL} />}
             {data.heldAttachments > 0 && (
               <p className="rti-hint">
                 {data.heldAttachments === 1
                   ? 'One file from the email is kept but not on the case yet'
                   : `${data.heldAttachments} files from the email are kept but not on the case yet`}
-                {' — they are added automatically within a few minutes.'}
+                {/* Kept either way - nothing is lost - but a cancelled case takes nothing
+                    new, so promising they will arrive would be a promise not kept. */}
+                {cancelled
+                  ? '. They stay with the message, and go with it to whichever case it is added to.'
+                  : ' — they are added automatically within a few minutes.'}
               </p>
             )}
             {data.documents.length === 0 ? (
@@ -352,7 +412,7 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
           <RespondentsPanel
             caseId={c.id}
             title={`Respondents (${data.respondents.length})`}
-            disabled={c.state === 'closed'}
+            disabled={stopped}
           >
             {data.respondents.length === 0 ? (
               <p className="muted">
@@ -411,6 +471,13 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
           </Section>
         </aside>
       </div>
+
+      {/* Below both columns, not at the foot of the main one: on a phone the side column
+          stacks under the main, and this has to stay the last thing on the page there too -
+          the officer asked that it be nowhere near the routine buttons. */}
+      {!cancelled && (
+        <CancelCasePanel caseId={c.id} caseNumber={c.case_number} apiUrl={PUBLIC_API_URL} />
+      )}
     </main>
   );
 }

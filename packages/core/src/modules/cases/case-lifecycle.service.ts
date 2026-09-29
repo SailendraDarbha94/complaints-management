@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Tx } from '@ksdc/db';
 import { caseFile, caseMilestone, caseRespondent, caseStateHistory, respondentNotice } from '@ksdc/db';
 import type {
@@ -13,7 +13,10 @@ import type {
 } from '@ksdc/contracts';
 import { availableEvents, resolveTarget, transitionFor, waitingOnFor } from '@ksdc/contracts';
 import type { EngineContext, FollowupService } from '../followups/followup.service.js';
-import { ConflictError, DomainError } from '../../common/domain-error.js';
+import { ConflictError, DomainError, NotFoundError } from '../../common/domain-error.js';
+import { CaseCancelledError } from './case-guard.js';
+import { refileMailFromTray, returnMailToTray } from '../mail/cancelled-case.js';
+import { todayIn } from '../../common/working-days.js';
 
 /**
  * Applies case transitions.
@@ -57,6 +60,54 @@ export interface ApplyEventInput {
   };
 }
 
+/**
+ * Short enough to type in a hurry, long enough that "x" or "." is not a reason. A bare
+ * "Test" is refused on purpose: "Test entry" is a few keystrokes more and reads as an
+ * explanation in a register that a stranger may one day be reading line by line.
+ */
+export const CANCEL_REASON_MIN_LENGTH = 5;
+
+/**
+ * What a cancellation and a restoration write into case_state_history.
+ *
+ * Neither is a CaseEvent, because neither is a transition: the state does not move, which
+ * is what lets a restore put the case back exactly where it stood. They are written to the
+ * history anyway - from_state equal to to_state, as a hold toggle already is - because the
+ * history is where the case page reads "what happened to this case", and a case that was
+ * cancelled and then restored must not look as if neither had happened. The audit chain
+ * has it regardless; the officer does not read the audit chain.
+ */
+export const CANCEL_EVENT = 'CANCEL_OPENED_IN_ERROR';
+export const RESTORE_EVENT = 'RESTORE_CANCELLED_CASE';
+
+/**
+ * The note on every follow-up a cancellation stops. One function, because restore() finds
+ * those follow-ups again by this exact text (see FollowupService.reopenAfterCancellation),
+ * and two copies of a string that must match are two copies that will one day differ.
+ */
+function cancellationNote(reason: string): string {
+  return `Case cancelled as opened in error: ${reason}`;
+}
+
+export interface CancelResult {
+  caseFileId: string;
+  caseNumber: string;
+  cancelledAt: Date;
+  /** Live follow-ups on the case that were stopped with it. */
+  followupsCancelled: number;
+  /** Messages that were filed on the case and are back in the tray. See mail/cancelled-case. */
+  mailReturnedToTray: number;
+}
+
+export interface RestoreResult {
+  caseFileId: string;
+  caseNumber: string;
+  /** Follow-ups the cancellation had stopped, brought back as new rows. */
+  followupsReopened: number;
+  /** Messages the cancellation sent back to the tray that were still there, filed again. */
+  mailRefiled: number;
+}
+
 export interface ApplyEventResult {
   from: CaseState;
   to: CaseState;
@@ -77,12 +128,22 @@ export class CaseLifecycleService {
       throw new Error(`${input.event} creates a case; use CaseIntakeService instead.`);
     }
 
+    // Locked, for the reason assertCaseLive locks (see case-guard): the liveness check below
+    // must still be true when the UPDATEs further down land. Without the lock, a cancel that
+    // commits in between is not seen, and this transition opens its follow-ups on a case
+    // cancel() has just finished stopping. With it, that cancel waits for this transaction
+    // and then stops what it opened too.
     const [current] = await tx
       .select()
       .from(caseFile)
       .where(and(eq(caseFile.councilId, ctx.councilId), eq(caseFile.id, input.caseFileId)))
-      .limit(1);
+      .limit(1)
+      .for('update');
     if (!current) throw new DomainError(`Case ${input.caseFileId} not found`);
+    // Before the state check, so the officer is told the case was cancelled rather than
+    // that its state does not allow the event - the state is where it was frozen, and
+    // "cannot take this event" would send them looking for the wrong fix. See case-guard.
+    if (current.deletedAt) throw new CaseCancelledError(current.caseNumber, current.deletionReason);
 
     if (!rule.from.includes(current.state)) {
       throw new TransitionNotAllowedError(current.state, input.event);
@@ -425,6 +486,206 @@ export class CaseLifecycleService {
             'The register never records a bare closure.',
         );
     }
+  }
+
+  // ── Cancelled: opened in error ───────────────────────────────────────────
+
+  /**
+   * Cancel a case that should never have been opened: a duplicate, a message that was not
+   * a complaint, a test.
+   *
+   * This is what the officer's "delete" became. Nothing is deleted - app_rw cannot - and
+   * the case keeps its number, because the number is a serial in a legal register and a
+   * number that vanished is a gap somebody will one day have to explain. Instead the case
+   * is marked - deleted_at, deleted_by and deletion_reason, set together here and cleared
+   * together by restore(), with a CHECK from 0016 making sure no cancellation lacks its
+   * reason - and every query that feeds a working list leaves it out, while the register
+   * goes on listing it as cancelled, with the reason.
+   *
+   * The state is left exactly as it was, so restore() can put the case back where it
+   * stood. The live chase stops with it, in the same transaction: a cancelled case with
+   * an open reminder would be chased by nobody on no list, and that reminder would still
+   * be escalated every night by a tick that does not know the case is gone. And the mail
+   * filed on it goes back to the tray, so that it can reach the right case.
+   */
+  async cancel(
+    tx: Tx,
+    ctx: EngineContext,
+    input: { caseFileId: string; reason: string },
+  ): Promise<CancelResult> {
+    const reason = (input.reason ?? '').trim();
+    if (reason.length < CANCEL_REASON_MIN_LENGTH) {
+      throw new DomainError(
+        'Say in a few words why this case was opened in error - for example "Duplicate of ' +
+          '0008" or "Not a complaint". The reason is printed in the register beside the ' +
+          'case number, where it is the only explanation of why that number leads nowhere.',
+      );
+    }
+
+    const current = await this.findForCancellation(tx, ctx, input.caseFileId);
+    if (current.deletedAt) {
+      throw new ConflictError(
+        `${current.caseNumber} is already cancelled` +
+          (current.deletionReason ? ` (${current.deletionReason})` : '') +
+          '. Nothing has changed.',
+      );
+    }
+
+    // One instant for the case and for every follow-up stopped with it: restore() finds
+    // exactly the follow-ups this cancellation stopped by that equality.
+    const at = new Date();
+
+    // Guarded on deleted_at IS NULL as well as checked above. Two tabs cancelling at once
+    // both pass the check; the second UPDATE then waits on the first's row lock, finds the
+    // row no longer matches, and changes nothing - rather than overwriting the first
+    // reason, time and name with its own.
+    const updated = await tx
+      .update(caseFile)
+      .set({ deletedAt: at, deletionReason: reason, deletedBy: ctx.userId ?? null, updatedAt: at })
+      .where(
+        and(
+          eq(caseFile.councilId, ctx.councilId),
+          eq(caseFile.id, input.caseFileId),
+          isNull(caseFile.deletedAt),
+        ),
+      )
+      .returning({ id: caseFile.id });
+    if (updated.length === 0) {
+      throw new ConflictError(`${current.caseNumber} was cancelled a moment ago by someone else.`);
+    }
+
+    const followupsCancelled = await this.followups.cancelForCase(tx, ctx, {
+      caseFileId: input.caseFileId,
+      note: cancellationNote(reason),
+      at,
+    });
+
+    // The mail filed on it goes back to the tray, where it can be added to the case it
+    // duplicates or marked not a complaint - left here, it could be neither, and a
+    // duplicate's complaint text and evidence would never reach the real case. Its letter
+    // and documents stay on this case as the record of what it held. See mail/cancelled-case.
+    const mailReturnedToTray = await returnMailToTray(tx, ctx, input.caseFileId);
+
+    await tx.insert(caseStateHistory).values({
+      councilId: ctx.councilId,
+      caseFileId: input.caseFileId,
+      fromState: current.state,
+      toState: current.state,
+      event: CANCEL_EVENT,
+      reason,
+      actorUserId: ctx.userId ?? null,
+      isSystem: false,
+      occurredAt: at,
+    });
+
+    return {
+      caseFileId: input.caseFileId,
+      caseNumber: current.caseNumber,
+      cancelledAt: at,
+      followupsCancelled,
+      mailReturnedToTray,
+    };
+  }
+
+  /**
+   * Undo a cancellation. The safety net the officer asked for: taking a case off every
+   * list must never be one careless click that cannot be taken back.
+   *
+   * Clears the three columns together, so the case is on every list again, in the state it
+   * was cancelled in, with its original waiting_since - the days it spent cancelled count
+   * as days waiting, because they were.
+   *
+   * The chase comes back too. There is no "plan the next reminder from the state" in the
+   * follow-up engine - reminders are opened by the transitions that create the obligation,
+   * not derived from where a case stands - so the follow-ups the cancellation stopped are
+   * reopened instead (see FollowupService.reopenAfterCancellation), then the no-next-step
+   * sweep runs at once rather than waiting for the night: if nothing was live when the case
+   * was cancelled, it is flagged on Today straight away as having no next step, which is
+   * the truth about it. The mail the cancellation sent back to the tray comes back too,
+   * unless the officer has already put it somewhere else.
+   */
+  async restore(
+    tx: Tx,
+    ctx: EngineContext,
+    input: { caseFileId: string },
+    now?: Date,
+  ): Promise<RestoreResult> {
+    const current = await this.findForCancellation(tx, ctx, input.caseFileId);
+    if (!current.deletedAt) {
+      throw new ConflictError(`${current.caseNumber} is not cancelled, so there is nothing to restore.`);
+    }
+    const cancelledAt = current.deletedAt;
+
+    const updated = await tx
+      .update(caseFile)
+      .set({ deletedAt: null, deletionReason: null, deletedBy: null, updatedAt: new Date() })
+      .where(
+        and(
+          eq(caseFile.councilId, ctx.councilId),
+          eq(caseFile.id, input.caseFileId),
+          isNotNull(caseFile.deletedAt),
+        ),
+      )
+      .returning({ id: caseFile.id });
+    if (updated.length === 0) {
+      throw new ConflictError(`${current.caseNumber} was restored a moment ago by someone else.`);
+    }
+
+    // The reason column is what the case page's chronology prints, so the restore says
+    // what it undid. Without it the timeline would show a cancellation and then silence.
+    const cancelledOn = todayIn(ctx.config.calendar.timezone, cancelledAt);
+    await tx.insert(caseStateHistory).values({
+      councilId: ctx.councilId,
+      caseFileId: input.caseFileId,
+      fromState: current.state,
+      toState: current.state,
+      event: RESTORE_EVENT,
+      reason:
+        `Restored. It had been cancelled on ${cancelledOn} as opened in error` +
+        (current.deletionReason ? `: ${current.deletionReason}` : '.'),
+      actorUserId: ctx.userId ?? null,
+      isSystem: false,
+      occurredAt: now ?? new Date(),
+    });
+
+    const followupsReopened = await this.followups.reopenAfterCancellation(
+      tx,
+      ctx,
+      {
+        caseFileId: input.caseFileId,
+        cancelledAt,
+        // deletion_reason is NOT NULL whenever deleted_at is set (the CHECK from 0016).
+        note: cancellationNote(current.deletionReason ?? ''),
+      },
+      now,
+    );
+    await this.followups.sweepNoNextStep(tx, ctx, now);
+
+    // And the mail the cancellation sent back to the tray, where nobody has touched it
+    // since. See mail/cancelled-case for why a message dealt with in the meantime stays put.
+    const mailRefiled = await refileMailFromTray(tx, ctx, input.caseFileId);
+
+    return {
+      caseFileId: input.caseFileId,
+      caseNumber: current.caseNumber,
+      followupsReopened,
+      mailRefiled,
+    };
+  }
+
+  private async findForCancellation(tx: Tx, ctx: EngineContext, caseFileId: string) {
+    const [row] = await tx
+      .select({
+        caseNumber: caseFile.caseNumber,
+        state: caseFile.state,
+        deletedAt: caseFile.deletedAt,
+        deletionReason: caseFile.deletionReason,
+      })
+      .from(caseFile)
+      .where(and(eq(caseFile.councilId, ctx.councilId), eq(caseFile.id, caseFileId)))
+      .limit(1);
+    if (!row) throw new NotFoundError('That case is not in the register.');
+    return row;
   }
 
   /** Drives every button on every client, so no UI re-implements a guard. */

@@ -1071,3 +1071,96 @@ label.checkbox {
   line-height: 1.6;
   white-space: pre-wrap;
 }
+
+/* ── Cancelled as opened in error ─────────────────────────────────────── */
+
+/*
+ * Grey, not red. Seal red is kept for lateness and for the actions that end a case, and a
+ * cancelled case is neither late nor decided - it should never have been one. Grey says
+ * "void" without saying "alarm"; the heavier left rule stops it reading as a footnote.
+ */
+.banner-void {
+  flex-wrap: wrap;
+  background: var(--surface-sunk);
+  border-color: var(--ink-3);
+  border-left-width: 3px;
+  color: var(--ink-2);
+}
+.banner-void .tag {
+  color: var(--ink);
+  font-weight: 600;
+}
+.banner-void .void-text {
+  flex: 1 1 22rem;
+  min-width: 0;
+}
+.banner-void .void-text p {
+  margin: 0;
+}
+.banner-void .void-text p + p {
+  margin-top: 4px;
+}
+/* The officer's own words, set apart so they read as the reason and not as the system's. */
+.banner-void .void-reason {
+  color: var(--ink);
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+.banner-void .restore {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/* The number stays in the book, visibly not a live case - as the register row is struck. */
+.case-head h1.is-cancelled {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  color: var(--ink-3);
+}
+
+/* The panel at the foot of a live case: findable when wanted, never competing for the eye. */
+.panel-quiet {
+  background: transparent;
+  border-style: dashed;
+}
+.panel-quiet .panel-head {
+  background: transparent;
+  border-bottom-style: dashed;
+}
+.cancel-invite {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+.cancel-invite .form-note {
+  margin: 0;
+}
+/* Opened in the panel body, not under a row of buttons, so no rule above it. */
+.cancel-form {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+/* Only the button that actually cancels takes the grave colour Close and Reopen use. */
+.cancel-form .action-buttons button[type='submit'] {
+  background: var(--seal);
+  border-color: var(--seal);
+}
+
+.register-table tr.cancelled td,
+.register-table tr.cancelled .case-link {
+  color: var(--ink-3);
+}
+/* The reason is the one cell in a cancelled row that is meant to be read. */
+.register-table tr.cancelled td.reason {
+  color: var(--ink);
+}
+.chip-cancelled {
+  background: var(--surface-sunk);
+  color: var(--ink-2);
+  box-shadow: inset 0 0 0 1px var(--rule);
+}

@@ -171,9 +171,19 @@ export const caseFile = pgTable(
     createdBy: uuid('created_by').references(() => appUser.id, { onDelete: 'set null' }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 
-    /** No hard deletes anywhere. The app role has no DELETE grant. */
+    /**
+     * No hard deletes anywhere. The app role has no DELETE grant.
+     *
+     * Set when the case was CANCELLED AS OPENED IN ERROR (a duplicate, a non-complaint, a
+     * test) - the nearest thing to deleting a case there is, and deliberately not very
+     * near. The case keeps its number and every row; it drops out of the working lists and
+     * stays in the register marked cancelled, so the book has no unexplained gap. `state`
+     * is NOT touched, so restoring puts the case back exactly where it stood. All three
+     * are set together by CaseLifecycleService.cancel and cleared together by restore.
+     */
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     deletedBy: uuid('deleted_by').references(() => appUser.id, { onDelete: 'set null' }),
+    /** Why, in the officer's words. Printed in the register beside the number. */
     deletionReason: text('deletion_reason'),
   },
   (t) => [
@@ -186,6 +196,11 @@ export const caseFile = pgTable(
       sql`(state <> 'closed') OR (closure_reason IS NOT NULL AND closed_at IS NOT NULL)`,
     ),
     check('case_file_hold_needs_reason', sql`(on_hold = false) OR (hold_reason IS NOT NULL)`),
+    // Added by migration 0016. A cancelled number must always be able to say why.
+    check(
+      'case_file_deleted_needs_reason',
+      sql`(deleted_at IS NULL) OR (deletion_reason IS NOT NULL)`,
+    ),
   ],
 );
 

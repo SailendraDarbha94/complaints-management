@@ -18,6 +18,7 @@ import { Logger } from '../../common/logger.js';
 import { allocateSerial } from '../../common/serials.js';
 import { addCalendarDays, daysBetween, todayIn, type IsoDate } from '../../common/working-days.js';
 import type { EngineContext } from '../followups/followup.service.js';
+import { assertCaseLive } from '../cases/case-guard.js';
 import { rtiClock, type RtiClock } from './rti-clock.js';
 import { composeRtiReply, type RtiOfficeHolder, type RtiReplyDraft } from './rti-reply.js';
 
@@ -153,7 +154,18 @@ export interface RtiFile {
   request: RtiRequestRow;
   clock: RtiClock;
   exemptions: RtiExemptionRow[];
-  cases: Array<{ case_file_id: string; case_number: string; summary: string; note: string | null }>;
+  /**
+   * Every case the application is linked to, cancelled ones included - see get(). When
+   * deleted_at is set the case was cancelled as opened in error, for deletion_reason.
+   */
+  cases: Array<{
+    case_file_id: string;
+    case_number: string;
+    summary: string;
+    note: string | null;
+    deleted_at: Date | null;
+    deletion_reason: string | null;
+  }>;
   letters: Array<{ id: string; kind: string; subject: string; sent_at: string | null; despatch_no: string | null }>;
   documents: Array<{ id: string; title: string; document_class: string; status: string }>;
   followups: Array<{ id: string; stage: string; status: string; due_on: IsoDate; title: string }>;
@@ -389,6 +401,10 @@ export class RtiService {
     ctx: EngineContext,
     args: { rtiRequestId: string; caseFileId: string; note?: string | null },
   ): Promise<void> {
+    // An application is about a real matter, and a case cancelled as opened in error is
+    // not one - link the case it duplicated instead. It also keeps the register's "RTI
+    // refs." column from gaining an entry on a row that is already marked cancelled.
+    await assertCaseLive(tx, ctx, args.caseFileId);
     await tx.execute(sql`
       INSERT INTO rti_case_link (council_id, rti_request_id, case_file_id, note, created_by)
       VALUES (${ctx.councilId}::uuid, ${args.rtiRequestId}::uuid, ${args.caseFileId}::uuid,
@@ -1098,12 +1114,19 @@ export class RtiService {
     // transaction, so concurrency buys nothing - node-pg simply queues them and warns that
     // the pattern is going away. Five small reads in a row is what this actually is.
     const exemptions = await this.exemptionsFor(tx, ctx, id);
-    const cases = await tx.execute<{
-      case_file_id: string; case_number: string; summary: string; note: string | null;
-    }>(sql`
-      SELECT l.case_file_id, c.case_number, c.summary, l.note
+    // Cancelled cases INCLUDED, marked. This is not a working list but the Public
+    // Information Officer's statutory worksheet, and a case cancelled as opened in error
+    // since it was linked is still information the Council holds - its complaint, its
+    // documents, its letters - and may have to disclose. Hiding it made the page say the
+    // application concerned no case at all, with the thirty days running, and lost the
+    // pointer to the record the applicant actually asked about (and, through the reason,
+    // to the case it duplicated). Only linking a NEW case refuses a cancelled one
+    // (linkCase), because that is a write onto it.
+    const cases = await tx.execute<RtiFile['cases'][number]>(sql`
+      SELECT l.case_file_id, c.case_number, c.summary, l.note, c.deleted_at, c.deletion_reason
       FROM rti_case_link l JOIN case_file c ON c.id = l.case_file_id
-      WHERE l.rti_request_id = ${id}::uuid ORDER BY c.case_number
+      WHERE l.rti_request_id = ${id}::uuid
+      ORDER BY c.case_number
     `);
     const letters = await tx.execute<{
       id: string; kind: string; subject: string; sent_at: string | null; despatch_no: string | null;

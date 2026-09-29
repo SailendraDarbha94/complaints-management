@@ -90,6 +90,10 @@ export default function CaseScreen() {
   // Any reconstructed date on the file gets one footnote, not one per line.
   const anyReconstructed = milestones.some((m) => isReconstructed(m.date_source));
 
+  // Cancelled as opened in error. The list never shows such a case, so the only way here is
+  // a link - and a link must not open a void file looking like a live one.
+  const cancelledAt = file.deleted_at;
+
   return (
     <View style={styles.screen}>
       <ScrollView
@@ -103,25 +107,46 @@ export default function CaseScreen() {
           <Text style={styles.back}>‹ Cases</Text>
         </Pressable>
 
-        {/* 1. On hold, above everything. A listed case that is on hold changes what the
-            sitting can do at all. */}
-        {file.on_hold ? (
-          <View style={styles.holdBand}>
-            <Text style={styles.holdText}>
-              On hold{file.held_since ? ` since ${shortDate(file.held_since)}` : ''}
-              {file.hold_reason ? ` — ${file.hold_reason}` : ''}
+        {/* 0. Cancelled, above everything and INSTEAD of the hold band and the question.
+            A case opened in error is not before the committee and never was: "on hold"
+            would imply it is waiting to resume, and "what this sitting is to decide"
+            would imply there is a sitting. The rest of the file stays readable - it is
+            still the Council's record, and the register still lists it by its number. */}
+        {cancelledAt ? (
+          <View style={styles.cancelBand}>
+            <Text style={styles.cancelTitle}>Cancelled — opened in error</Text>
+            <Text style={styles.cancelText}>
+              The office cancelled this case on {shortDate(cancelledAt)}. It is not before
+              the committee. It keeps its number, marked cancelled in the register.
             </Text>
+            {file.deletion_reason ? (
+              <Text style={styles.cancelReason}>Reason: {file.deletion_reason}</Text>
+            ) : null}
           </View>
-        ) : null}
+        ) : (
+          <>
+            {/* 1. On hold, above everything. A listed case that is on hold changes what
+                the sitting can do at all. */}
+            {file.on_hold ? (
+              <View style={styles.holdBand}>
+                <Text style={styles.holdText}>
+                  On hold{file.held_since ? ` since ${shortDate(file.held_since)}` : ''}
+                  {file.hold_reason ? ` — ${file.hold_reason}` : ''}
+                </Text>
+              </View>
+            ) : null}
 
-        {/* 2. THE QUESTION. There is no field for it yet, and the design is explicit that
-            the app must NOT guess one from the case state - a templated sentence at the
-            head of a quasi-judicial file frames the case before the member reads a word. */}
-        <View style={styles.askBlock}>
-          <Text style={styles.askMissing}>
-            The office has not recorded what this sitting is to decide.
-          </Text>
-        </View>
+            {/* 2. THE QUESTION. There is no field for it yet, and the design is explicit
+                that the app must NOT guess one from the case state - a templated sentence
+                at the head of a quasi-judicial file frames the case before the member
+                reads a word. */}
+            <View style={styles.askBlock}>
+              <Text style={styles.askMissing}>
+                The office has not recorded what this sitting is to decide.
+              </Text>
+            </View>
+          </>
+        )}
 
         {/* 3. What it is about - the officer's own words, never truncated. */}
         <Text style={styles.label}>WHAT IT IS ABOUT</Text>
@@ -129,6 +154,7 @@ export default function CaseScreen() {
         <Text style={styles.caseNumber}>
           {file.case_number}
           {file.is_backfilled ? '  ·  entered from the paper register' : ''}
+          {cancelledAt ? '  ·  cancelled' : ''}
         </Text>
 
         {/* 4. Who. */}
@@ -176,7 +202,11 @@ export default function CaseScreen() {
         {/* 6-8. The papers. An absence here is itself a finding and must not be blank. */}
         <View style={styles.papersHead}>
           <Text style={[styles.label, { marginTop: 28 }]}>THE PAPERS</Text>
-          {isOfficer ? (
+          {/* Not on a cancelled case: the register refuses a document filed onto one, and a
+              button whose only outcome is a refusal - after the officer has photographed
+              and titled the paper - is worse than no button. Restoring the case is done on
+              the web, not the phone; once restored, this comes back on the next load. */}
+          {isOfficer && !cancelledAt ? (
             <Pressable onPress={() => router.push(`/case/${id}/add`)} hitSlop={10}>
               <Text style={styles.add}>+ Add</Text>
             </Pressable>
@@ -244,6 +274,19 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   holdText: { color: ink.seal, fontSize: 14, fontWeight: '600', lineHeight: 20 },
+
+  // The same system-status colour as on hold: it is the register's state, not a view of
+  // the case's content, which is the one thing colour is allowed to mean here (theme.ts).
+  cancelBand: {
+    backgroundColor: ink.sealSoft,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    gap: 6,
+  },
+  cancelTitle: { color: ink.seal, fontSize: 15, fontWeight: '600', lineHeight: 21 },
+  cancelText: { color: ink.seal, fontSize: 14, lineHeight: 20 },
+  cancelReason: { color: ink.seal, fontSize: 14, lineHeight: 20, fontStyle: 'italic' },
 
   askBlock: {
     borderLeftWidth: 3,
