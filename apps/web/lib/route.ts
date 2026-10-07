@@ -100,6 +100,50 @@ export function withAuth<P = Record<string, string>>(
   return Object.assign(wrapped, { [GUARDED]: 'auth' as const });
 }
 
+/** What a handler outside a transaction is given: the caller and council, but no `tx`. */
+export interface UnscopedRouteContext<P = Record<string, string>> {
+  req: NextRequest;
+  params: P;
+  ctx: EngineContext;
+  identity: RequestIdentity;
+  services: Services;
+}
+
+/**
+ * An authenticated endpoint that waits on something slow OUTSIDE the database.
+ *
+ * withAuth() holds one transaction open for the whole handler, which is right for nearly
+ * everything and wrong for exactly one shape of request: one that spends most of its time
+ * waiting on another service. Asking the mail assistant again is a model call of many
+ * seconds, and inside withAuth it would pin a pooled connection idle-in-transaction for
+ * all of them - with a pool of ten, a handful of impatient clicks would starve every
+ * other request in the app.
+ *
+ * So this authenticates exactly as withAuth() does - the same identity, the same
+ * membership check, the same council configuration, in a scope that closes BEFORE the
+ * handler runs - and then hands over the context with no transaction. Whatever the
+ * handler does to the database it must do in scopes of its own (withCouncil), and short
+ * ones. Use withAuth() unless that is the whole point.
+ */
+export function withAuthNoTransaction<P = Record<string, string>>(
+  handler: (c: UnscopedRouteContext<P>) => Promise<Returned>,
+): GuardedHandler<P> {
+  const wrapped = async (req: NextRequest, segment: { params: Promise<P> }) => {
+    try {
+      const services = await getServices();
+      const identity = await identityFromRequest(req, services);
+      const params = (await segment?.params) ?? ({} as P);
+
+      // Membership checked and configuration loaded, then the scope is closed.
+      const ctx = await inCouncilScope(identity, requestId(req), async (_tx, ctx) => ctx);
+      return respond(await handler({ req, params, ctx, identity, services }));
+    } catch (err) {
+      return fail(err);
+    }
+  };
+  return Object.assign(wrapped, { [GUARDED]: 'auth' as const });
+}
+
 /**
  * An endpoint that is reachable without a session.
  *

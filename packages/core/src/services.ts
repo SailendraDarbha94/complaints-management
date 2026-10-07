@@ -14,6 +14,7 @@ import { SchedulerService } from './modules/jobs/scheduler.service.js';
 import { RegisterService } from './modules/register/register.service.js';
 import { RtiService } from './modules/rti/rti.service.js';
 import { MailIntakeService } from './modules/mail/mail-intake.service.js';
+import { AssistantService } from './modules/assistant/assistant.service.js';
 import { ConsoleMailer, MailerPort, SmtpMailer } from './modules/notifications/mailer.js';
 import { GcsStorage, LocalStorage, StoragePort } from './modules/documents/storage.js';
 import { SupabaseStorage } from './modules/documents/supabase-storage.js';
@@ -49,6 +50,8 @@ export interface Services {
   register: RegisterService;
   rti: RtiService;
   mail: MailIntakeService;
+  /** Off unless MAIL_ASSISTANT=on and a key is set. Cheap to construct either way. */
+  assistant: AssistantService;
   mailer: MailerPort;
   storage: StoragePort;
 }
@@ -112,6 +115,28 @@ export async function getServices(): Promise<Services> {
   const intake = new CaseIntakeService(followups);
   const correspondenceService = new CorrespondenceService(lifecycle, followups);
   const documentsService = new DocumentsService(storage);
+  const respondents = new RespondentService();
+
+  // The mail service and the assistant need each other: an accepted suggestion is carried
+  // out by the mail service's own openCase / fileOnCase / dismiss, and the mail service
+  // tells the assistant when the officer used those buttons directly. So the mail service
+  // is handed a hook that reaches the assistant through a variable assigned just below -
+  // by the time any request or sweep calls the hook, both exist.
+  let assistant: AssistantService | null = null;
+  const mail = new MailIntakeService(
+    storage,
+    intake,
+    correspondenceService,
+    documentsService,
+    followups,
+    {
+      officerActed: (tx, ctx, mailMessageId, act) =>
+        assistant ? assistant.officerActed(tx, ctx, mailMessageId, act) : Promise.resolve(),
+      suggestAfterSweep: (ctx, ids) =>
+        assistant ? assistant.suggestAfterSweep(ctx, ids) : Promise.resolve(),
+    },
+  );
+  assistant = new AssistantService(mail, respondents);
 
   const services: Services = {
     tokens,
@@ -122,19 +147,14 @@ export async function getServices(): Promise<Services> {
     digest,
     scheduler: new SchedulerService(followups, digest),
     intake,
-    respondents: new RespondentService(),
+    respondents,
     lifecycle,
     correspondence: correspondenceService,
     documents: documentsService,
     register: new RegisterService(),
     rti: new RtiService(),
-    mail: new MailIntakeService(
-      storage,
-      intake,
-      correspondenceService,
-      documentsService,
-      followups,
-    ),
+    mail,
+    assistant,
     mailer,
     storage,
   };

@@ -3,7 +3,9 @@ import { redirect } from 'next/navigation';
 import { fetchCases, fetchTray, isUnauthorized, type CaseListRow, type TrayCard } from '@/lib/api';
 import { FORWARD_KIND_LABEL, label } from '@/lib/labels';
 import { PendingLink } from '@/app/components/pending-link';
+import { CardScope } from './card-scope';
 import { TrayActions } from './tray-actions';
+import { TraySuggestion } from './tray-suggestion';
 import { SyncButton } from './sync-button';
 
 export const dynamic = 'force-dynamic';
@@ -55,7 +57,14 @@ export default async function TrayPage({
             itself onto that case.
           </p>
         </div>
-        <SyncButton />
+        <div className="intake-head-actions">
+          <SyncButton />
+          {/* Shown whether or not the assistant is on: when it is off, the report page is
+              where the officer learns how to switch it on, and there is no other way in. */}
+          <PendingLink href="/intake/assistant" className="link-like">
+            The mail assistant
+          </PendingLink>
+        </div>
       </header>
 
       <nav className="crumbs">
@@ -107,45 +116,60 @@ function Card({
   // message page and "Open a case" can never disagree about who it is.
   const who = message.complainant?.name ?? `complainant not known \u00b7 via ${message.envelope_from}`;
   const what = message.original_subject ?? message.subject;
+  // Only a suggestion still waiting on the officer, or one that failed, belongs on the card.
+  // Once it is accepted, rejected or overtaken by the ordinary buttons, the card is back to
+  // what it was: the record of what became of it lives on the message page and the report.
+  // `?.` and not `.`: a card from a route that does not send suggestions yet shows none.
+  const suggestion =
+    message.status === 'unfiled' &&
+    (message.suggestion?.status === 'pending' || message.suggestion?.status === 'failed')
+      ? message.suggestion
+      : null;
 
   return (
-    <div className="row">
-      <div className="t">
-        <PendingLink className="case-link" href={`/intake/${message.id}` as Route}>
-          {what}
-        </PendingLink>
-        {message.attachment_count > 0 && (
-          <span className="chip chip-verbatim">
-            {message.attachment_count} file{message.attachment_count === 1 ? '' : 's'}
+    // The scope gives the suggestion's buttons and the ordinary ones a single "busy", so
+    // one card can never send two decisions at once. It renders no element of its own.
+    <CardScope>
+      <div className="row">
+        <div className="t">
+          <PendingLink className="case-link" href={`/intake/${message.id}` as Route}>
+            {what}
+          </PendingLink>
+          {message.attachment_count > 0 && (
+            <span className="chip chip-verbatim">
+              {message.attachment_count} file{message.attachment_count === 1 ? '' : 's'}
+            </span>
+          )}
+          {message.skipped_count > 0 && (
+            <span className="chip chip-draft">{message.skipped_count} not stored</span>
+          )}
+
+          {/* Prose, so not `.meta` — inside a .row that renders monospace. */}
+          <p className="action-why">{message.snippet}</p>
+
+          {suggestion && <TraySuggestion messageId={message.id} suggestion={suggestion} />}
+
+          <span className="meta">
+            {who}
+            {' · '}
+            {label(FORWARD_KIND_LABEL, message.forward_kind)}
+            {' · arrived '}
+            {formatWhen(message.ingested_at)}
+            {message.original_date_text && ` · sent ${message.original_date_text}`}
           </span>
-        )}
-        {message.skipped_count > 0 && (
-          <span className="chip chip-draft">{message.skipped_count} not stored</span>
-        )}
 
-        {/* Prose, so not `.meta` — inside a .row that renders monospace. */}
-        <p className="action-why">{message.snippet}</p>
+          {message.suggestion_note && <p className="action-why">{message.suggestion_note}</p>}
+        </div>
 
-        <span className="meta">
-          {who}
-          {' · '}
-          {label(FORWARD_KIND_LABEL, message.forward_kind)}
-          {' · arrived '}
-          {formatWhen(message.ingested_at)}
-          {message.original_date_text && ` · sent ${message.original_date_text}`}
-        </span>
-
-        {message.suggestion_note && <p className="action-why">{message.suggestion_note}</p>}
+        <TrayActions
+          messageId={message.id}
+          cases={cases}
+          suggestedCaseFileId={message.suggested_case_file_id}
+          status={message.status}
+          complainant={message.complainant}
+        />
       </div>
-
-      <TrayActions
-        messageId={message.id}
-        cases={cases}
-        suggestedCaseFileId={message.suggested_case_file_id}
-        status={message.status}
-        complainant={message.complainant}
-      />
-    </div>
+    </CardScope>
   );
 }
 

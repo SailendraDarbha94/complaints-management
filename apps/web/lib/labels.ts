@@ -1,3 +1,9 @@
+import type {
+  MailSuggestionConfidence,
+  MailSuggestionDecision,
+  MailSuggestionStatus,
+} from '@ksdc/contracts';
+
 /**
  * How the register talks to the officer.
  *
@@ -273,3 +279,86 @@ export const MATCH_RUNG_LABEL: Record<string, string> = {
   sender: 'filed on the sender',
   officer: 'filed by the officer',
 };
+
+// ─── The mail assistant ──────────────────────────────────────────────────────
+
+/*
+ * Keyed by the contract's own enum types rather than by string, so that a decision or a
+ * status added in @ksdc/contracts fails the typecheck here instead of reaching the officer
+ * as a raw key. A type-only import: nothing from contracts is bundled by these lines.
+ *
+ * The words are the ordinary buttons' words. The assistant suggests the same three things
+ * the officer can already do, and calling them something else on the suggestion would make
+ * "accept the suggestion" and "press the button" look like different acts. They are not:
+ * both go through the same service.
+ */
+
+/** What it suggested, as a heading - the same words as the three ordinary buttons. */
+export const SUGGESTION_DECISION_LABEL: Record<MailSuggestionDecision, string> = {
+  new_complaint: 'Open a case',
+  follow_up: 'Add to a case',
+  not_a_complaint: 'Not a complaint',
+  unsure: 'Not sure',
+};
+
+/**
+ * How sure it was. In words a person would use, not 'high/medium/low': the chip is read
+ * at a glance on a card, and "fairly sure" is read correctly at a glance where "medium"
+ * has to be interpreted.
+ */
+export const SUGGESTION_CONFIDENCE_LABEL: Record<MailSuggestionConfidence, string> = {
+  high: 'Sure',
+  medium: 'Fairly sure',
+  low: 'Not very sure',
+};
+
+/** Where a suggestion stands. 'handled' is the officer deciding with the ordinary buttons. */
+export const SUGGESTION_STATUS_LABEL: Record<MailSuggestionStatus, string> = {
+  pending: 'Waiting for you',
+  accepted: 'Accepted as it was',
+  edited: 'Accepted with changes',
+  rejected: 'Turned down',
+  handled: 'Decided with the usual buttons',
+  superseded: 'Replaced by a fresh reading',
+  failed: 'Could not be read',
+};
+
+/** What finally happened to the message, as the end of "you ...". */
+export const SUGGESTION_OUTCOME_LABEL: Record<string, string> = {
+  opened_case: 'opened a case',
+  filed_on_case: 'added it to a case',
+  set_aside: 'set it aside',
+  rejected: 'turned the suggestion down',
+};
+
+/**
+ * Rupees to the US dollar, for an APPROXIMATE figure beside what the assistant cost.
+ *
+ * Anthropic bills in dollars; the officer budgets in rupees. A fixed, labelled rate is
+ * deliberate: a live rate would make last month's figure change every time the page is
+ * opened, and this is a feel for the spend, never an invoice. Every screen that converts
+ * says "about" and names this rate. Revisit it if the rupee moves a long way.
+ */
+export const RUPEES_PER_DOLLAR = 88;
+
+/** "$4.20". Sub-cent amounts say so rather than rounding to a misleading "$0.00". */
+export function formatUsd(usd: number): string {
+  if (usd > 0 && usd < 0.01) return 'under $0.01';
+  return `$${usd.toFixed(2)}`;
+}
+
+/**
+ * "₹370", at RUPEES_PER_DOLLAR, grouped the Indian way (₹1,23,456). Bare, for a place whose
+ * own label already says the figure is rough; everywhere else, formatRupeesFromUsd.
+ */
+export function rupeesFromUsd(usd: number): string {
+  const rupees = usd * RUPEES_PER_DOLLAR;
+  if (rupees > 0 && rupees < 1) return 'under ₹1';
+  return `₹${Math.round(rupees).toLocaleString('en-IN')}`;
+}
+
+/** "about ₹370" - never a bare converted figure that could be read as the bill. */
+export function formatRupeesFromUsd(usd: number): string {
+  const rupees = rupeesFromUsd(usd);
+  return rupees.startsWith('under') ? rupees : `about ${rupees}`;
+}

@@ -447,3 +447,46 @@ export const MAIL_FORWARD_KINDS = tuple([
 ] as const);
 export const mailForwardKindSchema = z.enum(MAIL_FORWARD_KINDS);
 export type MailForwardKind = z.infer<typeof mailForwardKindSchema>;
+
+// ─── The mail assistant (stage 1: it suggests, the officer decides) ──────────
+
+/**
+ * What the assistant can suggest for a message in the tray. `unsure` is a real answer,
+ * not a failure: a suggestion it cannot stand behind is worse than none.
+ */
+export const MAIL_SUGGESTION_DECISIONS = tuple([
+  'new_complaint',
+  'follow_up',
+  'not_a_complaint',
+  'unsure',
+] as const);
+export const mailSuggestionDecisionSchema = z.enum(MAIL_SUGGESTION_DECISIONS);
+export type MailSuggestionDecision = z.infer<typeof mailSuggestionDecisionSchema>;
+
+export const MAIL_SUGGESTION_CONFIDENCES = tuple(['high', 'medium', 'low'] as const);
+export const mailSuggestionConfidenceSchema = z.enum(MAIL_SUGGESTION_CONFIDENCES);
+export type MailSuggestionConfidence = z.infer<typeof mailSuggestionConfidenceSchema>;
+
+/**
+ * Where a suggestion stands.
+ *
+ *   pending     shown on the card, nobody has acted
+ *   accepted    the officer accepted it as it was
+ *   edited      the officer accepted it after changing something
+ *   rejected    the officer said no, explicitly
+ *   handled     the officer acted through the ordinary buttons instead; the outcome
+ *               records whether that agreed with the suggestion
+ *   superseded  a newer suggestion for the same message replaced it
+ *   failed      the assistant could not produce one (the error says why)
+ */
+export const MAIL_SUGGESTION_STATUSES = tuple([
+  'pending',
+  'accepted',
+  'edited',
+  'rejected',
+  'handled',
+  'superseded',
+  'failed',
+] as const);
+export const mailSuggestionStatusSchema = z.enum(MAIL_SUGGESTION_STATUSES);
+export type MailSuggestionStatus = z.infer<typeof mailSuggestionStatusSchema>;

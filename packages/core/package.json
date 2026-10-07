@@ -23,9 +23,11 @@
     "demo": "pnpm build && node --env-file-if-exists=../../.env.dev dist/scripts/demo.js",
     "keys": "pnpm build && node dist/scripts/keys.js",
     "daily": "pnpm build && node --env-file-if-exists=../../.env.dev dist/scripts/daily.js",
-    "mail": "pnpm build && node --env-file-if-exists=../../.env.dev --env-file-if-exists=../../apps/web/.env.local dist/scripts/mail.js"
+    "mail": "pnpm build && node --env-file-if-exists=../../.env.dev --env-file-if-exists=../../apps/web/.env.local dist/scripts/mail.js",
+    "assistant:eval": "pnpm build && node --env-file-if-exists=../../.env.dev --env-file-if-exists=../../apps/web/.env.local dist/scripts/assistant-eval.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "@google-cloud/storage": "^8.1.0",
     "@ksdc/config": "workspace:*",
     "@ksdc/contracts": "workspace:*",

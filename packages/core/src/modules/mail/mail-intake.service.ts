@@ -185,6 +185,42 @@ export type MailAttachmentRow = {
   skipped_reason: string | null;
 };
 
+/** What the officer did with a message through the ordinary buttons. */
+export type OfficerMailAction =
+  | { action: 'opened_case'; caseFileId: string }
+  | { action: 'filed_on_case'; caseFileId: string }
+  | { action: 'set_aside'; reason: string };
+
+/**
+ * What the tray tells the mail assistant, and when.
+ *
+ * A hook handed in by services.ts rather than an import, because the assistant is built
+ * ON this service (an accepted suggestion is carried out by openCase / fileOnCase /
+ * dismiss) and an import back the other way would be a cycle.
+ *
+ * `officerActed` is what keeps the assistant's agreement figure honest. Without it only
+ * the suggestions the officer ACCEPTED would have an outcome, and a model that is right
+ * whenever it is accepted is right 100 per cent of the time by construction. So when the
+ * officer ignores a suggestion and uses the ordinary buttons, the assistant is told what
+ * they did and records whether it matched.
+ */
+export interface MailAssistantHook {
+  /** Inside the officer's transaction, after the action succeeded. Never throws onward. */
+  officerActed(
+    tx: Tx,
+    ctx: EngineContext,
+    mailMessageId: string,
+    act: OfficerMailAction,
+  ): Promise<void>;
+  /**
+   * After a sweep, for the messages it put in the tray. Outside any transaction: this
+   * waits on the model, and opens its own short scopes. The sweep does not wait for it -
+   * the reader's next fetch must never queue behind a model (see sweep.ts) - but the
+   * promise settles when these messages have been read, for a caller that does want to.
+   */
+  suggestAfterSweep(ctx: EngineContext, mailMessageIds: string[]): Promise<void>;
+}
+
 export class MailIntakeService {
   private readonly log = new Logger('mail');
 
@@ -194,7 +230,40 @@ export class MailIntakeService {
     private readonly correspondence: CorrespondenceService,
     private readonly documents: DocumentsService,
     private readonly followups: FollowupService,
+    /** Optional: the tests that do not involve the assistant construct this without it. */
+    private readonly assistant: MailAssistantHook | null = null,
   ) {}
+
+  /** For the sweep, which is a function rather than a method and reaches it through here. */
+  get assistantHook(): MailAssistantHook | null {
+    return this.assistant;
+  }
+
+  /**
+   * Tell the assistant what the officer did, without ever letting that fail the action.
+   *
+   * In a savepoint because a failed statement aborts the whole transaction, and catching
+   * the error would not un-abort it - the officer's case would then fail to open over a
+   * bookkeeping row about a suggestion. The action is what matters; the record of how it
+   * compared with a suggestion is worth a warning in the log, not the officer's work.
+   */
+  private async tellAssistant(
+    tx: Tx,
+    ctx: EngineContext,
+    mailMessageId: string,
+    act: OfficerMailAction,
+  ): Promise<void> {
+    const hook = this.assistant;
+    if (!hook) return;
+    try {
+      await tx.transaction((sp) => hook.officerActed(sp, ctx, mailMessageId, act));
+    } catch (err) {
+      this.log.warn(
+        `the assistant's record for message ${mailMessageId} was not updated: ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
+    }
+  }
 
   // ─── Ingest ────────────────────────────────────────────────────────────────
 
@@ -648,6 +717,7 @@ export class MailIntakeService {
     });
 
     const documentsFiled = await this.fileAttachments(tx, ctx, m.id, created.caseFileId);
+    await this.tellAssistant(tx, ctx, m.id, { action: 'opened_case', caseFileId: created.caseFileId });
     return { ...created, documentsFiled };
   }
 
@@ -677,6 +747,7 @@ export class MailIntakeService {
     });
 
     const documentsFiled = await this.fileAttachments(tx, ctx, m.id, args.caseFileId);
+    await this.tellAssistant(tx, ctx, m.id, { action: 'filed_on_case', caseFileId: args.caseFileId });
     return { documentsFiled };
   }
 
@@ -705,6 +776,7 @@ export class MailIntakeService {
           dismissed_reason = ${args.reason.trim()}, dismissed_by = ${ctx.userId ?? null}
       WHERE council_id = ${ctx.councilId}::uuid AND id = ${m.id}::uuid
     `);
+    await this.tellAssistant(tx, ctx, m.id, { action: 'set_aside', reason: args.reason.trim() });
   }
 
   /** Put a dismissed message back in the tray. */

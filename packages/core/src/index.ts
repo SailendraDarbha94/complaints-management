@@ -126,7 +126,42 @@ export {
   mailboxOrThrow,
   councilForMailbox,
   type SweepResult,
+  type SweepOptions,
 } from './modules/mail/sweep.js';
+export type { MailAssistantHook, OfficerMailAction } from './modules/mail/mail-intake.service.js';
+
+// The mail assistant, stage 1: it suggests, the officer decides. See modules/assistant.
+export {
+  AssistantService,
+  MAX_BODY_CHARS,
+  SET_ASIDE_PREFIX,
+  type AcceptResult,
+} from './modules/assistant/assistant.service.js';
+export {
+  assistantConfigFromEnv,
+  playbookVersionOf,
+  ASSISTANT_DEFAULTS,
+  ASSISTANT_EFFORTS,
+  type AssistantConfig,
+} from './modules/assistant/config.js';
+export { registerTools, CASE_SEARCH_LIMIT } from './modules/assistant/register-tools.js';
+export type {
+  TriageEmail,
+  TriageTools,
+  CaseSearchHit,
+  CaseDetail,
+  DentistHit,
+  SuggestedRespondent,
+  TriageProposal,
+  TriageUsage,
+  TriageResult,
+  TriageOptions,
+  AssistantEffort,
+  RunTriage,
+  MailSuggestionView,
+  SuggestionOverrides,
+  AssistantReport,
+} from './modules/assistant/types.js';
 export {
   Mailbox,
   mailboxConfigFromEnv,

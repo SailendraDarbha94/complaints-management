@@ -26,6 +26,22 @@ export interface SweepResult {
   failed: number;
   /** Failed this time and will be tried again; the sweep stopped at it. */
   deferred: number;
+  /**
+   * The messages this sweep put in the tray - new, and neither filed by a case number nor
+   * set aside as an account notice. What the mail assistant is asked about.
+   */
+  newInTray: string[];
+}
+
+export interface SweepOptions {
+  /**
+   * Hand the new messages to the mail assistant (the default, and what the background
+   * reader does). It is NOT waited for: the sweep returns as soon as the mail is in the
+   * tray, and the assistant reads in its own time (AssistantService.suggestAfterSweep). The
+   * "check now" button passes false and asks after its response has gone, through Next's
+   * after(), which a hosting platform can be told to wait for.
+   */
+  suggest?: boolean;
 }
 
 export function mailboxOrThrow() {
@@ -87,7 +103,10 @@ export async function councilForMailbox(
   );
 }
 
-export async function sweepMailbox(mail: MailIntakeService): Promise<SweepResult> {
+export async function sweepMailbox(
+  mail: MailIntakeService,
+  opts: SweepOptions = {},
+): Promise<SweepResult> {
   const config = mailboxOrThrow();
   const council = await councilForMailbox(process.env.MAIL_COUNCIL_CODE ?? 'KSDC');
   const councilId = council.id;
@@ -119,6 +138,7 @@ export async function sweepMailbox(mail: MailIntakeService): Promise<SweepResult
   let filed = 0;
   let failed = 0;
   let deferred = 0;
+  const newInTray: string[] = [];
 
   for (const message of messages) {
     const meta = {
@@ -161,6 +181,10 @@ export async function sweepMailbox(mail: MailIntakeService): Promise<SweepResult
       if (result.duplicate) continue;
       ingested++;
       if (result.autoFiledTo) filed++;
+      // Only what is waiting for the officer. A reply that filed itself by its case number
+      // and an account notice set aside automatically are already decided; asking a model
+      // about them would spend money on a question nobody has.
+      if (result.status === 'unfiled') newInTray.push(result.mailMessageId);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       const seen = failures.get(key) ?? { count: 0, since: Date.now() };
@@ -190,7 +214,28 @@ export async function sweepMailbox(mail: MailIntakeService): Promise<SweepResult
         (deferred ? ', 1 to try again' : ''),
     );
   }
-  return { fetched: messages.length, ingested, filed, failed, deferred };
+
+  // The mail assistant, LAST, and NOT AWAITED. After every message of this sweep is safely
+  // in the tray - and then without waiting for it, so nothing it does can delay the next
+  // ingest: a model reading five emails takes minutes on a slow day, and in those minutes
+  // the reader must go on fetching mail, replies that file themselves by case number above
+  // all. The assistant queues what it is given and reads one at a time (see
+  // AssistantService.suggestAfterSweep); it is off unless configured, and decides for
+  // itself how many to read. Its failures are logged and swallowed: a sweep that reported
+  // failure over a suggestion would make the reader retry mail it has already read
+  // perfectly well. Nothing from the email is logged here.
+  const assistant = mail.assistantHook;
+  if (opts.suggest !== false && assistant && newInTray.length > 0) {
+    void Promise.resolve()
+      .then(() => assistant.suggestAfterSweep(ctx, newInTray))
+      .catch((err: unknown) =>
+        log.error(
+          `mail assistant: no suggestions this sweep (${err instanceof Error ? err.name : 'error'})`,
+        ),
+      );
+  }
+
+  return { fetched: messages.length, ingested, filed, failed, deferred, newInTray };
 }
 
 /**

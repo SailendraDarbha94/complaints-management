@@ -5,7 +5,7 @@ import type { Route } from 'next';
 import { PUBLIC_API_URL } from '@/lib/public-api';
 import { BusyButton } from '@/app/components/busy-button';
 import { PendingLink } from '@/app/components/pending-link';
-import { useAction } from '@/app/components/use-action';
+import { useCardAction } from './card-scope';
 
 /**
  * The three things you can do with a message in the tray.
@@ -15,10 +15,11 @@ import { useAction } from '@/app/components/use-action';
  * Setting one aside demands a reason, because the tray is the record of what the Council
  * received and a message that could vanish from it silently would make the tray evidence
  * of nothing.
+ *
+ * Busy state and the open confirm step belong to the card (card-scope.tsx), not to this
+ * component, because a card with an assistant's suggestion has a second set of buttons that
+ * must wait for these and that these must wait for.
  */
-
-type Pending = 'open' | 'file' | 'dismiss' | null;
-
 export function TrayActions({
   messageId,
   cases,
@@ -32,14 +33,17 @@ export function TrayActions({
   status: string;
   complainant: { name: string; email: string } | null;
 }) {
-  const [pending, setPending] = useState<Pending>(null);
+  // `step`, not `pending`: which confirm step is open. `busy` is ANY request in flight on
+  // this card, which shuts these buttons; `mine` is one of these buttons', which spins them.
+  const { busy, busyFor, step, setStep, send, errorFor } = useCardAction();
+  const mine = busyFor('tray');
   const [caseFileId, setCaseFileId] = useState(suggestedCaseFileId ?? cases[0]?.id ?? '');
   const [reason, setReason] = useState('');
-  // `busy`, not `pending`: that name already means which confirm step is open.
-  const { pending: busy, error, run } = useAction();
+  const error = errorFor('tray');
 
   function post(path: string, body?: unknown) {
-    run(
+    send(
+      'tray',
       async () => {
         const res = await fetch(`${PUBLIC_API_URL}/v1/intake/${messageId}${path}`, {
           method: 'POST',
@@ -55,7 +59,7 @@ export function TrayActions({
       // The confirm step closes as the refreshed tray arrives, not a beat before it with
       // the message still sitting there looking unhandled.
       (_result, router) => {
-        setPending(null);
+        setStep(null);
         router.refresh();
       },
     );
@@ -68,7 +72,8 @@ export function TrayActions({
           <BusyButton
             type="button"
             className="link-button"
-            busy={busy}
+            busy={mine}
+            disabled={busy}
             busyLabel="Putting back…"
             onClick={() => post('/restore')}
           >
@@ -87,7 +92,7 @@ export function TrayActions({
   }
   if (status === 'filed') return <div className="row-actions" />;
 
-  if (pending === 'open' && !complainant) {
+  if (step === 'open' && !complainant) {
     // The server would refuse anyway; saying so here, with the way forward, is kinder
     // than a button that fails.
     return (
@@ -98,7 +103,7 @@ export function TrayActions({
           to enter who complained.
         </span>
         <div className="action-buttons">
-          <button type="button" className="link-button" onClick={() => setPending(null)}>
+          <button type="button" className="link-button" onClick={() => setStep(null)}>
             Cancel
           </button>
         </div>
@@ -106,7 +111,7 @@ export function TrayActions({
     );
   }
 
-  if (pending === 'open' && complainant) {
+  if (step === 'open' && complainant) {
     return (
       <form
         className="row-form"
@@ -122,10 +127,10 @@ export function TrayActions({
         </span>
         {error && <span className="rti-error">{error}</span>}
         <div className="action-buttons">
-          <BusyButton type="submit" busy={busy} busyLabel="Opening…">
+          <BusyButton type="submit" busy={mine} disabled={busy} busyLabel="Opening…">
             Open the case
           </BusyButton>
-          <button type="button" className="link-button" disabled={busy} onClick={() => setPending(null)}>
+          <button type="button" className="link-button" disabled={busy} onClick={() => setStep(null)}>
             Cancel
           </button>
         </div>
@@ -133,7 +138,7 @@ export function TrayActions({
     );
   }
 
-  if (pending === 'file') {
+  if (step === 'file') {
     return (
       <form
         className="row-form"
@@ -159,10 +164,10 @@ export function TrayActions({
         </datalist>
         {error && <span className="rti-error">{error}</span>}
         <div className="action-buttons">
-          <BusyButton type="submit" busy={busy} busyLabel="Filing…" disabled={!caseFileId}>
+          <BusyButton type="submit" busy={mine} busyLabel="Filing…" disabled={busy || !caseFileId}>
             File it
           </BusyButton>
-          <button type="button" className="link-button" disabled={busy} onClick={() => setPending(null)}>
+          <button type="button" className="link-button" disabled={busy} onClick={() => setStep(null)}>
             Cancel
           </button>
         </div>
@@ -170,7 +175,7 @@ export function TrayActions({
     );
   }
 
-  if (pending === 'dismiss') {
+  if (step === 'dismiss') {
     return (
       <form
         className="row-form"
@@ -187,10 +192,15 @@ export function TrayActions({
         />
         {error && <span className="rti-error">{error}</span>}
         <div className="action-buttons">
-          <BusyButton type="submit" busy={busy} busyLabel="Setting aside…" disabled={reason.trim().length < 3}>
+          <BusyButton
+            type="submit"
+            busy={mine}
+            busyLabel="Setting aside…"
+            disabled={busy || reason.trim().length < 3}
+          >
             Set aside
           </BusyButton>
-          <button type="button" className="link-button" disabled={busy} onClick={() => setPending(null)}>
+          <button type="button" className="link-button" disabled={busy} onClick={() => setStep(null)}>
             Cancel
           </button>
         </div>
@@ -198,17 +208,20 @@ export function TrayActions({
     );
   }
 
+  // Also the resting state while the suggestion's own confirm step is open under the
+  // snippet. Shut while anything on the card is in flight - including an Accept, which has
+  // no confirm step of its own to hold the card still.
   return (
     <div className="row-actions">
-      <button type="button" className="link-button" onClick={() => setPending('open')}>
+      <button type="button" className="link-button" disabled={busy} onClick={() => setStep('open')}>
         Open a case
       </button>
       {cases.length > 0 && (
-        <button type="button" className="link-button" onClick={() => setPending('file')}>
+        <button type="button" className="link-button" disabled={busy} onClick={() => setStep('file')}>
           Add to a case
         </button>
       )}
-      <button type="button" className="link-button" onClick={() => setPending('dismiss')}>
+      <button type="button" className="link-button" disabled={busy} onClick={() => setStep('dismiss')}>
         Not a complaint
       </button>
     </div>

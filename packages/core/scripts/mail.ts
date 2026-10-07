@@ -43,6 +43,10 @@ async function once(): Promise<void> {
   const services = await getServices();
   const r = await sweepMailbox(services.mail);
   log.log(`${r.fetched} fetched, ${r.ingested} new, ${r.filed} filed automatically`);
+  // The sweep hands new mail to the assistant without waiting for it (sweep.ts), which is
+  // right for the watcher and wrong here: this command closes the database as soon as it
+  // returns, which would cut a reading off half-way - paid for, and with no suggestion.
+  await services.assistant.whenIdle();
   if (r.failed > 0) throw new Error(`${r.failed} message(s) could not be read - see the tray`);
   if (r.deferred > 0) throw new Error("a message failed to ingest and will be tried again - see the log above");
 }

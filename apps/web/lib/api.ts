@@ -1,4 +1,9 @@
 import { cookies } from 'next/headers';
+import type {
+  MailSuggestionConfidence,
+  MailSuggestionDecision,
+  MailSuggestionStatus,
+} from '@ksdc/contracts';
 
 /**
  * The web app is a thin client over the Nest API (build plan D7/§12). It holds no
@@ -444,10 +449,18 @@ export interface TrayCard {
    * say - never the Council's own address.
    */
   complainant: { name: string; email: string } | null;
+  /**
+   * What the mail assistant suggests for this message, if it has read it. Null when it has
+   * not - switched off, over its daily limit, or the message filed or set itself aside
+   * before it was asked.
+   */
+  suggestion: MailSuggestionView | null;
 }
 
 export interface TrayMessage {
-  message: (TrayCard & {
+  // Without the card's `suggestion`: the message page is given it alongside the message
+  // (below), with the assistant's on/off state, rather than inside it.
+  message: (Omit<TrayCard, 'suggestion'> & {
     body_text: string | null;
     original_body: string | null;
     original_to: string | null;
@@ -483,6 +496,142 @@ export interface TrayMessage {
     onHold: boolean;
     because: string;
   }>;
+  /** The assistant's latest reading of this message; null if it has none. */
+  suggestion: MailSuggestionView | null;
+  /** Whether "Ask the assistant" can be offered, and if not, why not in plain words. */
+  assistant: AssistantState;
+}
+
+// ─── The mail assistant ──────────────────────────────────────────────────────
+
+/**
+ * The assistant's shapes, as the routes send them.
+ *
+ * Written out by hand, as every other shape in this file is, rather than imported from
+ * packages/core/src/modules/assistant/types.ts, which is the contract and wins any
+ * disagreement. Two reasons. @ksdc/core is resolved from its BUILT output, so importing
+ * from it would put a rebuild of core between every change to the contract and a working
+ * typecheck here. And this file describes the wire, not core's internals: what the screens
+ * may rely on is what the route serialises, which is these.
+ *
+ * The enum types come from @ksdc/contracts, which the browser already loads, so a decision
+ * added there is a compile error in labels.ts rather than a raw key on screen.
+ */
+
+export interface SuggestedRespondent {
+  name: string;
+  registrationNo: string | null;
+  clinicName: string | null;
+  /** A clinic or a chain rather than an individual dentist. */
+  isEstablishment: boolean;
+  /** Set when the model matched somebody already named on a case: joins the history up. */
+  partyId: string | null;
+  /** Set when the model matched an entry in the Council's register of dentists. */
+  registeredDentistId: string | null;
+  /**
+   * NOT IN THE CONTRACT YET. How many cases this dentist is already named on, so the
+   * screen can say "known to the register - 3 earlier cases". The contract's lookup knows it
+   * (DentistHit.priorCases) but SuggestedRespondent does not carry it through; until it
+   * does, the screen says "known to the register" without the number. Never sent back.
+   */
+  priorCases?: number | null;
+}
+
+export interface NewComplaintProposal {
+  /** One neutral line, in the register's style. */
+  summary: string;
+  complainantName: string;
+  complainantEmail: string | null;
+  respondents: SuggestedRespondent[];
+}
+
+export type SuggestionOutcomeAction = 'opened_case' | 'filed_on_case' | 'set_aside' | 'rejected';
+
+export interface MailSuggestionView {
+  id: string;
+  mailMessageId: string;
+  createdAt: string;
+  status: MailSuggestionStatus;
+  decision: MailSuggestionDecision | null;
+  confidence: MailSuggestionConfidence | null;
+  /** One to four sentences, for the officer: why this, and what it relied on. */
+  reasoning: string | null;
+  notComplaint: { reason: string } | null;
+  /**
+   * caseFileId is null when that number is not (or no longer) a live case. `closed` is read
+   * live: filing on a closed case is allowed, but only after the officer is told.
+   */
+  followUp: { caseFileId: string | null; caseNumber: string; because: string; closed: boolean } | null;
+  newComplaint: NewComplaintProposal | null;
+  model: string;
+  costUsd: number;
+  /** Set when status is 'failed'. Plain English, and never quotes the email. */
+  error: string | null;
+  outcome: {
+    action: SuggestionOutcomeAction;
+    caseFileId: string | null;
+    caseNumber: string | null;
+    /**
+     * Did what happened match the suggestion? Null for 'unsure' and for rejections - though
+     * the report counts a rejection (of anything but 'unsure') as a disagreement.
+     */
+    agreed: boolean | null;
+    note: string | null;
+    at: string;
+  } | null;
+}
+
+/**
+ * What the officer changed before accepting. Anything left out keeps the suggestion's
+ * value, and any change at all records the outcome as 'edited' - so the screen sends only
+ * what actually differs, or an unchanged "Change and accept" would be counted as a change.
+ */
+export interface SuggestionOverrides {
+  summary?: string;
+  complainantName?: string;
+  complainantEmail?: string | null;
+  respondents?: Array<Omit<SuggestedRespondent, 'priorCases'>>;
+  /** For a follow-up: file it on this case instead. */
+  caseFileId?: string;
+  /** For a non-complaint: the reason recorded when it is set aside. */
+  reason?: string;
+}
+
+/** POST /v1/intake/[id]/suggestion/accept */
+export interface SuggestionAccepted {
+  caseFileId?: string;
+  caseNumber?: string;
+  documentsFiled?: number;
+}
+
+export interface AssistantState {
+  enabled: boolean;
+  /** Why it is off, in plain words; null when it is on. */
+  reason: string | null;
+}
+
+/** GET /v1/assistant/report */
+export interface AssistantReport {
+  enabled: boolean;
+  /** Why it is off - which setting to fix - in plain words; null when it is on. */
+  reason: string | null;
+  model: string;
+  /** YYYY-MM */
+  month: string;
+  totals: Record<MailSuggestionStatus, number>;
+  agreement: {
+    overall: { agreed: number; disagreed: number };
+    byDecision: Record<MailSuggestionDecision, { agreed: number; disagreed: number }>;
+  };
+  costUsd: number;
+  recentDisagreements: Array<{
+    mailMessageId: string;
+    subject: string;
+    decision: MailSuggestionDecision | null;
+    outcomeAction: string | null;
+    note: string | null;
+    at: string;
+  }>;
 }
 
 export interface RespondentCandidate {
@@ -505,6 +654,15 @@ export function fetchTray(status = 'unfiled'): Promise<{ status: string; message
 
 export function fetchTrayMessage(id: string): Promise<TrayMessage> {
   return get<TrayMessage>(`/intake/${id}`);
+}
+
+/**
+ * The assistant's month: what it suggested and how often the officer agreed. With no month,
+ * the route picks the current one, and says which in `month`.
+ */
+export function fetchAssistantReport(month?: string): Promise<AssistantReport> {
+  const q = month ? `?month=${encodeURIComponent(month)}` : '';
+  return get<AssistantReport>(`/assistant/report${q}`);
 }
 
 export function fetchRtiRegister(): Promise<{ requests: Array<RtiRequest & { clock: RtiClock }> }> {

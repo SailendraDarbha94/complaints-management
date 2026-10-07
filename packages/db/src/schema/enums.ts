@@ -20,6 +20,9 @@ import {
   MAIL_FORWARD_KINDS,
   MAIL_MATCH_RUNGS,
   MAIL_STATUSES,
+  MAIL_SUGGESTION_CONFIDENCES,
+  MAIL_SUGGESTION_DECISIONS,
+  MAIL_SUGGESTION_STATUSES,
   ROLES,
   RTI_CHANNELS,
   RTI_DECISIONS,
@@ -70,3 +73,11 @@ export const rtiExemptionSectionEnum = pgEnum('rti_exemption_section', RTI_EXEMP
 export const mailStatusEnum = pgEnum('mail_status', MAIL_STATUSES);
 export const mailMatchRungEnum = pgEnum('mail_match_rung', MAIL_MATCH_RUNGS);
 export const mailForwardKindEnum = pgEnum('mail_forward_kind', MAIL_FORWARD_KINDS);
+
+// The mail assistant (migration 0017). Stage 1 suggests and the officer decides.
+export const mailSuggestionDecisionEnum = pgEnum('mail_suggestion_decision', MAIL_SUGGESTION_DECISIONS);
+export const mailSuggestionConfidenceEnum = pgEnum(
+  'mail_suggestion_confidence',
+  MAIL_SUGGESTION_CONFIDENCES,
+);
+export const mailSuggestionStatusEnum = pgEnum('mail_suggestion_status', MAIL_SUGGESTION_STATUSES);

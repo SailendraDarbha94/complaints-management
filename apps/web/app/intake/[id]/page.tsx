@@ -43,6 +43,34 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
   // "within a few minutes", would both be untrue; this page says what happened instead.
   const voided = Boolean(m.case_file_id && m.case_deleted_at);
 
+  // `??`: a route that does not send these yet means no suggestion and an assistant that is
+  // off - which shows exactly the page there was before the assistant existed.
+  const suggestion = data.suggestion ?? null;
+  const assistant = data.assistant ?? { enabled: false, reason: null };
+
+  // The open-case form starts from the assistant's reading when it has one waiting: its
+  // summary is written in the register's style, and its complainant is read from the letter
+  // itself, which matters most for a forward from the Council's own office where the server
+  // could not name anybody. Name and email go together - the server's address is borrowed
+  // only when the assistant named the same person, so a form can never pair one person's
+  // name with another person's email.
+  // A proposal with no complainant (the server clears one that was the Council's own
+  // address) has nothing to offer the form's name and email; the server's own pair is used,
+  // with the proposal's summary still.
+  const pending = suggestion?.status === 'pending' ? suggestion.newComplaint : null;
+  const proposed = pending?.complainantName.trim() ? pending : null;
+  const defaults = proposed
+    ? {
+        summary: proposed.summary,
+        complainantName: proposed.complainantName,
+        complainantEmail:
+          proposed.complainantEmail ??
+          (who && who.trim().toLowerCase() === proposed.complainantName.trim().toLowerCase()
+            ? (address ?? '')
+            : ''),
+      }
+    : { summary: pending?.summary ?? what, complainantName: who ?? '', complainantEmail: address ?? '' };
+
   return (
     <main className="shell shell-wide">
       <nav className="crumbs">
@@ -213,17 +241,19 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
 
         <div className="case-side">
           <MessageActions
+            // A fresh reading ("Ask the assistant", "Ask again") remounts the forms, so they
+            // take up the new suggestion's summary and complainant instead of keeping the
+            // values they were first given.
+            key={suggestion?.id ?? 'no-suggestion'}
             messageId={m.id}
             status={m.status}
-            defaults={{
-              summary: what,
-              complainantName: who ?? '',
-              complainantEmail: address ?? '',
-            }}
+            defaults={defaults}
             candidates={data.candidates}
             cases={cases.cases
               .filter((c) => c.state !== 'closed')
               .map((c) => ({ id: c.id, caseNumber: c.case_number, summary: c.summary }))}
+            suggestion={suggestion}
+            assistant={assistant}
           />
 
           <section className="panel">

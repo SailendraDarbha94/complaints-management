@@ -1,11 +1,13 @@
 'use client';
 
 import { useState } from 'react';
+import type { AssistantState, MailSuggestionView } from '@/lib/api';
 import { PUBLIC_API_URL } from '@/lib/public-api';
 import { BusyButton } from '@/app/components/busy-button';
 import { useAction } from '@/app/components/use-action';
+import { AssistantPanel, type AssistantPath } from './assistant-panel';
 
-type Doing = '/open-case' | '/file' | '/dismiss' | '/restore';
+type Doing = '/open-case' | '/file' | '/dismiss' | '/restore' | AssistantPath;
 
 /**
  * What to do with this message.
@@ -14,6 +16,10 @@ type Doing = '/open-case' | '/file' | '/dismiss' | '/restore';
  * in the tray it shows the fields first: this is where the officer corrects a name the
  * parser got from a display header, or writes a summary better than the sender's subject
  * line. What goes in here is what the register will carry for the life of the case.
+ *
+ * The assistant's panel sits above the forms and runs through the same `post`: accepting
+ * its suggestion and pressing one of the forms below are two ways of making the same
+ * decision, and only one of them may land.
  */
 export function MessageActions({
   messageId,
@@ -21,6 +27,8 @@ export function MessageActions({
   defaults,
   candidates,
   cases,
+  suggestion,
+  assistant,
 }: {
   messageId: string;
   status: string;
@@ -33,6 +41,8 @@ export function MessageActions({
     because: string;
   }>;
   cases: Array<{ id: string; caseNumber: string; summary: string }>;
+  suggestion: MailSuggestionView | null;
+  assistant: AssistantState;
 }) {
   const [summary, setSummary] = useState(defaults.summary);
   const [name, setName] = useState(defaults.complainantName);
@@ -74,37 +84,60 @@ export function MessageActions({
 
   const failed = (path: Doing) => (error && doing === path ? <p className="rti-error">{error}</p> : null);
 
+  // Keyed on the suggestion's status as well as its id, so that a reject - same suggestion,
+  // new status - comes back to a panel that has closed its form, in the same render as the
+  // refreshed page. (A fresh reading has a new id; page.tsx keys this whole component on
+  // it, so the forms below take up the new suggestion's details too.)
+  const assistantPanel = (
+    <AssistantPanel
+      key={suggestion ? `${suggestion.id}:${suggestion.status}` : 'none'}
+      suggestion={suggestion}
+      assistant={assistant}
+      messageStatus={status}
+      candidates={candidates}
+      cases={cases}
+      busy={busy}
+      busyOn={(path) => busy && doing === path}
+      failed={failed}
+      post={post}
+    />
+  );
+
   if (status !== 'unfiled') {
     return (
-      <section className="panel">
-        <div className="panel-head">
-          <h2>{status === 'filed' ? 'Filed' : 'Set aside'}</h2>
-        </div>
-        <div className="panel-body">
-          {status === 'dismissed' ? (
-            <>
+      <>
+        {assistantPanel}
+        <section className="panel">
+          <div className="panel-head">
+            <h2>{status === 'filed' ? 'Filed' : 'Set aside'}</h2>
+          </div>
+          <div className="panel-body">
+            {status === 'dismissed' ? (
+              <>
+                <p className="rti-hint">
+                  Set aside, not deleted. The message stays on the record either way.
+                </p>
+                <div className="action-row">
+                  <BusyButton type="button" busy={busy} busyLabel="Putting back…" onClick={() => post('/restore')}>
+                    Put it back in the tray
+                  </BusyButton>
+                </div>
+              </>
+            ) : (
               <p className="rti-hint">
-                Set aside, not deleted. The message stays on the record either way.
+                This message is on a case. Its attachments went on with it.
               </p>
-              <div className="action-row">
-                <BusyButton type="button" busy={busy} busyLabel="Putting back…" onClick={() => post('/restore')}>
-                  Put it back in the tray
-                </BusyButton>
-              </div>
-            </>
-          ) : (
-            <p className="rti-hint">
-              This message is on a case. Its attachments went on with it.
-            </p>
-          )}
-          {error && <p className="rti-error">{error}</p>}
-        </div>
-      </section>
+            )}
+            {failed('/restore')}
+          </div>
+        </section>
+      </>
     );
   }
 
   return (
     <>
+      {assistantPanel}
       <section className="panel panel-consequential">
         <div className="panel-head">
           <h2>Open a case</h2>
