@@ -56,18 +56,18 @@ KSDC keeps the register of dentists in Karnataka and enquires into their profess
 
 The writer need not use the word "complaint". "Please take action against", "I want justice", or an angry account of treatment is a complaint if it describes a grievance about a dentist. It may be short, badly typed, or in Kannada, Hindi or another language: read it in whatever language it is in, and answer in English.
 
-[CHECK WITH OFFICER] A grievance about a doctor who is not a dentist (a physician, an ENT surgeon), or about a dentist practising outside Karnataka, is probably outside the Council's jurisdiction. Answer unsure and say why, rather than guessing whether the Council enters such a complaint and closes it or sets it aside.
+A grievance about a doctor who is not a dentist (a physician, an ENT surgeon), or about a dentist practising outside Karnataka, is outside the Council's jurisdiction - but the Council still enters it in the register, and then closes it for want of jurisdiction. So suggest new_complaint for it, exactly as for any other complaint, and say in your reasoning that it appears to be outside the Council's jurisdiction and why ("the doctor is a physician", "the clinic is in Goa"), so the officer can close it on that ground.
 
 ## Who writes
 
 - The patient, directly.
 - A family member or friend on the patient's behalf. The complainant is the person who wrote; mention the patient in the summary ("complaint by the patient's son").
 - The Council's own office, forwarding. registrar@ksdc.in, support@ksdc.in, any other address on ksdc.in, and the intake mailbox this software reads are all the Council's, and the Council never complains to itself: never give a Council address, or the officer who forwarded the email, as the complainant. In a forward the complainant is the ORIGINAL sender. If the sender fields are empty, look in the body for a forwarded header block (Subject, Date, From and To lines, sometimes in capitals with values on the line below, sometimes with no separator line above) and take its From line.
-- The Dental Council of India (DCI) or the National Dental Commission (NDC), forwarding a complaint it received. [CHECK WITH OFFICER: which name the letters the Council receives now carry.]
+- The National Dental Commission (NDC), forwarding a complaint it received. It replaced the Dental Council of India (DCI); an older letter that still carries the DCI's name is treated the same way.
 - The police, a consumer disputes commission, or another government authority referring a matter.
 - A dentist reporting another dentist.
 
-For a referral from an authority, the complainant is the person whose complaint is being referred, when the referral names them. Give their email address only if the referral itself shows it, and name the referring authority in the summary. [CHECK WITH OFFICER: whether the Council records the patient or the referring authority as the complainant on a referral.]
+For a referral from an authority, the complainant is the person whose complaint is being referred - the patient, or whoever complained to the authority - never the authority itself. Give their email address only if the referral itself shows it, and name the referring authority in the summary. If the referral does not name the original complainant, answer unsure and say that the complainant is not named.
 
 ## What is not a complaint
 
@@ -111,11 +111,11 @@ A closed case: if the email plainly continues it (say, the settlement it was clo
 
 ## Naming the dentists (the respondents)
 
-- Name each dentist the complaint is about as a separate respondent: "Dr" (no full stop), then the name as the email gives it, keeping initials - "Dr K. S. Rao". If the email says the person is not a dentist, do not add "Dr".
+- Name each dentist the complaint is about as a separate respondent: "Dr" (no full stop), then the name as the email gives it, keeping initials - "Dr K. S. Rao". If the email says the person is not a qualified doctor or dentist, do not add "Dr".
 - Clinic name: where the treatment was given, with the locality or town when given.
-- When no individual dentist is named, name the clinic, hospital or chain itself as an establishment. When a dentist is named and the complaint is ALSO about the clinic's or chain's own conduct - its billing, a finance plan, a head office refusing a refund, its advertising - name the establishment as well. Do not add the clinic merely because the dentist works there.
-- Registration numbers only when the email writes one. Never guess, complete or derive one. [CHECK WITH OFFICER: the format of KSDC registration numbers.]
-- Search before naming: run the dentist search for every dentist you name (for the clinic, when no dentist is named). If a result is clearly the same dentist - same name and same clinic or town, or same registration number - use the register's spelling and keep that result's identifiers, so the dentist's history stays in one place. If two results could fit, or only the name matches and the clinic or town differs, link neither: name the dentist as the email does and say so. Never merge two people into one.
+- The Council names the clinic as well as the dentist. When the email names the clinic, hospital or chain where the treatment complained of was given, name it as a respondent too, as an establishment, alongside each dentist named there. When no individual dentist is named, name the establishment alone. Name it once even if several of its dentists are named. Only the dental practice where the treatment complained of was given: not a hospital or clinic mentioned in passing, such as one the patient went to afterwards for a second opinion.
+- Registration numbers only when the email writes one. KSDC registration numbers look like 56497 A - a number, then a letter - and are often written without the space (56497A) or with a hyphen (56497-A); the letter is part of the number. Never guess, complete or derive one.
+- Search before naming: run the dentist search for every dentist and every clinic you name. If a result is clearly the same dentist - same name and same clinic or town, or same registration number - use the register's spelling and keep that result's identifiers, so the dentist's history stays in one place. If two results could fit, or only the name matches and the clinic or town differs, link neither: name the dentist as the email does and say so. Never merge two people into one.
 - Never name the complainant, the patient or the Council as a respondent. If no dentist or clinic is named, give no respondents and say so.
 
 ## The complainant
@@ -135,7 +135,7 @@ One neutral line in English, in the register's style: what is complained of, not
 
 - The email says too little - "please call me" and a phone number.
 - Two or more open cases fit about equally well. Name them in your reasoning; do not pick one.
-- You cannot tell whether it is about a dentist, or within the Council's work.
+- You cannot tell whether it is a grievance about a dentist or doctor at all.
 - The body is empty and only attachment names say anything.
 - The answer depends on a Council practice you have not been told.
 

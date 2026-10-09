@@ -17,8 +17,8 @@ import type { MailSuggestionDecision } from '@ksdc/contracts';
  * Two deliberate exceptions, because the rules being tested depend on them: the Council's
  * own addresses (registrar@ksdc.in, support@ksdc.in), which the assistant must learn never
  * to name as a complainant, and the real case-number format (KSDC/COMP/2026-27/0042).
- * Registration numbers are shaped KA-NNNNN only because core's tests use that shape; it is
- * NOT known to be KSDC's real format.
+ * Registration numbers are in KSDC's real format - a number, then a letter, as in 56497 A -
+ * as the officer described it on 9 October 2026. The numbers themselves are invented.
  *
  * HOW `expected` IS MEANT TO BE READ.
  *   decision          always scored.
@@ -157,7 +157,7 @@ export const ASSISTANT_EVAL_SEED: AssistantEvalSeed = {
       respondents: [
         {
           name: 'Dr Anil Shetty',
-          registrationNo: 'KA-10452',
+          registrationNo: '10452 A',
           clinicName: 'Shetty Dental Care, Malleswaram, Bengaluru',
           isEstablishment: false,
         },
@@ -234,7 +234,7 @@ export const ASSISTANT_EVAL_SEED: AssistantEvalSeed = {
       respondents: [
         {
           name: 'Dr Sanjana Pai',
-          registrationNo: 'KA-11872',
+          registrationNo: '11872 A',
           clinicName: 'Pai Dental Clinic, Basavanagudi, Bengaluru',
           isEstablishment: false,
         },
@@ -256,7 +256,7 @@ export const ASSISTANT_EVAL_SEED: AssistantEvalSeed = {
       respondents: [
         {
           name: 'Dr Ravi Naik',
-          registrationNo: 'KA-09311',
+          registrationNo: '9311 A',
           clinicName: 'Naik Dental Hospital, Vidyanagar, Hubballi',
           isEstablishment: false,
         },
@@ -278,7 +278,7 @@ export const ASSISTANT_EVAL_SEED: AssistantEvalSeed = {
       respondents: [
         {
           name: 'Dr Ravi Naik',
-          registrationNo: 'KA-09311',
+          registrationNo: '9311 A',
           clinicName: 'Naik Dental Hospital, Vidyanagar, Hubballi',
           isEstablishment: false,
         },
@@ -323,7 +323,7 @@ export const ASSISTANT_EVAL_SEED: AssistantEvalSeed = {
       respondents: [
         {
           name: 'Dr Nandini Rao',
-          registrationNo: 'KA-08764',
+          registrationNo: '8764 A',
           clinicName: 'Rao Dental Clinic, Udupi',
           isEstablishment: false,
         },
@@ -341,16 +341,16 @@ export const ASSISTANT_EVAL_SEED: AssistantEvalSeed = {
    * same name, different town, is two people until the officer says otherwise.
    */
   dentists: [
-    { name: 'Dr Anil Shetty', registrationNo: 'KA-10452', clinicName: 'Shetty Dental Care, Malleswaram, Bengaluru', priorCases: 1 },
+    { name: 'Dr Anil Shetty', registrationNo: '10452 A', clinicName: 'Shetty Dental Care, Malleswaram, Bengaluru', priorCases: 1 },
     { name: 'Dr Farhan Qureshi', registrationNo: null, clinicName: 'Smile Line Dental, Indiranagar, Bengaluru', priorCases: 1 },
     { name: 'Dr Vivek Hegde', registrationNo: null, clinicName: 'BrightSmile Dental Studio, Koramangala, Bengaluru', priorCases: 1 },
-    { name: 'Dr Sanjana Pai', registrationNo: 'KA-11872', clinicName: 'Pai Dental Clinic, Basavanagudi, Bengaluru', priorCases: 1 },
-    { name: 'Dr Ravi Naik', registrationNo: 'KA-09311', clinicName: 'Naik Dental Hospital, Vidyanagar, Hubballi', priorCases: 2 },
+    { name: 'Dr Sanjana Pai', registrationNo: '11872 A', clinicName: 'Pai Dental Clinic, Basavanagudi, Bengaluru', priorCases: 1 },
+    { name: 'Dr Ravi Naik', registrationNo: '9311 A', clinicName: 'Naik Dental Hospital, Vidyanagar, Hubballi', priorCases: 2 },
     { name: 'Dr Sudhir Kamath', registrationNo: null, clinicName: 'Kamath Dental, Kadri, Mangaluru', priorCases: 1 },
-    { name: 'Dr Nandini Rao', registrationNo: 'KA-08764', clinicName: 'Rao Dental Clinic, Udupi', priorCases: 1 },
-    { name: 'Dr Meghana Kulkarni', registrationNo: 'KA-12530', clinicName: 'Dantavarna Dental Clinics, Jayanagar, Bengaluru', priorCases: 0 },
-    { name: 'Dr Prashanth Gowda', registrationNo: 'KA-12107', clinicName: 'Smile Care Dental Clinic, Kuvempunagar, Mysuru', priorCases: 0 },
-    { name: 'Dr Arjun Reddy', registrationNo: 'KA-10988', clinicName: 'Reddy Dental Care, Cowl Bazaar, Ballari', priorCases: 0 },
+    { name: 'Dr Nandini Rao', registrationNo: '8764 A', clinicName: 'Rao Dental Clinic, Udupi', priorCases: 1 },
+    { name: 'Dr Meghana Kulkarni', registrationNo: '12530 A', clinicName: 'Dantavarna Dental Clinics, Jayanagar, Bengaluru', priorCases: 0 },
+    { name: 'Dr Prashanth Gowda', registrationNo: '12107 A', clinicName: 'Smile Care Dental Clinic, Kuvempunagar, Mysuru', priorCases: 0 },
+    { name: 'Dr Arjun Reddy', registrationNo: '10988 A', clinicName: 'Reddy Dental Care, Cowl Bazaar, Ballari', priorCases: 0 },
   ],
 };
 
@@ -388,7 +388,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
     },
     expected: {
       decision: 'new_complaint',
-      respondentNames: ['Dr Nandini Rao'],
+      respondentNames: ['Dr Nandini Rao', 'Rao Dental Clinic'],
       complainantEmail: 'kavya.shenoy@example.in',
     },
   },
@@ -430,7 +430,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
     },
     expected: {
       decision: 'new_complaint',
-      respondentNames: ['Dr Prakash Menon'],
+      respondentNames: ['Dr Prakash Menon', 'Menon Dental Centre'],
       complainantEmail: 'l.shastry1961@example.in',
     },
   },
@@ -468,7 +468,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
     },
     expected: {
       decision: 'new_complaint',
-      respondentNames: ['Dr Sneha Jain'],
+      respondentNames: ['Dr Sneha Jain', 'Pearl Dental Lounge'],
       complainantEmail: 'irfan.m@example.com',
     },
   },
@@ -500,7 +500,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
     },
     expected: {
       decision: 'new_complaint',
-      respondentNames: ['Dr Mahesh Patil'],
+      respondentNames: ['Dr Mahesh Patil', 'Patil Dental Clinic'],
       complainantEmail: 'rohit.bhandari@example.com',
     },
   },
@@ -565,7 +565,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
     },
     expected: {
       decision: 'new_complaint',
-      respondentNames: ['Dr Prashanth Gowda'],
+      respondentNames: ['Dr Prashanth Gowda', 'Smile Care Dental Clinic'],
       complainantEmail: 'suma.hegde@example.in',
     },
   },
@@ -573,7 +573,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
   {
     id: 'new-two-dentists-one-complaint',
     about:
-      'Two dentists at one clinic, each blaming the other: two respondents. A dentist of the same name in another town (Ballari) is in the register and must not be linked.',
+      'Two dentists at one clinic, each blaming the other: both dentists and the clinic are respondents. A dentist of the same name in another town (Ballari) is in the register and must not be linked.',
     email: {
       fromName: 'Harsha Vardhan',
       fromAddress: 'harsha.v@example.com',
@@ -597,7 +597,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
     },
     expected: {
       decision: 'new_complaint',
-      respondentNames: ['Dr Arjun Reddy', 'Dr Divya Nair'],
+      respondentNames: ['Dr Arjun Reddy', 'Dr Divya Nair', 'Reddy Dental Specialities'],
       // The Ballari Dr Arjun Reddy in the register is a different man: named, never linked.
       unlinkedRespondents: ['Dr Arjun Reddy'],
       complainantEmail: 'harsha.v@example.com',
@@ -607,7 +607,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
   {
     id: 'new-referral-from-ndc',
     about:
-      "A complaint referred by the National Dental Commission, quoting ITS reference NDC/COMP/2026-27/0188 - another body's number, not a case of ours. Who the complainant is on a referral is not yet confirmed, so only the decision and dentist are scored.",
+      "A complaint referred by the National Dental Commission, quoting ITS reference NDC/COMP/2026-27/0188 - another body's number, not a case of ours. The complainant is the person the referral names - Shri Venkatesh Prasad, with the address the letter gives - never the Commission (confirmed by the officer, 9 October 2026).",
     email: {
       fromName: 'Section Officer (Complaints), National Dental Commission',
       fromAddress: 'complaints-cell@ndc.example.in',
@@ -638,7 +638,8 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
     },
     expected: {
       decision: 'new_complaint',
-      respondentNames: ['Dr Kiran Desai'],
+      respondentNames: ['Dr Kiran Desai', 'Desai Dental Clinic'],
+      complainantEmail: 'venkatesh.prasad@example.in',
     },
   },
 
@@ -699,7 +700,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
     },
     expected: {
       decision: 'new_complaint',
-      respondentNames: ['Dr Leela Fernandes'],
+      respondentNames: ['Dr Leela Fernandes', 'Fernandes Dental'],
       complainantEmail: 'abdul.rahim@example.in',
     },
   },
@@ -1239,8 +1240,124 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
     },
     expected: {
       decision: 'new_complaint',
-      respondentNames: ['Dr Tejas Kini'],
+      respondentNames: ['Dr Tejas Kini', 'Kini Dental Care'],
       complainantEmail: 'rekha.malagi@example.in',
+    },
+  },
+
+  {
+    id: 'new-outside-jurisdiction-physician',
+    about:
+      "A grievance about an ENT surgeon, not a dentist: outside the Council's jurisdiction, but the Council enters it and closes it on that ground - so it is a new_complaint, and the reasoning should say why it is outside. Respondents are not scored: the case will be closed for want of jurisdiction.",
+    email: {
+      fromName: 'Girish Hosmani',
+      fromAddress: 'girish.hosmani@example.in',
+      forwardedBy: null,
+      subject: 'Complaint about wrong treatment of my ear',
+      dateText: 'Thu, 8 Oct 2026 10:12:44 +0530',
+      body: lines(
+        'Respected Sir,',
+        '',
+        'On 2 October 2026 I went to Dr Sudhir Kamath, ENT surgeon at Lakeview ENT Hospital, Vijayapura, for pain in my left ear. He cleaned the ear with an instrument and since then I cannot hear properly from that ear and there is continuous ringing. He did not explain anything and charged Rs 4,000.',
+        '',
+        'I request you to take action against this doctor.',
+        '',
+        'Girish Hosmani',
+        'Vijayapura',
+        '90000 31877',
+      ),
+      attachments: [att('ENT_bill.jpg', JPEG)],
+    },
+    expected: { decision: 'new_complaint', complainantEmail: 'girish.hosmani@example.in' },
+  },
+
+  {
+    id: 'new-outside-karnataka-dentist',
+    about:
+      "A dentist practising in Goa: outside the Council's jurisdiction, but entered and then closed on that ground - a new_complaint naming the dentist and the clinic, the reasoning saying the clinic is outside Karnataka.",
+    email: {
+      fromName: 'Deepa Kamath',
+      fromAddress: 'deepa.kamath@example.com',
+      forwardedBy: null,
+      subject: 'Complaint against dentist - bridge failed',
+      dateText: 'Thu, 8 Oct 2026 16:05:10 +0530',
+      body: lines(
+        'Dear Sir/Madam,',
+        '',
+        'I live in Karwar. In June 2026, while visiting family, I had a bridge fitted by Dr Vivek Prabhu at Coastline Dental Studio, 18th June Road, Panaji, Goa, for Rs 35,000. The bridge cracked in August and the clinic now refuses to replace it without charging again.',
+        '',
+        'Please take action against the dentist.',
+        '',
+        'Deepa Kamath',
+      ),
+      attachments: [],
+    },
+    expected: {
+      decision: 'new_complaint',
+      respondentNames: ['Dr Vivek Prabhu', 'Coastline Dental Studio'],
+      complainantEmail: 'deepa.kamath@example.com',
+    },
+  },
+
+  {
+    id: 'edge-referral-complainant-not-named',
+    about:
+      'A National Dental Commission referral that never names the original complainant (nor the dentist; the enclosure is missing). The complainant is the person who complained, never the Commission - so with nobody named, the answer is unsure.',
+    email: {
+      fromName: 'Section Officer (Complaints), National Dental Commission',
+      fromAddress: 'complaints-cell@ndc.example.in',
+      forwardedBy: null,
+      subject: 'Forwarding of complaint - Ref. NDC/COMP/2026-27/0203',
+      dateText: 'Fri, 9 Oct 2026 11:20:00 +0530',
+      body: lines(
+        'To',
+        'The Registrar',
+        'Karnataka State Dental Council',
+        'Bengaluru',
+        '',
+        'Sub: Forwarding of complaint for necessary action - reg.',
+        'Ref: NDC/COMP/2026-27/0203',
+        '',
+        'Sir/Madam,',
+        '',
+        'I am directed to forward herewith a complaint received in this office against a dental clinic in Mangaluru for appropriate action at your end. The matter falls within the jurisdiction of the State Dental Council.',
+        '',
+        'Yours faithfully,',
+        'Section Officer (Complaints)',
+        '',
+        'Encl: As above',
+      ),
+      attachments: [],
+    },
+    expected: { decision: 'unsure' },
+  },
+
+  {
+    id: 'new-known-dentist-registration-number',
+    about:
+      "A new patient's complaint against Dr Ravi Naik, already named on two open cases: the same dentist alone does not make a follow-up, so this is a new_complaint naming him and his hospital. The email writes his registration number without the space (9311A); the register has 9311 A.",
+    email: {
+      fromName: 'Shabana Mulla',
+      fromAddress: 'shabana.mulla@example.in',
+      forwardedBy: null,
+      subject: 'Complaint against Dr Ravi Naik (Reg. No. 9311A)',
+      dateText: 'Fri, 9 Oct 2026 09:02:51 +0530',
+      body: lines(
+        'Respected Registrar,',
+        '',
+        'I am Shabana Mulla from Keshwapur, Hubballi. On 22 September 2026 Dr Ravi Naik (KSDC Reg. No. 9311A) at Naik Dental Hospital, Vidyanagar, Hubballi fitted braces for my teeth. He said the total would be Rs 45,000, but after fixing the braces the hospital demanded Rs 70,000 and refused to give a bill for the extra amount.',
+        '',
+        'I request the Council to look into this overcharging.',
+        '',
+        'Shabana Mulla',
+        '90000 41208',
+      ),
+      attachments: [att('estimate_slip.jpg', JPEG)],
+    },
+    expected: {
+      decision: 'new_complaint',
+      respondentNames: ['Dr Ravi Naik', 'Naik Dental Hospital'],
+      complainantEmail: 'shabana.mulla@example.in',
     },
   },
 ];

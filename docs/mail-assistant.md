@@ -154,11 +154,12 @@ The assistant follows a **playbook**: a plain-English note about the Council's m
 
 1. **Collect the mistakes.** Reject wrong suggestions with a note, or correct them before accepting. The Assistant page lists recent disagreements. One mistake may be bad luck; three of the same kind usually mean a rule is missing.
 2. **Edit the playbook.** Write the missing rule in plain words in the right section. Two things to avoid, because the playbook is stored inside a pair of backtick characters: do not type a backtick, and do not type a dollar sign followed by `{`. Straight quotes and plain hyphens are safest.
-3. **Answer the open questions.** Some lines are marked **[CHECK WITH OFFICER]**. They are things we believe about the Council but have not confirmed. Replace each marker with the real rule:
-   - Should a complaint about a doctor who is not a dentist, or about a dentist outside Karnataka, be entered and then closed, or replied to and set aside?
-   - Do the letters the Council receives now come from the Dental Council of India or from the National Dental Commission?
-   - On a complaint referred by an authority, is the complainant the patient or the referring authority?
-   - What do KSDC registration numbers look like?
+3. **Mark what you are not sure of.** If you add a rule you believe but have not confirmed, mark it **[CHECK WITH OFFICER]** so it is easy to find later. The first five such questions were answered on 9 October 2026 and are now rules in the playbook:
+   - A complaint about a doctor who is not a dentist, or about a dentist outside Karnataka, is entered and then closed for want of jurisdiction.
+   - National referrals come from the National Dental Commission.
+   - On a referred complaint, the complainant is the patient (whoever complained to the authority), not the authority.
+   - KSDC registration numbers look like 56497 A.
+   - When a complaint names the clinic where the treatment was given, the clinic is named as a respondent as well as the dentist.
 4. **Rebuild and restart.** Run `pnpm --filter @ksdc/config build`, then restart the mail reader and the web app. Every suggestion records which version of the playbook produced it, so you can always tell suggestions made before and after a change apart.
 5. **Re-run the evaluation** (next section) to check that the change did not break something else.
 
