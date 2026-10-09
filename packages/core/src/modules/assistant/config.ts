@@ -53,7 +53,10 @@ export interface AssistantConfig {
 }
 
 export const ASSISTANT_DEFAULTS = {
-  model: 'claude-opus-5-5',
+  // Sonnet, not Opus, on measured evidence: on the 30-email evaluation set (9 October 2026)
+  // both got every decision right, and Sonnet 5.5 cost $0.010 an email against Opus 5.5's
+  // $0.023. MAIL_ASSISTANT_MODEL=claude-opus-5-5 switches back.
+  model: 'claude-sonnet-5-5',
   effort: 'medium' as AssistantEffort,
   dailyLimit: 50,
   perSweep: 5,

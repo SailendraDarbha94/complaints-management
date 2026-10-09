@@ -13,7 +13,7 @@
  *   every call pay full price for the whole playbook.
  * - A change is a new version. The engine stores the sha256 of this text on every
  *   suggestion, so "which wording produced this suggestion" can be answered later - and
- *   the evaluation (pnpm --filter @ksdc/core assistant:eval -- --confirm) should be re-run
+ *   the evaluation (pnpm --filter @ksdc/core assistant:eval --confirm) should be re-run
  *   after any change, because a rule that fixes one email can quietly break three others.
  * - Plain ASCII, and no backtick characters. It is a template literal: a backtick ends it,
  *   and a dollar sign followed by a brace starts a substitution. Straight quotes and hyphens

@@ -58,7 +58,7 @@ Then **restart both**: the mail reader (`pnpm --filter @ksdc/core mail`) and the
 |---|---|---|
 | `MAIL_ASSISTANT_DAILY_LIMIT` | `50` | The most suggestions in one day (India time), counting ones that failed. `0` means "on, but make no suggestions today". |
 | `MAIL_ASSISTANT_PER_SWEEP` | `5` | The most new emails it reads each time the mailbox is checked. |
-| `MAIL_ASSISTANT_MODEL` | `claude-opus-5-5` | Which Claude model it uses. |
+| `MAIL_ASSISTANT_MODEL` | `claude-sonnet-5-5` | Which Claude model it uses. `claude-opus-5-5` is the stronger, dearer one. |
 | `MAIL_ASSISTANT_EFFORT` | `medium` | How carefully it thinks: `low`, `medium` or `high`. Higher settings cost more. (The model also has `xhigh` and `max`; the assistant does not accept them, because at those levels it often runs out of room before answering, and each such failure is still paid for.) |
 | `MAIL_ASSISTANT_MAX_TOOL_CALLS` | `8` | The most look-ups it may make for one email. |
 
@@ -104,13 +104,15 @@ The Assistant page reports on one month at a time:
 
 ## What it costs
 
-The assistant uses **Claude Opus 5.5**. Anthropic charges **USD 4 per million tokens** it reads and **USD 20 per million tokens** it writes. A token is roughly three-quarters of a word.
+The assistant uses **Claude Sonnet 5.5**. Anthropic charges **USD 2 per million tokens** it reads and **USD 10 per million tokens** it writes. A token is roughly three-quarters of a word.
 
-For each email the assistant reads the playbook, the email and the results of its look-ups, then writes its answer. That comes to roughly **10 to 15 rupees an email** at about 85 to 90 rupees to the dollar. A long email that needs several look-ups can cost more. This is only an estimate. Every suggestion records its actual cost, and the Assistant page adds them up, so after the first few weeks you will know the real figure.
+**Measured, not estimated.** On 9 October 2026 the 30 test emails were run through both Sonnet 5.5 and the stronger Opus 5.5. Both got every decision right. Sonnet cost **USD 0.010 an email (about 1 rupee)**; Opus cost USD 0.023 (about 2 rupees). That is why Sonnet is the default.
 
-To give you a sense of scale: if 40 emails a month reach Waiting, expect roughly **400 to 600 rupees a month**.
+Real emails are longer than the test ones and some need more look-ups, so expect **1 to 3 rupees an email**. Every suggestion records its actual cost, and the Assistant page adds them up, so after the first few weeks you will know the real figure.
 
-**The daily limit protects the credits.** It is 50 suggestions a day by default, so even a flood of junk mail cannot cost more than roughly 750 rupees in a day. Once the limit is reached, no more suggestions are made until the next day, and asking for one says so. Emails still arrive in the tray as normal.
+To give you a sense of scale: if 40 emails a month reach Waiting, expect well **under 150 rupees a month**.
+
+**The daily limit protects the credits.** It is 50 suggestions a day by default, so even a flood of junk mail cannot cost more than roughly 150 rupees in a day. Once the limit is reached, no more suggestions are made until the next day, and asking for one says so. Emails still arrive in the tray as normal.
 
 The credits are prepaid in the **Anthropic Console**. When they run out, suggestions fail with a message saying so, and Inward mail carries on working without them. Check the balance there now and then. The Console's billing settings may also let you set a spending limit for the account, which is worth doing as a second safety net.
 
@@ -169,10 +171,11 @@ If the mistake involves a new kind of email, first add a made-up version of it t
 The evaluation is a test of about **30 made-up emails** with known right answers, checked against a small made-up register. The emails include new complaints (one in Kannada), follow-ups, adverts and other mail that is not a complaint, and a few awkward cases, such as an email hiding an instruction to the AI. No real email or real register data is used.
 
 ```
-pnpm --filter @ksdc/core assistant:eval -- --confirm
+pnpm --filter @ksdc/core assistant:eval --confirm
 ```
 
-- It needs `ANTHROPIC_API_KEY` in `.env.dev`.
-- **It costs money.** Each run makes about 30 paid suggestions, roughly **300 to 500 rupees**. That is why it refuses to start without `--confirm`, so it cannot be run by accident. Run it after changing the playbook, not as a routine.
+- It needs `ANTHROPIC_API_KEY` in `apps/web/.env.local` (or `.env.dev`).
+- Add `--model claude-opus-5-5` to try the stronger model on the same emails.
+- **It costs money.** Each run makes 30 paid suggestions: about **30 rupees on Sonnet 5.5, 60 on Opus 5.5** (measured 9 October 2026). That is why it refuses to start without `--confirm`, so it cannot be run by accident. Run it after changing the playbook, not as a routine.
 - It marks each email right or wrong. The decision always counts. For a follow-up, the case number also counts. For a new complaint, the dentists named also count - all of the right ones and no others - and so do the complainant's email address and, where the right answer says so, that a dentist who merely shares a name with someone in the register was not linked to them.
 - Look at the wrong answers first. A change that fixes one email and breaks two others is not an improvement, even if the one it fixed was the email that annoyed you.

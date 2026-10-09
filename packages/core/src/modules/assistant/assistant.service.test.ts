@@ -318,7 +318,7 @@ describe('whether the assistant is on', () => {
     const c = assistantConfigFromEnv({});
     expect(c.enabled).toBe(false);
     expect(c.reason).toBe('MAIL_ASSISTANT is not set to on.');
-    expect(c).toMatchObject({ model: 'claude-opus-5-5', effort: 'medium', dailyLimit: 50, perSweep: 5, maxToolCalls: 8 });
+    expect(c).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'medium', dailyLimit: 50, perSweep: 5, maxToolCalls: 8 });
     expect(c.playbookVersion).toMatch(/^[0-9a-f]{64}$/);
   });
 
