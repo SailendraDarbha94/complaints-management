@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { simpleParser } from 'mailparser';
 import { snippetOf, unwrapForward, type ForwardedOriginal } from './forwarded.js';
+import { isInternalForward, readsThrough } from './council-copy.js';
+import { ownAddressesOf } from './complainant.js';
 
 /**
  * The forwarded-mail parser, against the shapes real clients actually emit.
@@ -154,6 +156,355 @@ describe('the other clients', () => {
     );
     expect(appleOrder.subject).toBe('S');
     expect(appleOrder.dateText).toBe('1 Jan 2026');
+  });
+});
+
+describe('a forward of a message that quotes another', () => {
+  // A patient's Outlook reply quotes the Council's letter under its rule of underscores;
+  // the officer forwards that reply from Gmail. Two separators: the forward's at the top,
+  // the quote's below. The top one is what was forwarded. Taken in list order, Outlook's
+  // rule won, and the reply was read as the Council's own letter - a copy of it, filed as
+  // one, with the reminder the bills answered left open.
+  const outlookQuote = [
+    '________________________________',
+    'From: Registrar <registrar@ksdc.in>',
+    'Sent: Friday, October 10, 2026 11:30 AM',
+    'To: Ravi Kumar <ravi@example.com>',
+    'Subject: Documents required - KSDC/COMP/2026-27/0042',
+    '',
+    'Sir/Madam, please send the bills.',
+  ];
+
+  it('reads the forward at the top, not the letter quoted inside it', async () => {
+    const out = await unwrapBody(
+      [
+        'For the file.',
+        '',
+        '---------- Forwarded message ---------',
+        'From: Ravi Kumar <ravi@example.com>',
+        'Date: Sat, 11 Oct 2026 at 09:00',
+        'Subject: RE: Documents required - KSDC/COMP/2026-27/0042',
+        'To: Registrar <registrar@ksdc.in>',
+        '',
+        'The bills are attached.',
+        '',
+        ...outlookQuote,
+      ].join('\r\n'),
+    );
+    expect(out.kind).toBe('gmail');
+    expect(out.fromAddress).toBe('ravi@example.com');
+    expect(out.subject).toBe('RE: Documents required - KSDC/COMP/2026-27/0042');
+    expect(out.body).toContain('The bills are attached.');
+  });
+
+  it('and the same with Outlook desktop\'s "Original Message" quote', async () => {
+    const out = await unwrapBody(
+      [
+        '---------- Forwarded message ---------',
+        'From: Ravi Kumar <ravi@example.com>',
+        'Date: Sat, 11 Oct 2026 at 09:00',
+        'Subject: RE: Documents required - KSDC/COMP/2026-27/0042',
+        'To: Registrar <registrar@ksdc.in>',
+        '',
+        'The bills are attached.',
+        '',
+        '-----Original Message-----',
+        ...outlookQuote.slice(1),
+      ].join('\r\n'),
+    );
+    expect(out.kind).toBe('gmail');
+    expect(out.fromAddress).toBe('ravi@example.com');
+  });
+
+  // The same reply forwarded by the office from Roundcube in HTML compose - the Council's
+  // own webmail - which draws no separator of its own. The quote's rule is then the only
+  // separator in the text, and read alone it made the reply "the Registrar's letter to the
+  // patient": a copy of our own letter, filed silently, the documents reminder left open.
+  const quoteRules = {
+    'an Outlook Web rule of underscores': '________________________________',
+    'Outlook desktop\'s "-----Original Message-----"': '-----Original Message-----',
+    'Zimbra\'s "----- Original Message -----"': '----- Original Message -----',
+  };
+  const roundcubeRows = [
+    ' \t\tSUBJECT:',
+    ' \t\tRE: Documents required - KSDC/COMP/2026-27/0042',
+    '',
+    ' \t\tDATE:',
+    ' \t\t2026-10-11 09:00',
+    '',
+    ' \t\tFROM:',
+    ' \t\tRavi Kumar <ravi@example.com>',
+    '',
+    ' \t\tTO:',
+    ' \t\tRegistrar <registrar@ksdc.in>',
+    '',
+  ];
+
+  for (const [name, rule] of Object.entries(quoteRules)) {
+    it(`reads a Roundcube forward with no rule of its own, over ${name} in the reply`, async () => {
+      const out = await unwrapBody(
+        [
+          ...roundcubeRows,
+          'The bills you asked for are attached.',
+          '',
+          rule,
+          ...outlookQuote.slice(1),
+        ].join('\r\n'),
+      );
+      expect(out.kind).toBe('header_block');
+      expect(out.fromAddress).toBe('ravi@example.com');
+      expect(out.to).toBe('Registrar <registrar@ksdc.in>');
+      expect(out.subject).toBe('RE: Documents required - KSDC/COMP/2026-27/0042');
+      expect(out.body).toMatch(/^The bills you asked for are attached\./);
+    });
+  }
+
+  it('reads a Zoho forward under its "=" rule, over an Outlook quote in the reply', async () => {
+    const zoho = '============ Forwarded message ============';
+    const out = await unwrapBody(
+      [
+        'For the file.',
+        '',
+        zoho,
+        'From : Ravi Kumar<ravi@example.com>',
+        'To : <registrar@ksdc.in>',
+        'Date : Sat, 11 Oct 2026 09:00:00 +0530',
+        'Subject : RE: Documents required - KSDC/COMP/2026-27/0042',
+        zoho,
+        'The bills you asked for are attached.',
+        '',
+        '-----Original Message-----',
+        ...outlookQuote.slice(1),
+      ].join('\r\n'),
+    );
+    expect(out.kind).toBe('header_block');
+    expect(out.fromAddress).toBe('ravi@example.com');
+  });
+
+  it('still reads the separator first when the header block sits under it', async () => {
+    // Stock Roundcube draws its rule ABOVE the table: the block starts after the rule, so
+    // the rule's kind is kept, as before.
+    const out = await unwrapBody(
+      [
+        '-------- Original Message --------',
+        ...roundcubeRows,
+        'The bills you asked for are attached.',
+        '',
+        ...outlookQuote,
+      ].join('\r\n'),
+    );
+    expect(out.kind).toBe('outlook_desktop');
+    expect(out.fromAddress).toBe('ravi@example.com');
+  });
+
+  it('does not look for a header block without a rule when the subject is not a forward', async () => {
+    // A patient's Outlook reply written to us directly: its quoted letter is all there is.
+    const out = await unwrapForward(
+      await simpleParser(
+        raw(
+          { ...FORWARD_HEADERS, From: 'Ravi Kumar <ravi@example.com>', Subject: 'RE: Documents required' },
+          ['The bills are attached.', '', ...outlookQuote].join('\r\n'),
+        ),
+      ),
+    );
+    expect(out.kind).toBe('outlook_web');
+    expect(out.fromAddress).toBe('registrar@ksdc.in');
+  });
+});
+
+describe('a forward the Council made only to itself, around the mail it passes on', () => {
+  // The support desk forwards a complaint to the registrar, who forwards it on to the
+  // intake mailbox. The outer block is the Council writing to the Council; the complainant
+  // is one block down. Read without own addresses, the outer block wins (it comes first).
+  const own = ownAddressesOf({ officialEmail: 'registrar@ksdc.in', website: 'https://www.ksdc.in' });
+  const readThrough = (o: ForwardedOriginal) => isInternalForward(o, own);
+
+  const SUPPORT_TO_REGISTRAR = [
+    '-------- Original Message --------',
+    'Subject: Fwd: Complaint regarding overcharging',
+    'Date: 2026-10-08 10:02',
+    'From: KSDC Support <support@ksdc.in>',
+    'To: registrar@ksdc.in',
+    '',
+    'Sir, a complaint received at the support desk.',
+    '',
+    '---------- Forwarded message ---------',
+    'From: Mohammed Irfan <irfan.m@example.com>',
+    'Date: Tue, 7 Oct 2026 at 18:40',
+    'Subject: Complaint regarding overcharging',
+    'To: <support@ksdc.in>',
+    '',
+    'I was charged twice for one root canal.',
+  ].join('\r\n');
+
+  it('reads through to the complainant', async () => {
+    const out = await unwrapForward(await simpleParser(raw(FORWARD_HEADERS, SUPPORT_TO_REGISTRAR)), {
+      readThrough,
+    });
+    expect(out.kind).toBe('gmail');
+    expect(out.fromAddress).toBe('irfan.m@example.com');
+    expect(out.subject).toBe('Complaint regarding overcharging');
+    expect(out.body).toBe('I was charged twice for one root canal.');
+  });
+
+  it('keeps the outer block without own addresses to judge it by', async () => {
+    const out = await unwrapForward(await simpleParser(raw(FORWARD_HEADERS, SUPPORT_TO_REGISTRAR)));
+    expect(out.fromAddress).toBe('support@ksdc.in');
+  });
+
+  it('reads a Roundcube forward inside a Roundcube forward, neither with a rule', async () => {
+    const rows = (pairs: Array<[string, string]>) =>
+      pairs.flatMap(([label, value]) => [` \t\t${label.toUpperCase()}:`, ` \t\t${value}`, '']);
+    const text = [
+      ...rows([
+        ['Subject', 'Fwd: Complaint regarding overcharging'],
+        ['Date', '2026-10-08 10:02'],
+        ['From', 'KSDC Support <support@ksdc.in>'],
+        ['To', 'registrar@ksdc.in'],
+      ]),
+      ...rows([
+        ['Subject', 'Complaint regarding overcharging'],
+        ['Date', '2026-10-07 18:40'],
+        ['From', 'Mohammed Irfan <irfan.m@example.com>'],
+        ['To', 'support@ksdc.in'],
+      ]),
+      'I was charged twice for one root canal.',
+    ].join('\r\n');
+    const out = await unwrapForward(await simpleParser(raw(FORWARD_HEADERS, text)), { readThrough });
+    expect(out.kind).toBe('header_block');
+    expect(out.fromAddress).toBe('irfan.m@example.com');
+  });
+
+  it('never reads through a letter the Council sent to somebody outside it', async () => {
+    // The registrar forwarding a copy of our own letter to the patient: the Council's
+    // letter is what was forwarded, and its sender must stay the Council.
+    const text = [
+      '---------- Forwarded message ---------',
+      'From: Registrar <registrar@ksdc.in>',
+      'Date: Fri, 10 Oct 2026 at 11:30',
+      'Subject: Documents required - KSDC/COMP/2026-27/0042',
+      'To: Ravi Kumar <ravi@example.com>',
+      '',
+      'Sir/Madam, please send the bills.',
+      '',
+      '---------- Forwarded message ---------',
+      'From: Someone Else <someone@example.com>',
+      'Date: Thu, 9 Oct 2026 at 10:00',
+      'Subject: Something quoted',
+      'To: registrar@ksdc.in',
+      '',
+      'Quoted text.',
+    ].join('\r\n');
+    const out = await unwrapForward(await simpleParser(raw(FORWARD_HEADERS, text)), { readThrough });
+    expect(out.fromAddress).toBe('registrar@ksdc.in');
+    expect(out.to).toBe('Ravi Kumar <ravi@example.com>');
+  });
+});
+
+describe("an outside body's forward of a patient's complaint, forwarded on by the Council", () => {
+  // A grievance cell or a police station forwards the patient's complaint to the registrar,
+  // who forwards it on to the intake mailbox. The first block in the text is the outside
+  // body's message to the registrar; the complainant is the patient, one block down. Read
+  // alone, that named the grievance cell as the complainant, and the patient's case was
+  // never offered. With the ingest's own rule, the unwrapper reads through to the patient.
+  const own = ownAddressesOf({ officialEmail: 'registrar@ksdc.in', website: 'https://www.ksdc.in' });
+  const readThrough = (o: ForwardedOriginal, inner: ForwardedOriginal) => readsThrough(o, inner, own);
+  const PATIENT_GMAIL = [
+    'Forwarded for necessary action.',
+    '',
+    '---------- Forwarded message ---------',
+    'From: Kavitha Devi <kdevi@example.in>',
+    'Date: Tue, 7 Oct 2026 at 18:40',
+    'Subject: Complaint against Dr. Rao',
+    'To: <grievance@health.example.gov.in>',
+    '',
+    'The extraction was done without my consent.',
+  ];
+  const fromRegistrar = { ...FORWARD_HEADERS, From: 'Registrar <registrar@ksdc.in>', Subject: 'Fwd: Fwd: Complaint against Dr. Rao' };
+  const unwrap = async (text: string) => unwrapForward(await simpleParser(raw(fromRegistrar, text)), { readThrough });
+
+  it('Roundcube in HTML compose (rows, no rule) over a Gmail forward: the patient', async () => {
+    const rows = (pairs: Array<[string, string]>) =>
+      pairs.flatMap(([label, value]) => [` \t\t${label.toUpperCase()}:`, ` \t\t${value}`, '']);
+    const out = await unwrap(
+      [
+        ...rows([
+          ['Subject', 'Fwd: Complaint against Dr. Rao'],
+          ['Date', '2026-10-08 10:02'],
+          ['From', 'Grievance Cell <grievance@health.example.gov.in>'],
+          ['To', 'registrar@ksdc.in'],
+        ]),
+        ...PATIENT_GMAIL,
+      ].join('\r\n'),
+    );
+    expect(out.fromAddress).toBe('kdevi@example.in');
+    expect(out.subject).toBe('Complaint against Dr. Rao');
+    expect(out.body).toBe('The extraction was done without my consent.');
+    expect(out.via).toEqual([{ address: 'grievance@health.example.gov.in', name: 'Grievance Cell' }]);
+  });
+
+  it('Roundcube in plain-text compose ("Original Message") over a Gmail forward: the patient', async () => {
+    const out = await unwrap(
+      [
+        '-------- Original Message --------',
+        'Subject: Fwd: Complaint against Dr. Rao',
+        'Date: 2026-10-08 10:02',
+        'From: Grievance Cell <grievance@health.example.gov.in>',
+        'To: registrar@ksdc.in',
+        '',
+        ...PATIENT_GMAIL,
+      ].join('\r\n'),
+    );
+    expect(out.fromAddress).toBe('kdevi@example.in');
+    expect(out.via?.map((v) => v.address)).toEqual(['grievance@health.example.gov.in']);
+  });
+
+  it("Gmail over a police station's Outlook Web forward: the patient", async () => {
+    const out = await unwrap(
+      [
+        '---------- Forwarded message ---------',
+        'From: Inspector, Jayanagar PS <ps.jayanagar@police.example.gov.in>',
+        'Date: Wed, 8 Oct 2026 at 10:02',
+        'Subject: FW: Complaint against Dr. Rao',
+        'To: <registrar@ksdc.in>',
+        '',
+        'Forwarded for necessary action.',
+        '',
+        '________________________________',
+        'From: Kavitha Devi <kdevi@example.in>',
+        'Sent: Tuesday, October 7, 2026 6:40 PM',
+        'To: ps.jayanagar@police.example.gov.in',
+        'Subject: Complaint against Dr. Rao',
+        '',
+        'The extraction was done without my consent.',
+      ].join('\r\n'),
+    );
+    expect(out.fromAddress).toBe('kdevi@example.in');
+    expect(out.via?.map((v) => v.address)).toEqual(['ps.jayanagar@police.example.gov.in']);
+  });
+
+  it("a patient's Outlook reply quoting our letter, forwarded from Gmail, is still the patient's", async () => {
+    const out = await unwrap(
+      [
+        '---------- Forwarded message ---------',
+        'From: Ravi Kumar <ravi@example.com>',
+        'Date: Sat, 11 Oct 2026 at 09:00',
+        'Subject: RE: Documents required - KSDC/COMP/2026-27/0042',
+        'To: <registrar@ksdc.in>',
+        '',
+        'The bills are attached.',
+        '',
+        '________________________________',
+        'From: Registrar <registrar@ksdc.in>',
+        'Sent: Friday, October 10, 2026 11:30 AM',
+        'To: Ravi Kumar <ravi@example.com>',
+        'Subject: Documents required - KSDC/COMP/2026-27/0042',
+        '',
+        'Sir/Madam, please send the bills.',
+      ].join('\r\n'),
+    );
+    expect(out.fromAddress).toBe('ravi@example.com');
+    expect(out.via).toBeUndefined();
   });
 });
 

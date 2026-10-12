@@ -28,8 +28,8 @@ import type {
  *
  * Deliberately narrow. Attachments go by NAME; a file's CONTENTS are sent only when the
  * model asks for that one file through readAttachment, and only when the attachment reader
- * is switched on (MAIL_ASSISTANT_ATTACHMENTS=on). Nothing else from the tray row -
- * addresses, the raw source, the HTML - is passed on.
+ * is switched on (MAIL_ASSISTANT_ATTACHMENTS=on). Nothing else from the tray row - the
+ * raw source, the HTML, the Cc line - is passed on.
  */
 export interface TriageEmail {
   /** The ORIGINAL sender - the unwrapped forward, not the office that forwarded it. */
@@ -37,6 +37,18 @@ export interface TriageEmail {
   fromAddress: string | null;
   /** Who forwarded it, when it was a forward (often the Council's own office). */
   forwardedBy: string | null;
+  /**
+   * Who the email was written TO, as its To line gives it - the original's when it was a
+   * forward, else the message's own; names and addresses as written. Null when there is
+   * none.
+   *
+   * Sent because of copies of the Council's own letters: a letter FROM a Council address
+   * is a copy of what the Council sent only if it went to somebody outside the Council, and
+   * that somebody - the complainant, the dentist - is how its case is checked. It is the
+   * one recipient's address the assistant is shown; see the privacy section of
+   * docs/mail-assistant.md.
+   */
+  to: string | null;
   subject: string;
   /** As written in the email; a forwarded date carries no timezone, so it stays text. */
   dateText: string | null;
@@ -150,7 +162,10 @@ export interface SuggestedRespondent {
   registeredDentistId: string | null;
 }
 
-/** Exactly one of notComplaint / followUp / newComplaint is set, matching `decision`; none for unsure. */
+/**
+ * Exactly one of notComplaint / followUp / newComplaint / councilCopy is set, matching
+ * `decision`; none for unsure.
+ */
 export interface TriageProposal {
   decision: MailSuggestionDecision;
   confidence: MailSuggestionConfidence;
@@ -158,6 +173,13 @@ export interface TriageProposal {
   reasoning: string;
   notComplaint: { reason: string } | null;
   followUp: { caseNumber: string; because: string } | null;
+  /**
+   * A copy of a letter the Council itself sent - not a complaint, not a reply. The case it
+   * belongs to (a number a lookup returned, as for a follow-up), which letter it is in a
+   * few plain words ("documents request"), and what ties the two together - the number it
+   * quotes AND the person it was sent to.
+   */
+  councilCopy: { caseNumber: string; letter: string; because: string } | null;
   newComplaint: {
     /** One neutral line, in the register's style. */
     summary: string;
@@ -254,6 +276,14 @@ export interface MailSuggestionView {
    * decision the officer must see they are making, so the screens confirm it first.
    */
   followUp: { caseFileId: string | null; caseNumber: string; because: string; closed: boolean } | null;
+  /** As followUp: the case resolved live, closed or not, and null when it is not a live case. */
+  councilCopy: {
+    caseFileId: string | null;
+    caseNumber: string;
+    letter: string;
+    because: string;
+    closed: boolean;
+  } | null;
   newComplaint: TriageProposal['newComplaint'];
   /** Attachments whose contents the assistant read (and so were sent to Anthropic). */
   attachmentsRead: SuggestionFileSent[];
@@ -292,7 +322,7 @@ export interface SuggestionOverrides {
   complainantName?: string;
   complainantEmail?: string | null;
   respondents?: SuggestedRespondent[];
-  /** For a follow-up: file it on this case instead. */
+  /** For a follow-up or a copy of a Council letter: file it on this case instead. */
   caseFileId?: string;
   /** For a non-complaint: the reason recorded when it is set aside. */
   reason?: string;
@@ -313,10 +343,11 @@ export interface AssistantReport {
   totals: Record<MailSuggestionStatus, number>;
   /**
    * Counted by when the suggestion was made. Agreed: accepted (as it was, or edited
-   * without changing the decision - and for a follow-up, the case), or the ordinary
-   * buttons doing what it suggested. Disagreed: the ordinary buttons doing something
-   * else, a follow-up filed on another case, AND an explicit rejection. 'unsure' is in
-   * neither column. recentDisagreements are the chosen month's, newest first.
+   * without changing the decision - and for a follow-up or a copy, the case), or the
+   * ordinary buttons doing what it suggested. Disagreed: the ordinary buttons doing
+   * something else, a follow-up or a copy filed on another case, AND an explicit
+   * rejection. 'unsure' is in neither column. recentDisagreements are the chosen month's,
+   * newest first.
    */
   agreement: {
     overall: { agreed: number; disagreed: number };

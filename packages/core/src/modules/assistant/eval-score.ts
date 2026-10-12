@@ -20,7 +20,7 @@ import type { SuggestedRespondent, TriageResult } from './types.js';
 
 export interface EvalExpectedLike {
   decision: MailSuggestionDecision;
-  /** follow_up only: the case it belongs on. */
+  /** follow_up and council_letter_copy: the case it belongs on. */
   caseNumber?: string;
   /** new_complaint only: every respondent a right answer names, and ONLY those. */
   respondentNames?: string[];
@@ -111,9 +111,14 @@ export function scoreCase(expected: EvalExpectedLike, result: TriageResult, opts
   const missedRead = expected.readsAttachment === true && (opts.attachmentsOn ?? true) && reads === 0;
   const decisionRight = !!p && p.decision === expected.decision;
 
+  // A copy of a Council letter is scored as a follow-up is: the right answer AND the right
+  // case. Filed on the wrong case it would attach the Council's letter to somebody else's file.
   let caseNumberRight: boolean | null = null;
   if (expected.decision === 'follow_up' && expected.caseNumber) {
     caseNumberRight = !!p?.followUp && caseKey(p.followUp.caseNumber) === caseKey(expected.caseNumber);
+  }
+  if (expected.decision === 'council_letter_copy' && expected.caseNumber) {
+    caseNumberRight = !!p?.councilCopy && caseKey(p.councilCopy.caseNumber) === caseKey(expected.caseNumber);
   }
 
   const named = p?.newComplaint?.respondents ?? [];

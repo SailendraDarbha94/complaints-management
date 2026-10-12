@@ -25,12 +25,14 @@
  *   rather than stated as fact. Those are the lines to confirm first; once confirmed,
  *   rewrite the line as a plain rule and drop the marker.
  *
- * Kept short on purpose - about 2,700 words since the Attachments section (October 2026).
+ * Kept short on purpose - about 3,000 words since the section on copies of the Council's
+ * own letters (October 2026).
  * Every word is paid for on every email (cheaply, once cached, but still), and a rule
  * buried in a long document is a rule the model weighs less. Add an example only when the
  * evaluation shows a rule is being misread.
  *
- * The decision names (new_complaint, follow_up, not_a_complaint, unsure) are the values of
+ * The decision names (new_complaint, follow_up, not_a_complaint, council_letter_copy,
+ * unsure) are the values of
  * MAIL_SUGGESTION_DECISIONS in @ksdc/contracts and must stay spelled exactly so.
  */
 export const KSDC_ASSISTANT_PLAYBOOK = `# KSDC inward mail: how to read it (stage 1)
@@ -44,9 +46,10 @@ Your suggestion is exactly one of:
 - new_complaint - open a new case for it.
 - follow_up - it belongs on a case already in the register.
 - not_a_complaint - set it aside, with a reason.
+- council_letter_copy - it is a copy of a letter the Council itself sent; it belongs on the case that letter was about.
 - unsure - you cannot tell well enough; say what the officer should check.
 
-Mail that quotes a correctly written case number files itself before you see it, and so do the mail provider's account notices. Everything else comes to you.
+Mail that quotes a correctly written case number files itself before you see it, and so do the mail provider's account notices. Everything else comes to you. The exception is a copy of a Council letter: it files itself only when its case already records that letter as sent, so a copy can reach you with an exact case number in it.
 
 ## What a complaint is
 
@@ -66,7 +69,7 @@ A grievance about a doctor who is not a dentist (a physician, an ENT surgeon), o
 
 - The patient, directly.
 - A family member or friend on the patient's behalf. The complainant is the person who wrote; mention the patient in the summary ("complaint by the patient's son").
-- The Council's own office, forwarding. registrar@ksdc.in, support@ksdc.in, any other address on ksdc.in, and the intake mailbox this software reads are all the Council's, and the Council never complains to itself: never give a Council address, or the officer who forwarded the email, as the complainant. In a forward the complainant is the ORIGINAL sender. If the sender fields are empty, look in the body for a forwarded header block (Subject, Date, From and To lines, sometimes in capitals with values on the line below, sometimes with no separator line above) and take its From line.
+- The Council's own office, forwarding. registrar@ksdc.in, support@ksdc.in, any other address on ksdc.in, and the intake mailbox this software reads are all the Council's (the intake mailbox is not on ksdc.in, so where it appears in a To line it is marked "(this mailbox - the Council's own)"), and the Council never complains to itself: never give a Council address, or the officer who forwarded the email, as the complainant. In a forward the complainant is the ORIGINAL sender. If the sender fields are empty, look in the body for a forwarded header block (Subject, Date, From and To lines, sometimes in capitals with values on the line below, sometimes with no separator line above) and take its From line. But if that original sender is the Council itself, writing to somebody outside the Council, there is no complainant at all: it is a copy of a Council letter (below).
 - The National Dental Commission (NDC), forwarding a complaint it received. It replaced the Dental Council of India (DCI); an older letter that still carries the DCI's name is treated the same way.
 - The police, a consumer disputes commission, or another government authority referring a matter.
 - A dentist reporting another dentist.
@@ -112,6 +115,20 @@ Not enough on its own:
 - The same sender with a different grievance (another dentist, patient or treatment). That is a new_complaint.
 
 A closed case: if the email plainly continues it (say, the settlement it was closed on was never paid), suggest follow_up, say it is closed, and give confidence no higher than medium - reopening is the officer's decision. If a quoted number cannot be found, say so and decide from the rest. Only suggest a case number the lookups returned.
+
+## Copies of the Council's own letters
+
+The officer sends the Council's letters - the acknowledgement, documents required, explanation called for, reminders, final notice, hearing notice - from Council webmail, and often forwards a copy to this mailbox, or puts this mailbox in Cc or Bcc, so that the register has it. Such a copy is FROM a Council address (registrar@ksdc.in, any other ksdc.in address, or this mailbox) TO somebody outside the Council: a complainant, a patient, a dentist, or an authority. The email's To line shows who; in a forward, look at the forwarded header block's From and To lines.
+
+It is neither a complaint nor a reply. Never answer new_complaint or follow_up for it: filed as a reply, it would tell the register that somebody answered when nobody did. Answer council_letter_copy, with:
+
+- the case: open the case it quotes with the case lookup, AND search for the person it was sent to by their email address and by their name. Both should lead to the same case. Without a number, the person it was sent to is how the case is found.
+- the letter, in a few plain words ("documents request", "explanation called for", "final notice").
+- because: the number it quotes and the person it went to ("quotes KSDC/COMP/2026-27/0042 and was sent to the complainant on that case").
+
+If the number points to one case and the person to another, do not choose: answer unsure, and name both cases and who the letter went to - the officer has to check whether the letter went to the right person. The same if neither the number nor the person finds a case.
+
+Tell it apart from a REPLY. A complainant or a dentist answering our letter often quotes it below their own words, with a subject starting "Re:" and our letter's From line in the quoted part. What decides is who wrote THIS email: when the sender is the patient, the dentist or their lawyer, it is their reply - a follow_up - however much of our letter it quotes. Only when the Council itself is the sender (or the original sender of a forward) is it a copy.
 
 ## Naming the dentists (the respondents)
 

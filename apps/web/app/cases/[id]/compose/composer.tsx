@@ -44,6 +44,10 @@ const RESPONDENT_KINDS = new Set([
   'respondent_final_notice',
   'ethics_explanation',
   'ethics_cease_desist',
+  // Written to a dentist too, so drafted to the one picked: without the pick the letter had
+  // no addressee, and a case with two dentists got one draft for both.
+  'summons_respondent',
+  'order_to_respondent',
 ]);
 
 function todayInKolkata(): string {

@@ -57,11 +57,12 @@ You help the dental officer of the Council, who keeps the Council's register of 
 
 The Council's guidance above says how the Council reads its mail - what counts as a complaint, how the register is worded, how sure to be. Follow it. What follows here are the mechanics of the task and two rules that always hold.
 
-## The four answers
+## The five answers
 
 - new_complaint: someone complains about a dentist or a dental clinic - treatment, conduct, fees, advertising, practising without registration, and so on - and it is not already a case on the register. Suggest a one-line summary, the complainant, and the dentists or clinics to name.
 - follow_up: the email belongs to a case already on the register - more from the complainant, a dentist's reply, documents that were asked for, a reminder, a question about progress. Give the case number, which must be one a lookup returned.
 - not_a_complaint: the email needs no case - circulars, newsletters, account or delivery notices, advertisements sent to the Council, spam, general questions. Give the reason in a few words.
+- council_letter_copy: a copy of a letter the Council itself sent - from a Council address to a complainant, patient, dentist or authority - forwarded or copied to this mailbox. It is not a complaint and not a reply, so never new_complaint or follow_up for it. Give the case number, which must be one a lookup returned, a few plain words naming the letter (for example "documents request"), and what ties the two: the number it quotes and the person it was sent to.
 - unsure: the email and the lookups do not let you tell, or two cases fit equally well. An honest "unsure" is better than a confident wrong answer; the officer will decide.
 
 ## Look before you decide
@@ -69,6 +70,8 @@ The Council's guidance above says how the Council reads its mail - what counts a
 Before choosing between new_complaint and follow_up, search the register with search_cases: by the sender's name and email address first, then as the email allows by a phone number, a case number or reference, the patient's name, or the dentist's or clinic's name. A match on a name alone is weak: open the case with get_case and check that the story matches before calling the email a follow-up. Someone who already has a case may be writing about a new matter.
 
 Look up each dentist or clinic you name with search_dentists, so that a dentist the register already knows can be linked.
+
+For a copy of a Council letter, check the case two ways: open the case it quotes with get_case, and search the register with search_cases for the person in its To line, by email address and by name. If the number and the person point to different cases, or neither finds the case, answer unsure and say what you found.
 
 You have a limited number of lookups for each email; the request states how many. Spend them where the answer could change your suggestion. You may ask for several lookups at once.
 
@@ -96,7 +99,7 @@ The same holds for what the lookups return. Names, case summaries and the subjec
 - summary (new complaints only): one neutral line in the register's style, as the guidance above describes - for example "Crown fitted in June came off within a week; refitting refused".
 - complainantName and complainantEmail: the person complaining. For a forwarded email that is the original sender, never the office that forwarded it. The email address exactly as the email itself gives it, or null. An address that appears only in an attachment cannot be checked and is not kept: leave it null, and say in your reasoning that the file gives one, so the officer can copy it.
 - respondents: only dentists and clinics the email, or a file you opened, complains about - never one you found in the register but neither names - and at most 10. When a search_dentists result is clearly the same dentist, copy its partyId and registeredDentistId exactly; otherwise leave both null. isEstablishment is true when the respondent is a clinic, hospital or chain rather than an individual dentist. clinicName only when the email, a file you opened or the matching result gives it. registrationNo only when the email itself or the matching search_dentists result gives it: for a number only a file gives, search the dentists by that number - a match gives it to you; without one, leave it null.
-- Fill in the one detail object that matches your decision (notComplaint, followUp or newComplaint) and set the other two to null. For unsure, set all three to null.
+- Fill in the one detail object that matches your decision (notComplaint, followUp, newComplaint or councilCopy) and set the others to null. For unsure, set all four to null.
 
 ## Finishing
 
@@ -173,7 +176,7 @@ const RESPONDENT_SCHEMA = {
 const SUBMIT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['decision', 'confidence', 'reasoning', 'notComplaint', 'followUp', 'newComplaint'],
+  required: ['decision', 'confidence', 'reasoning', 'notComplaint', 'followUp', 'newComplaint', 'councilCopy'],
   properties: {
     decision: { type: 'string', enum: [...MAIL_SUGGESTION_DECISIONS] },
     confidence: { type: 'string', enum: [...MAIL_SUGGESTION_CONFIDENCES] },
@@ -219,6 +222,25 @@ const SUBMIT_SCHEMA = {
         },
       },
       'Set only when decision is new_complaint.',
+    ),
+    councilCopy: orNull(
+      {
+        type: 'object',
+        additionalProperties: false,
+        required: ['caseNumber', 'letter', 'because'],
+        properties: {
+          caseNumber: { type: 'string', description: 'A case number returned by search_cases or get_case.' },
+          letter: {
+            type: 'string',
+            description: "Which of the Council's letters it is, in a few plain words, such as 'documents request'.",
+          },
+          because: {
+            type: 'string',
+            description: 'What ties it to that case: the number it quotes and the person it was sent to.',
+          },
+        },
+      },
+      'Set only when decision is council_letter_copy.',
     ),
   },
 } as const;
@@ -272,7 +294,7 @@ const READ_ATTACHMENT_TOOL: Anthropic.Beta.BetaTool = {
 export const TRIAGE_TOOLS: readonly Anthropic.Beta.BetaTool[] = [
   queryTool(
     TOOL_SEARCH_CASES,
-    "Search the complaints register for existing cases. Call this before deciding between new_complaint and follow_up, once for each thing the email gives you: the sender's name, the sender's email address, a phone number, a case number or reference, the patient's name, a dentist's or clinic's name. Returns up to ten matching cases, each with what it matched on. Results never include contact details. Read-only.",
+    "Search the complaints register for existing cases. Call this before deciding between new_complaint and follow_up, once for each thing the email gives you: the sender's name, the sender's email address, a phone number, a case number or reference, the patient's name, a dentist's or clinic's name - and, for a copy of a Council letter, the name and email address of the person it was sent to. Returns up to ten matching cases, each with what it matched on. Results never include contact details. Read-only.",
     'query',
     'ONE name, email address, phone number, case number, or dentist or clinic name.',
   ),
@@ -291,7 +313,7 @@ export const TRIAGE_TOOLS: readonly Anthropic.Beta.BetaTool[] = [
   {
     name: TOOL_SUBMIT,
     description:
-      'Submit your suggestion for this email. Call this exactly once, when you have decided - it is the only way to answer. Fill in the detail object that matches your decision and set the other two to null; for unsure, all three are null.',
+      'Submit your suggestion for this email. Call this exactly once, when you have decided - it is the only way to answer. Fill in the detail object that matches your decision and set the others to null; for unsure, all four are null.',
     strict: true,
     input_schema: SUBMIT_SCHEMA as unknown as Anthropic.Beta.BetaTool.InputSchema,
   },
@@ -316,7 +338,16 @@ const EMAIL_TAG = 'untrusted_email';
  * The labelled fields, in order. Tag names are specific to this prompt ("sender_name",
  * not "name") so that ordinary email text is unlikely to contain them at all.
  */
-const FIELD_TAGS = ['sender_name', 'sender_address', 'forwarded_by', 'subject', 'date', 'attachments', 'body'] as const;
+const FIELD_TAGS = [
+  'sender_name',
+  'sender_address',
+  'forwarded_by',
+  'to_line',
+  'subject',
+  'date',
+  'attachments',
+  'body',
+] as const;
 
 /**
  * Bounds on what one email may cost. A forwarded thread can carry years of quoted history;
@@ -433,6 +464,8 @@ export function renderEmail(email: TriageEmail, maxToolCalls: number, maxReads: 
     field('sender_name', email.fromName),
     field('sender_address', email.fromAddress),
     field('forwarded_by', email.forwardedBy),
+    // "To: " inside the tag, so that it reads as the email's own To line, which it is.
+    field('to_line', email.to?.trim() ? `To: ${oneLine(email.to)}` : null),
     field('subject', email.subject),
     field('date', email.dateText),
     `<attachments>\n${attachmentLines(email.attachments)}\n</attachments>`,

@@ -26,6 +26,7 @@ import {
   ownAddressesOf,
   type OwnAddresses,
 } from '../mail/complainant.js';
+import { toLineForReader, writtenByCouncilTo } from '../mail/council-copy.js';
 import type { StoragePort } from '../documents/storage.js';
 import { assistantConfigFromEnv, type AssistantConfig } from './config.js';
 import { attachmentsOf, registerTools } from './register-tools.js';
@@ -52,7 +53,8 @@ import type {
  *                pending suggestion on the card. Nothing in the register changes.
  *   accept       the officer pressed Accept, perhaps after changing something. Carried out
  *                through the SAME services as the ordinary buttons - openCase and
- *                respondents.add, fileOnCase, dismiss - in the officer's own transaction,
+ *                respondents.add, fileOnCase, fileCouncilCopy, dismiss - in the officer's
+ *                own transaction,
  *                so an accepted suggestion leaves exactly the rows a hand-made decision
  *                would, with the officer's name on them.
  *   reject       the officer said no.
@@ -110,6 +112,14 @@ export { MAX_BODY_CHARS } from './prompt.js';
 
 /** Prefixed to the reason when a suggestion to set a message aside is accepted. */
 export const SET_ASIDE_PREFIX = "Set aside on the assistant's suggestion: ";
+
+/**
+ * The outcome note on a message filed as a copy of the Council's own letter. Filing it as a
+ * copy and filing it as a reply are both stored as 'filed_on_case', and both read "added it
+ * to a case" - so without this a follow_up filed as a copy on the very case it named would
+ * show as a disagreement with nothing to say why.
+ */
+export const FILED_AS_COPY_NOTE = "Filed as a copy of the Council's own letter, not as a reply.";
 
 /** Refusals at the daily limit are 429s: the request was fine, the budget is spent. */
 const DAILY_LIMIT_STATUS = 429;
@@ -189,6 +199,14 @@ const proposalSchema = z.object({
       respondents: z.array(respondentSchema).max(10),
     })
     .nullish(),
+  // Nullish, like the others: a row stored before this answer existed has no such key.
+  councilCopy: z
+    .object({
+      caseNumber: z.string().trim().min(1).transform((s) => s.toUpperCase()),
+      letter: z.string().trim().min(1),
+      because: z.string().trim(),
+    })
+    .nullish(),
 });
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -240,6 +258,8 @@ const VIEW_COLUMNS = sql`
  * suggestion was made is no longer somewhere it can be filed, and the card should not
  * offer it; one closed since is still somewhere it can be filed, but the card must say so
  * before the officer files on it. Case numbers are unique per council (case_file_number_uq).
+ * A copy of a Council letter names its case the same way, and is resolved by the same
+ * join: a proposal carries one or the other, never both (checkedProposal).
  *
  * And the files every OTHER reading of the same message sent (otherReadingsSent). Each
  * screen shows one reading per message - the pending one when there is one - so a failed
@@ -249,7 +269,8 @@ const VIEW_COLUMNS = sql`
 const VIEW_JOINS = sql`
   LEFT JOIN case_file oc ON oc.id = s.outcome_case_file_id
   LEFT JOIN case_file fc ON fc.council_id = s.council_id
-                        AND fc.case_number = s.proposal #>> '{followUp,caseNumber}'
+                        AND fc.case_number = coalesce(s.proposal #>> '{followUp,caseNumber}',
+                                                      s.proposal #>> '{councilCopy,caseNumber}')
                         AND fc.deleted_at IS NULL
   LEFT JOIN LATERAL (
     SELECT coalesce(jsonb_agg(f.item ORDER BY o.created_at, o.id, f.n), '[]'::jsonb) AS files
@@ -275,6 +296,15 @@ function toView(r: SuggestionRow): MailSuggestionView {
           caseFileId: r.follow_up_case_file_id,
           caseNumber: p.followUp.caseNumber,
           because: p.followUp.because,
+          closed: r.follow_up_closed === true,
+        }
+      : null,
+    councilCopy: p?.councilCopy
+      ? {
+          caseFileId: r.follow_up_case_file_id,
+          caseNumber: p.councilCopy.caseNumber,
+          letter: p.councilCopy.letter,
+          because: p.councilCopy.because,
           closed: r.follow_up_closed === true,
         }
       : null,
@@ -586,6 +616,15 @@ export class AssistantService implements MailAssistantHook {
         return;
       }
       try {
+        // A copy of a letter the Council itself sent is never read automatically: the
+        // register knows what it is already, and a model call would buy nothing. The sweep
+        // leaves these out (sweep.ts); this holds for any other caller too. The officer can
+        // still press "Ask the assistant" on one - that goes to suggestFor() directly.
+        const scope = { councilId: next.ctx.councilId, userId: next.ctx.userId ?? null };
+        if (await withCouncil(scope, (tx) => this.mail.isCouncilCopy(tx, next.ctx, next.id))) {
+          log.log(`message ${next.id} is a copy of a Council letter; not read automatically`);
+          continue;
+        }
         const view = await this.suggestFor(next.ctx, next.id);
         if (view.status === 'failed') {
           log.warn(`no suggestion for message ${next.id}: ${view.error ?? 'failed'}`);
@@ -625,11 +664,13 @@ export class AssistantService implements MailAssistantHook {
       original_date: Date | string | null;
       original_date_text: string | null;
       original_body: string | null;
+      original_to: string | null;
+      envelope_to: string | null;
     }>(sql`
       SELECT status::text AS status, mailbox, forward_kind::text AS forward_kind,
              envelope_from, envelope_from_name, envelope_date, subject, body_text,
              original_from, original_from_name, original_subject, original_date,
-             original_date_text, original_body
+             original_date_text, original_body, original_to, envelope_to
       FROM mail_message
       WHERE council_id = ${ctx.councilId}::uuid AND id = ${mailMessageId}::uuid
     `);
@@ -663,32 +704,63 @@ export class AssistantService implements MailAssistantHook {
     // then it is shown as what it is, the office forwarding, and the sender is left blank
     // for the model to find in the body. The Council never complains to itself
     // (complainant.ts), and a model shown registrar@ksdc.in as the sender would say it did.
-    const isForward = m.forward_kind !== 'none';
+    //
+    // The one exception: a letter the Council itself sent TO somebody outside it, with the
+    // intake mailbox in Cc or Bcc (council-copy.ts, writtenByCouncilTo). There the Council
+    // really is the sender, and the model needs to see that to say what it is - a copy of a
+    // Council letter, not a complaint. That holds when the letter forwards something, too:
+    // the officer forwarding a complaint on to the dentist is shown as the Council writing to
+    // the dentist, whole, and not as the complainant's mail. Nobody can be named as
+    // complaining from it: checkedProposal still clears a Council address from any
+    // complainant the model gives.
+    const sentByCouncil =
+      writtenByCouncilTo(
+        {
+          original_from: m.original_from,
+          original_to: m.original_to,
+          envelope_from: m.envelope_from,
+          envelope_to: m.envelope_to,
+          subject: m.subject,
+        },
+        own,
+      ) !== null;
+    const isForward = m.forward_kind !== 'none' && !sentByCouncil;
     const envelope = m.envelope_from_name ? `${m.envelope_from_name} <${m.envelope_from}>` : m.envelope_from;
-    const officeUnrecognised = !isForward && isOwnAddress(m.envelope_from, own);
+    const officeUnrecognised = !isForward && !sentByCouncil && isOwnAddress(m.envelope_from, own);
     const forwardedBy = isForward || officeUnrecognised ? envelope : null;
 
     // A forwarded date is kept as written: it carries no timezone and inventing one would
     // be wrong (see 0013). A real timestamp - an attached original, or mail sent to us
     // directly - is shown in the Council's own time.
     const tz = ctx.config.calendar.timezone;
-    const dateText =
-      m.original_date_text ??
-      (m.original_date
-        ? localDateTime(new Date(m.original_date), tz)
-        : isForward
-          ? null
-          : localDateTime(new Date(m.envelope_date), tz));
+    // A letter the Council sent is dated by its own sending, not by anything it forwards.
+    const dateText = sentByCouncil
+      ? localDateTime(new Date(m.envelope_date), tz)
+      : (m.original_date_text ??
+        (m.original_date
+          ? localDateTime(new Date(m.original_date), tz)
+          : isForward
+            ? null
+            : localDateTime(new Date(m.envelope_date), tz)));
 
     // The whole body: prompt.ts cuts it at MAX_BODY_CHARS and tells the model how much it
     // left out - one cut, so the figure it gives is the true one.
-    const body = m.original_body ?? m.body_text ?? '';
+    const body = (isForward ? m.original_body : null) ?? m.body_text ?? m.original_body ?? '';
 
     const email: TriageEmail = {
       fromName: isForward ? m.original_from_name : officeUnrecognised ? null : m.envelope_from_name,
       fromAddress: isForward ? m.original_from : officeUnrecognised ? null : m.envelope_from,
       forwardedBy,
-      subject: m.original_subject ?? m.subject,
+      // The letter's own To line - the original's in a forward - which is what tells a
+      // copy of a Council letter from a complaint, and whose case it is (council-copy.ts).
+      // The intake mailbox's own address is marked as the Council's (toLineForReader):
+      // nothing else tells the model that a Gmail account is the Council.
+      to: toLineForReader(
+        (isForward ? m.original_to?.trim() : null) || m.envelope_to?.trim() || null,
+        own,
+        intakeAccountOf(m.mailbox),
+      ),
+      subject: (isForward ? m.original_subject : null) ?? m.subject,
       dateText,
       body,
       attachments: attachments.map((a) => ({
@@ -908,9 +980,11 @@ export class AssistantService implements MailAssistantHook {
       notComplaint: p.decision === 'not_a_complaint' ? (p.notComplaint ?? null) : null,
       followUp: p.decision === 'follow_up' ? (p.followUp ?? null) : null,
       newComplaint: null,
+      councilCopy: p.decision === 'council_letter_copy' ? (p.councilCopy ?? null) : null,
     };
     if (p.decision === 'not_a_complaint' && !out.notComplaint) return null;
     if (p.decision === 'follow_up' && !out.followUp) return null;
+    if (p.decision === 'council_letter_copy' && !out.councilCopy) return null;
 
     if (p.decision === 'new_complaint') {
       if (!p.newComplaint) return null;
@@ -1060,20 +1134,35 @@ export class AssistantService implements MailAssistantHook {
       // that as a disagreement, and so must this one, or the two would disagree about
       // what agreement means.
       const sameCase = target === suggested?.id;
+      // And a message the register knows is a copy of the Council's own letter is filed as
+      // that copy, whatever button was pressed (fileOnCase) - not as the reply this
+      // suggestion said it was. officerActed counts that as a disagreement, the very mistake
+      // the fifth answer exists to catch, so Accept must too: the same filing must not count
+      // one way or the other depending on which button filed it.
+      const asCopy = await this.mail.isCouncilCopy(tx, ctx, mailMessageId);
+      const agreed = sameCase && !asCopy;
 
-      await this.markActed(tx, ctx, s.id, sameCase ? 'accepted' : 'edited', 'filed_on_case');
+      await this.markActed(tx, ctx, s.id, agreed ? 'accepted' : 'edited', 'filed_on_case');
       const filed = await this.mail.fileOnCase(tx, ctx, { mailMessageId, caseFileId: target });
       const number = await tx.execute<{ case_number: string }>(sql`
         SELECT case_number FROM case_file
         WHERE council_id = ${ctx.councilId}::uuid AND id = ${target}::uuid
       `);
 
-      await this.recordOutcome(tx, ctx, s.id, { caseFileId: target, agreed: sameCase, note: null });
+      await this.recordOutcome(tx, ctx, s.id, {
+        caseFileId: target,
+        agreed,
+        note: asCopy ? FILED_AS_COPY_NOTE : null,
+      });
       return {
         caseFileId: target,
         caseNumber: number.rows[0]?.case_number,
         documentsFiled: filed.documentsFiled,
       };
+    }
+
+    if (p.decision === 'council_letter_copy' && p.councilCopy) {
+      return this.acceptCouncilCopy(tx, ctx, mailMessageId, s.id, p.councilCopy, overrides);
     }
 
     if (p.decision === 'not_a_complaint' && p.notComplaint) {
@@ -1093,6 +1182,60 @@ export class AssistantService implements MailAssistantHook {
     // A stored proposal whose section is missing. checkedProposal() never writes one; this
     // is the answer if somebody else ever does.
     throw new ConflictError('This suggestion is incomplete and cannot be accepted. Use the ordinary buttons.');
+  }
+
+  /**
+   * Accept "a copy of a Council letter": file it on the case as the copy it is.
+   *
+   * Through MailIntakeService.fileCouncilCopy - the register's own path for a copy - and
+   * never fileOnCase's ordinary branch, which would record it as a letter RECEIVED and
+   * close the case's reminders as though somebody had answered. asCouncilCopy, because the
+   * assistant may have recognised a copy the register's own check could not see (a forward
+   * whose To line it could not read, say); the register then files it as a copy on the
+   * officer's word, given by pressing Accept.
+   *
+   * Attached to the letter the case already records as sent, when it does ('link');
+   * otherwise put on the case as a letter sent, moving nothing ('record_only'). Accepting
+   * NEVER records the letter as sent in the full sense - that starts a reminder or moves a
+   * dentist's notice count, and is a decision the officer makes with the message page's own
+   * "record it as sent" button, seeing what it will do. A suggestion is not that decision.
+   */
+  private async acceptCouncilCopy(
+    tx: Tx,
+    ctx: EngineContext,
+    mailMessageId: string,
+    suggestionId: string,
+    copy: NonNullable<TriageProposal['councilCopy']>,
+    overrides: SuggestionOverrides,
+  ): Promise<AcceptResult> {
+    const suggested = await this.liveCaseByNumber(tx, ctx, copy.caseNumber);
+    const target = overrides.caseFileId ?? suggested?.id ?? null;
+    if (!target) {
+      throw new ConflictError(
+        `${copy.caseNumber} is not a live case any more - it may have been cancelled as opened ` +
+          'in error. Choose the case this copy belongs to, or use the ordinary buttons.',
+      );
+    }
+    // As for a follow-up: filed on another case than suggested is accepted in form, but the
+    // assistant was wrong about which case, and the figures must say so.
+    const sameCase = target === suggested?.id;
+
+    await this.markActed(tx, ctx, suggestionId, sameCase ? 'accepted' : 'edited', 'filed_on_case');
+    // Exactly what "Add to a case" does with a copy: attached to the letter the case records
+    // around its date, otherwise put on as a letter sent - never "record it as sent" (above),
+    // and refused, to the message page, where the choice is the officer's to make.
+    const filed = await this.mail.fileCopyByDefault(tx, ctx, {
+      mailMessageId,
+      caseFileId: target,
+      asCouncilCopy: true,
+    });
+
+    await this.recordOutcome(tx, ctx, suggestionId, {
+      caseFileId: target,
+      agreed: sameCase,
+      note: FILED_AS_COPY_NOTE,
+    });
+    return { caseFileId: target, caseNumber: filed.caseNumber, documentsFiled: filed.documentsFiled };
   }
 
   /** The officer said no. The message stays in the tray for them to deal with by hand. */
@@ -1126,10 +1269,18 @@ export class AssistantService implements MailAssistantHook {
    * The tray's hook: the officer used an ordinary button on a message that had a
    * suggestion waiting. Recorded as 'handled', with whether it matched.
    *
-   *   new_complaint    agrees with opening a case
-   *   follow_up        agrees with filing it on THE SAME case, and only that
-   *   not_a_complaint  agrees with setting it aside
-   *   unsure           agrees with nothing and disagrees with nothing: null
+   *   new_complaint        agrees with opening a case
+   *   follow_up            agrees with filing it on THE SAME case as a letter received,
+   *                        and only that
+   *   council_letter_copy  agrees with filing it on THE SAME case as a copy of the
+   *                        Council's letter (fileCouncilCopy, or fileOnCase on a message
+   *                        the register knows is a copy), and only that
+   *   not_a_complaint      agrees with setting it aside
+   *   unsure               agrees with nothing and disagrees with nothing: null
+   *
+   * The two filings are told apart because they are two different answers: "this is
+   * their reply" closes reminders, "this is our own letter" never does. A follow_up for a
+   * message the officer filed as a copy is the very mistake the fifth answer exists for.
    *
    * Called inside a savepoint of the officer's transaction (see MailIntakeService), so a
    * failure here never costs the officer their action.
@@ -1149,12 +1300,19 @@ export class AssistantService implements MailAssistantHook {
     } else if (act.action === 'opened_case') {
       agreed = s.decision === 'new_complaint';
     } else if (act.action === 'filed_on_case') {
-      if (s.decision === 'follow_up' && s.proposal.followUp) {
+      const asCopy = act.asCouncilCopy === true;
+      const named =
+        s.decision === 'follow_up' && !asCopy
+          ? s.proposal.followUp?.caseNumber
+          : s.decision === 'council_letter_copy' && asCopy
+            ? s.proposal.councilCopy?.caseNumber
+            : undefined;
+      if (named) {
         const c = await tx.execute<{ case_number: string }>(sql`
           SELECT case_number FROM case_file
           WHERE council_id = ${ctx.councilId}::uuid AND id = ${act.caseFileId}::uuid
         `);
-        agreed = c.rows[0]?.case_number.toUpperCase() === s.proposal.followUp.caseNumber.toUpperCase();
+        agreed = c.rows[0]?.case_number.toUpperCase() === named.toUpperCase();
       } else {
         agreed = false;
       }
@@ -1166,7 +1324,14 @@ export class AssistantService implements MailAssistantHook {
       UPDATE mail_suggestion
       SET status = 'handled', outcome_action = ${act.action},
           outcome_case_file_id = ${act.action === 'set_aside' ? null : act.caseFileId}::uuid,
-          outcome_agreed = ${agreed}, outcome_note = ${act.action === 'set_aside' ? act.reason : null},
+          outcome_agreed = ${agreed},
+          outcome_note = ${
+            act.action === 'set_aside'
+              ? act.reason
+              : act.action === 'filed_on_case' && act.asCouncilCopy
+                ? FILED_AS_COPY_NOTE
+                : null
+          },
           acted_at = now(), acted_by = ${ctx.userId ?? null}::uuid
       WHERE council_id = ${ctx.councilId}::uuid AND id = ${s.id}::uuid
     `);
@@ -1220,9 +1385,10 @@ export class AssistantService implements MailAssistantHook {
    * agreement figure describe the same suggestions.
    *
    * AGREEMENT, HONESTLY. Agreed: accepted as it was, accepted after an edit that kept the
-   * decision (and, for a follow-up, the case), or the ordinary buttons doing what it
-   * suggested. Disagreed: the ordinary buttons doing something else, a follow-up filed on
-   * a different case - AND an explicit rejection. A rejection's own outcome_agreed is null
+   * decision (and, for a follow-up or a copy of a Council letter, the case), or the
+   * ordinary buttons doing what it suggested. Disagreed: the ordinary buttons doing
+   * something else, a follow-up or a copy filed on a different case, a follow-up filed as
+   * a copy or a copy filed as a reply - AND an explicit rejection. A rejection's own outcome_agreed is null
    * (the contract: nothing has been done yet), but leaving rejections out of this figure
    * would mean the one thing the officer said outright - "this is wrong" - never counted
    * against the assistant. 'unsure' is in neither column: it claimed nothing.

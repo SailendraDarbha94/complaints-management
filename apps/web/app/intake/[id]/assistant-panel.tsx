@@ -19,6 +19,7 @@ import {
 import { BusyButton } from '@/app/components/busy-button';
 import { PendingLink } from '@/app/components/pending-link';
 import {
+  COPY_ACCEPT_EFFECT,
   acceptBlocker,
   attachmentsReadLine,
   closedCaseWarning,
@@ -26,8 +27,10 @@ import {
   joinNames,
   knownToRegister,
   normaliseRespondent,
+  notForACopy,
   respondentParticulars,
   sameRespondents,
+  suggestedCase,
   suggestionHeadline,
 } from '../suggestion-text';
 
@@ -66,11 +69,16 @@ const FILE_COST = 'Opening a file costs extra: about half a rupee to just over a
  * tray does: it spends the next serial of a legal register, and this button is the
  * filled one at the top of the column - the one a hand finds by accident. So does filing
  * on a CLOSED case. Adding to an open case and setting aside are one click.
+ *
+ * A COPY OF A COUNCIL LETTER is one click too, and says beside the button what it does:
+ * it files the copy and nothing more. Recording the letter as sent - which starts a
+ * reminder or counts a notice - is the "File the copy" panel's own button, not this one.
  */
 export function AssistantPanel({
   suggestion: s,
   assistant,
   messageStatus,
+  councilCopy = false,
   candidates,
   cases,
   busy,
@@ -81,6 +89,8 @@ export function AssistantPanel({
   suggestion: MailSuggestionView | null;
   assistant: AssistantState;
   messageStatus: string;
+  /** The register itself knows the message is a copy of a letter the Council sent. */
+  councilCopy?: boolean;
   candidates: Candidate[];
   cases: CaseOption[];
   /** Anything on the page in flight: every button here is shut. */
@@ -130,8 +140,9 @@ export function AssistantPanel({
         <div className="panel-body">
           <p className="rti-hint">
             The assistant has not read this message. It can suggest whether it is a new
-            complaint, a letter about a case already open, or not a complaint at all. It only
-            suggests: nothing changes until you accept.
+            complaint, a letter about a case already open, a copy of a letter the Council
+            sent, or not a complaint at all. It only suggests: nothing changes until you
+            accept.
             {!assistant.automatic &&
               ' It reads only the emails you ask it about: this one is sent to it only if you press the button.'}
             {/* Said BEFORE the press, because in ask mode the press is the officer deciding
@@ -166,9 +177,13 @@ export function AssistantPanel({
   const chip = confidenceChipClass(s);
   const isFailed = s.status === 'failed';
   const open = s.status === 'pending' && messageStatus === 'unfiled';
-  const blocker = acceptBlocker(s);
+  // On a message the register knows is a copy of our letter, "open a case" and "add it as
+  // their reply" are not offered at all (notForACopy); rejecting still is.
+  const notCopyAnswer = notForACopy(s, councilCopy);
+  const blocker = notCopyAnswer ?? acceptBlocker(s);
   const nc = s.newComplaint;
   const fu = s.followUp;
+  const copy = s.decision === 'council_letter_copy' ? (s.councilCopy ?? null) : null;
   const closed = closedCaseWarning(s);
   const read = attachmentsReadLine(s);
   // See the header: these two confirm before they act; the rest are one click.
@@ -257,6 +272,34 @@ export function AssistantPanel({
           </dl>
         )}
 
+        {mode !== 'edit' && copy && (
+          <dl className="pairs assistant-pairs">
+            <div>
+              <dt>Case</dt>
+              <dd>
+                {copy.caseFileId ? (
+                  <>
+                    <PendingLink href={`/cases/${copy.caseFileId}` as Route}>{copy.caseNumber}</PendingLink>
+                    {copy.closed && <span className="meta warn">Closed.</span>}
+                  </>
+                ) : (
+                  <>
+                    {copy.caseNumber}
+                    <span className="meta warn">Not a live case in the register.</span>
+                  </>
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>The letter</dt>
+              <dd>
+                {copy.letter}
+                <span className="meta">{copy.because}</span>
+              </dd>
+            </div>
+          </dl>
+        )}
+
         {s.outcome && <Outcome outcome={s.outcome} />}
 
         {open && mode === 'view' && (
@@ -271,10 +314,12 @@ export function AssistantPanel({
               else post('/suggestion/accept', {});
             }}
           >
-            {blocker ? (
+            {notCopyAnswer ? (
+              <p className="rti-hint">{notCopyAnswer}</p>
+            ) : blocker ? (
               <p className="rti-hint">
                 {blocker}{' '}
-                {s.decision === 'follow_up'
+                {s.decision === 'follow_up' || s.decision === 'council_letter_copy'
                   ? 'Change and accept to pick the right case.'
                   : s.decision === 'new_complaint'
                     ? "Change and accept to enter the complainant's name."
@@ -284,6 +329,8 @@ export function AssistantPanel({
               <p className="rti-hint">This takes the next number in the register.</p>
             ) : closed ? (
               <p className="rti-hint">{closed}</p>
+            ) : copy ? (
+              <p className="rti-hint">{COPY_ACCEPT_EFFECT}</p>
             ) : null}
             {failed('/suggestion/accept')}
             <div className="action-buttons">
@@ -297,17 +344,21 @@ export function AssistantPanel({
                       ? 'Opening…'
                       : s.decision === 'follow_up'
                         ? 'Adding…'
-                        : 'Setting aside…'
+                        : copy
+                          ? 'Filing…'
+                          : 'Setting aside…'
                   }
                 >
                   {s.decision === 'new_complaint'
                     ? 'Accept: open the case'
                     : s.decision === 'follow_up' && fu
                       ? `Accept: add to ${fu.caseNumber}`
-                      : 'Accept: set it aside'}
+                      : copy
+                        ? `Accept: file the copy on ${copy.caseNumber}`
+                        : 'Accept: set it aside'}
                 </BusyButton>
               )}
-              {s.decision !== 'unsure' && (
+              {s.decision !== 'unsure' && !notCopyAnswer && (
                 <button type="button" className="link-button" disabled={busy} onClick={() => setMode('edit')}>
                   Change and accept
                 </button>
@@ -349,9 +400,13 @@ export function AssistantPanel({
                 type="submit"
                 busy={busyOn('/suggestion/accept')}
                 disabled={busy}
-                busyLabel={s.decision === 'new_complaint' ? 'Opening…' : 'Adding…'}
+                busyLabel={s.decision === 'new_complaint' ? 'Opening…' : copy ? 'Filing…' : 'Adding…'}
               >
-                {s.decision === 'new_complaint' ? 'Open the case' : 'Add it to the closed case'}
+                {s.decision === 'new_complaint'
+                  ? 'Open the case'
+                  : copy
+                    ? 'File the copy on the closed case'
+                    : 'Add it to the closed case'}
               </BusyButton>
               <button type="button" className="link-button" disabled={busy} onClick={() => setMode('view')}>
                 Cancel
@@ -520,8 +575,10 @@ function EditAndAccept({
   onCancel: () => void;
 }) {
   const nc = s.newComplaint;
-  const fu = s.followUp;
+  // A follow-up's case or a copy's: the same picker serves both.
+  const fu = suggestedCase(s);
   const nac = s.notComplaint;
+  const picksCase = s.decision === 'follow_up' || s.decision === 'council_letter_copy';
 
   const [summary, setSummary] = useState(nc?.summary ?? '');
   const [name, setName] = useState(nc?.complainantName ?? '');
@@ -578,7 +635,7 @@ function EditAndAccept({
       const now = rows.map((r) => r.value);
       if (!sameRespondents(now, nc.respondents)) o.respondents = now.map(normaliseRespondent);
     }
-    if (s.decision === 'follow_up' && caseFileId && caseFileId !== fu?.caseFileId) {
+    if (picksCase && caseFileId && caseFileId !== fu?.caseFileId) {
       o.caseFileId = caseFileId;
     }
     if (s.decision === 'not_a_complaint' && nac && reason.trim() !== nac.reason.trim()) {
@@ -591,7 +648,7 @@ function EditAndAccept({
   const ready =
     s.decision === 'new_complaint'
       ? Boolean(summary.trim() && name.trim()) && !unnamed
-      : s.decision === 'follow_up'
+      : picksCase
         ? Boolean(caseFileId)
         : reason.trim().length >= 3;
 
@@ -691,7 +748,7 @@ function EditAndAccept({
         </>
       )}
 
-      {s.decision === 'follow_up' && (
+      {picksCase && (
         <div>
           <label htmlFor="as-case">Case</label>
           <select id="as-case" value={caseFileId} onChange={(e) => setCaseFileId(e.target.value)}>
@@ -715,7 +772,12 @@ function EditAndAccept({
                 </option>
               ))}
           </select>
-          {fu && <p className="rti-hint">It said: {fu.because}</p>}
+          {s.followUp && <p className="rti-hint">It said: {s.followUp.because}</p>}
+          {s.councilCopy && (
+            <p className="rti-hint">
+              It said: {s.councilCopy.because} {COPY_ACCEPT_EFFECT}
+            </p>
+          )}
         </div>
       )}
 
@@ -734,14 +796,22 @@ function EditAndAccept({
           busy={spinning}
           disabled={busy || !ready}
           busyLabel={
-            s.decision === 'new_complaint' ? 'Opening…' : s.decision === 'follow_up' ? 'Adding…' : 'Setting aside…'
+            s.decision === 'new_complaint'
+              ? 'Opening…'
+              : s.decision === 'follow_up'
+                ? 'Adding…'
+                : s.decision === 'council_letter_copy'
+                  ? 'Filing…'
+                  : 'Setting aside…'
           }
         >
           {s.decision === 'new_complaint'
             ? 'Open the case'
             : s.decision === 'follow_up'
               ? 'Add it to this case'
-              : 'Set it aside'}
+              : s.decision === 'council_letter_copy'
+                ? 'File the copy on this case'
+                : 'Set it aside'}
         </BusyButton>
         <button type="button" className="link-button" disabled={busy} onClick={onCancel}>
           Cancel

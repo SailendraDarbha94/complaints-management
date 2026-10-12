@@ -26,12 +26,20 @@ export function TrayActions({
   suggestedCaseFileId,
   status,
   complainant,
+  councilCopy = false,
 }: {
   messageId: string;
   cases: Array<{ id: string; caseNumber: string; summary: string }>;
   suggestedCaseFileId: string | null;
   status: string;
   complainant: { name: string; email: string } | null;
+  /**
+   * A copy of a letter the Council sent. Never opened as a case - the server refuses - so
+   * that button gives way to one that opens the message, where the officer sees whether the
+   * case records the letter and chooses what filing it does. "Add to a case" here files it
+   * the safe way: attached to the recorded letter, or as a letter sent that moves nothing.
+   */
+  councilCopy?: boolean;
 }) {
   // `step`, not `pending`: which confirm step is open. `busy` is ANY request in flight on
   // this card, which shuts these buttons; `mine` is one of these buttons', which spins them.
@@ -213,9 +221,15 @@ export function TrayActions({
   // no confirm step of its own to hold the card still.
   return (
     <div className="row-actions">
-      <button type="button" className="link-button" disabled={busy} onClick={() => setStep('open')}>
-        Open a case
-      </button>
+      {councilCopy ? (
+        <PendingLink className="link-button" href={`/intake/${messageId}` as Route}>
+          File the copy
+        </PendingLink>
+      ) : (
+        <button type="button" className="link-button" disabled={busy} onClick={() => setStep('open')}>
+          Open a case
+        </button>
+      )}
       {cases.length > 0 && (
         <button type="button" className="link-button" disabled={busy} onClick={() => setStep('file')}>
           Add to a case

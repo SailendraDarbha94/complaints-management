@@ -34,6 +34,7 @@ function complaint(respondents: SuggestedRespondent[], complainantEmail: string 
     notComplaint: null,
     followUp: null,
     newComplaint: { summary: 's', complainantName: 'c', complainantEmail, respondents },
+    councilCopy: null,
   });
 }
 
@@ -117,10 +118,41 @@ describe('the rest of the key', () => {
         notComplaint: null,
         followUp: { caseNumber, because: 'b' },
         newComplaint: null,
+        councilCopy: null,
       });
     expect(scoreCase(key, fu('KSDC/COMP/2026-27/0011')).pass).toBe(true);
     expect(scoreCase(key, fu('ksdc-comp-2026-27-11')).pass).toBe(true);
     expect(scoreCase(key, fu('KSDC/COMP/2026-27/0012')).pass).toBe(false);
+  });
+
+  it('a copy of a Council letter is scored as a follow-up is: the right answer, on the right case', () => {
+    const key: EvalExpectedLike = { decision: 'council_letter_copy', caseNumber: 'KSDC/COMP/2026-27/0009' };
+    const copy = (caseNumber: string) =>
+      answered({
+        decision: 'council_letter_copy',
+        confidence: 'high',
+        reasoning: 'r',
+        notComplaint: null,
+        followUp: null,
+        newComplaint: null,
+        councilCopy: { caseNumber, letter: 'documents request', because: 'b' },
+      });
+    expect(scoreCase(key, copy('KSDC/COMP/2026-27/0009'))).toMatchObject({ decisionRight: true, caseNumberRight: true, pass: true });
+    expect(scoreCase(key, copy('KSDC-COMP-2026-27-9')).pass).toBe(true);
+    expect(scoreCase(key, copy('KSDC/COMP/2026-27/0011'))).toMatchObject({ decisionRight: true, caseNumberRight: false, pass: false });
+
+    // The very mistake the fifth answer exists for: a copy called a follow-up on the same
+    // case is the wrong answer, case and all.
+    const asFollowUp = answered({
+      decision: 'follow_up',
+      confidence: 'high',
+      reasoning: 'r',
+      notComplaint: null,
+      followUp: { caseNumber: 'KSDC/COMP/2026-27/0009', because: 'b' },
+      newComplaint: null,
+      councilCopy: null,
+    });
+    expect(scoreCase(key, asFollowUp)).toMatchObject({ decisionRight: false, caseNumberRight: false, pass: false });
   });
 
   it('checks the complainant\'s address when the key gives one, and a failed run passes nothing', () => {
@@ -140,6 +172,7 @@ describe('opening attachments', () => {
     notComplaint: { reason: 'a catalogue' },
     followUp: null,
     newComplaint: null,
+    councilCopy: null,
   };
   const bill: AttachmentReadRecord = { ref: 'a1', filename: 'bill.jpg', pagesSent: null, pagesTotal: null };
 

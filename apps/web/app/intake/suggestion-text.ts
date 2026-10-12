@@ -55,6 +55,14 @@ export function suggestionHeadline(s: MailSuggestionView): string | null {
       return s.notComplaint
         ? `Suggested: not a complaint — ${s.notComplaint.reason}`
         : 'Suggested: not a complaint';
+    case 'council_letter_copy': {
+      // The Council's own letter, not anybody's reply: said first, because that is the
+      // point of the answer - filed as a reply it would stop reminders nobody answered.
+      const c = s.councilCopy;
+      return c
+        ? `Suggested: copy of a Council letter → ${c.caseNumber}${c.closed ? ' (closed)' : ''} — ${c.letter}`
+        : 'Suggested: copy of a Council letter';
+    }
     case 'unsure':
       return `Not sure: ${s.reasoning ?? 'it could not tell what this is.'}`;
     default:
@@ -98,6 +106,11 @@ export function acceptBlocker(s: MailSuggestionView): string | null {
         : `${s.followUp.caseNumber} is not a live case in the register.`;
     case 'not_a_complaint':
       return null;
+    case 'council_letter_copy': {
+      const c = s.councilCopy;
+      if (!c) return 'It did not say which case.';
+      return c.caseFileId ? null : `${c.caseNumber} is not a live case in the register.`;
+    }
     default:
       return 'It was not sure, so there is nothing to accept.';
   }
@@ -108,8 +121,58 @@ export function acceptBlocker(s: MailSuggestionView): string | null {
  * Said in the confirm step on the card and beside the button on the message page.
  */
 export function closedCaseWarning(s: MailSuggestionView): string | null {
+  if (s.decision === 'council_letter_copy' && s.councilCopy?.closed) {
+    return `${s.councilCopy.caseNumber} is closed. Filing the copy adds it to a closed case; whether to reopen the case is your decision.`;
+  }
   if (s.decision !== 'follow_up' || !s.followUp?.closed) return null;
   return `${s.followUp.caseNumber} is closed. Filing this adds it to a closed case; whether to reopen the case is your decision.`;
+}
+
+/**
+ * The case a suggestion would file the message on - a follow-up's or a copy's - or null.
+ * One place, so the card and the message page offer the same case for both.
+ */
+export function suggestedCase(
+  s: MailSuggestionView,
+): { caseFileId: string | null; caseNumber: string; closed: boolean } | null {
+  if (s.decision === 'follow_up') return s.followUp ?? null;
+  if (s.decision === 'council_letter_copy') return s.councilCopy ?? null;
+  return null;
+}
+
+/**
+ * What accepting a copy of a Council letter does - said beside the button, because it is
+ * less than the officer might expect: it files the copy, and records nothing as sent.
+ * Recording the letter as sent starts a reminder or counts a notice. That is the message
+ * page's own "File the copy" panel, where what it will do is shown first - shown for a copy
+ * only the assistant recognised too, while its suggestion waits - or the case page ("I have
+ * sent this" on the letter, or the step's own button), before accepting or instead of it.
+ *
+ * When the case has a draft of the letter, accepting closes that draft off as sent (so
+ * "I have sent this" cannot record it a second time) - still without starting a reminder.
+ */
+export const COPY_ACCEPT_EFFECT =
+  'Files it on the case as a copy of a letter the Council sent - attached to that letter when the case ' +
+  'records it as sent, otherwise put on the case as a letter sent. It never counts as a reply, and no ' +
+  'reminder starts or stops: to start one, record the letter as sent first.';
+
+/**
+ * Why a suggestion cannot be accepted on a message the register itself knows is a copy of
+ * a letter the Council sent, or null when it can.
+ *
+ * "Open a case" and "add it as their reply" are both wrong for such a message, and the
+ * register refuses the first and files the second as a copy anyway - so Accept would be a
+ * dead button, or do something other than its label says. Rejecting stays open, and the
+ * copy is filed with its own panel.
+ */
+export function notForACopy(s: MailSuggestionView, isCouncilCopy: boolean): string | null {
+  if (!isCouncilCopy || s.status !== 'pending') return null;
+  if (s.decision !== 'new_complaint' && s.decision !== 'follow_up') return null;
+  return (
+    'The register recognises this as a copy of a letter the Council sent, so it is not ' +
+    (s.decision === 'new_complaint' ? 'opened as a case' : 'added as a reply') +
+    '. File it with the "File the copy" panel, or reject this suggestion.'
+  );
 }
 
 /**

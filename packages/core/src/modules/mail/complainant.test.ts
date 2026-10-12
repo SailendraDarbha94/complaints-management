@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  deliveredAddress,
   intakeAccountOf,
   isOwnAddress,
   ownAddressesOf,
@@ -32,6 +33,18 @@ describe("the Council's own addresses", () => {
 
   it('include the intake mailbox this software reads', () => {
     expect(isOwnAddress('council.intake@gmail.com', own)).toBe(true);
+  });
+
+  it('include the intake mailbox under every spelling Gmail delivers to it, and nobody else', () => {
+    for (const a of ['councilintake@gmail.com', 'Council.In.Take@Gmail.com', 'council.intake+office@gmail.com', 'council.intake@googlemail.com']) {
+      expect(isOwnAddress(a, own), a).toBe(true);
+    }
+    expect(isOwnAddress('council.intake2@gmail.com', own)).toBe(false);
+    // Only Gmail promises this: elsewhere a dot is part of the name.
+    const offGmail = ownAddressesOf({ officialEmail: 'intake.box@example.org', website: null });
+    expect(isOwnAddress('intakebox@example.org', offGmail)).toBe(false);
+    expect(deliveredAddress('A.B+c@GoogleMail.com')).toBe('ab@gmail.com');
+    expect(deliveredAddress('a.b+c@example.org')).toBe('a.b+c@example.org');
   });
 
   it('do NOT include everyone who shares a public mail provider with the intake mailbox', () => {

@@ -67,6 +67,10 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
   const cancelled = Boolean(c.deleted_at);
   // Nobody is waiting on a cancelled case, and it is on nobody's clock.
   const stopped = cancelled || c.state === 'closed';
+  // The complaint as it was received: the first mail on the case that is not a copy of one
+  // of the Council's own letters. A case opened by hand from a paper letter may have a copy
+  // of the Council's reply as its only mail, and that is not the complaint.
+  const complaint = data.mail.find((m) => !(m.council_copy ?? false)) ?? null;
 
   return (
     <main className="shell">
@@ -193,7 +197,9 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
             )}
           </Section>
 
-          {data.mail[0] && <Complaint mail={data.mail[0]} />}
+          {/* The first mail that is not a copy of the Council's own letter. `?? false`: a
+              route not yet rebuilt sends no council_copy, and every row is then mail received. */}
+          {complaint && <Complaint mail={complaint} />}
 
           {data.rtiRequests.length > 0 && (
             <Section title="Asked about under the RTI Act">
@@ -275,6 +281,13 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
                           formatDate(l.sent_at ?? l.received_at)
                         ) : (
                           <span className="chip chip-draft">draft</span>
+                        )}
+                        {l.copy_mail_id && (
+                          // A copy of this letter reached the intake mailbox and was filed
+                          // against it: the proof of what was sent.
+                          <PendingLink className="meta" href={`/intake/${l.copy_mail_id}`}>
+                            Copy on file, emailed {formatDate(l.copy_emailed_at)}
+                          </PendingLink>
                         )}
                       </td>
                       <td className="mono">{l.despatch_no ?? '-'}</td>

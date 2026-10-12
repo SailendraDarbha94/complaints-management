@@ -114,7 +114,12 @@ function Card({
 }) {
   // The complainant, not the forwarder - as the server worked it out, so the card, the
   // message page and "Open a case" can never disagree about who it is.
-  const who = message.complainant?.name ?? `complainant not known \u00b7 via ${message.envelope_from}`;
+  // A copy of a letter the Council sent has no complainant: it is the Council writing, and
+  // the person who matters is the one it went to.
+  const copy = message.councilCopy ?? null;
+  const who = copy
+    ? `the Council's letter to ${copy.recipients.map((r) => r.name ?? r.email).join(', ')}`
+    : (message.complainant?.name ?? `complainant not known \u00b7 via ${message.envelope_from}`);
   const what = message.original_subject ?? message.subject;
   // Only a suggestion still waiting on the officer, or one that failed, belongs on the card.
   // Once it is accepted, rejected or overtaken by the ordinary buttons, the card is back to
@@ -135,6 +140,7 @@ function Card({
           <PendingLink className="case-link" href={`/intake/${message.id}` as Route}>
             {what}
           </PendingLink>
+          {copy && <span className="chip">Copy of our letter</span>}
           {message.attachment_count > 0 && (
             <span className="chip chip-verbatim">
               {message.attachment_count} file{message.attachment_count === 1 ? '' : 's'}
@@ -147,7 +153,13 @@ function Card({
           {/* Prose, so not `.meta` — inside a .row that renders monospace. */}
           <p className="action-why">{message.snippet}</p>
 
-          {suggestion && <TraySuggestion messageId={message.id} suggestion={suggestion} />}
+          {suggestion && (
+            <TraySuggestion
+              messageId={message.id}
+              suggestion={suggestion}
+              isCouncilCopy={Boolean(message.councilCopy)}
+            />
+          )}
 
           <span className="meta">
             {who}
@@ -167,6 +179,7 @@ function Card({
           suggestedCaseFileId={message.suggested_case_file_id}
           status={message.status}
           complainant={message.complainant}
+          councilCopy={Boolean(copy)}
         />
       </div>
     </CardScope>

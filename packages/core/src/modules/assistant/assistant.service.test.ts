@@ -14,7 +14,8 @@ import { LocalStorage } from '../documents/storage.js';
 import { MailIntakeService } from '../mail/mail-intake.service.js';
 import { seedCouncilAndOfficer } from '../../test-support/fixtures.js';
 import { todayIn } from '../../common/working-days.js';
-import { AssistantService, SET_ASIDE_PREFIX, STILL_READING } from './assistant.service.js';
+import { AssistantService, FILED_AS_COPY_NOTE, SET_ASIDE_PREFIX, STILL_READING } from './assistant.service.js';
+import { OWN_MAILBOX_MARK } from '../mail/council-copy.js';
 import { assistantConfigFromEnv, playbookVersionOf, type AssistantConfig } from './config.js';
 import { registerTools } from './register-tools.js';
 import type {
@@ -94,6 +95,7 @@ const notComplaint = (reason = 'A circular from another body, not a complaint.')
   notComplaint: { reason },
   followUp: null,
   newComplaint: null,
+  councilCopy: null,
 });
 const followUp = (caseNumber: string): TriageProposal => ({
   decision: 'follow_up',
@@ -102,6 +104,7 @@ const followUp = (caseNumber: string): TriageProposal => ({
   notComplaint: null,
   followUp: { caseNumber, because: 'Same complainant, same treatment.' },
   newComplaint: null,
+  councilCopy: null,
 });
 const newComplaint = (nc: NonNullable<TriageProposal['newComplaint']>): TriageProposal => ({
   decision: 'new_complaint',
@@ -110,6 +113,7 @@ const newComplaint = (nc: NonNullable<TriageProposal['newComplaint']>): TriagePr
   notComplaint: null,
   followUp: null,
   newComplaint: nc,
+  councilCopy: null,
 });
 const unsure = (): TriageProposal => ({
   decision: 'unsure',
@@ -118,6 +122,16 @@ const unsure = (): TriageProposal => ({
   notComplaint: null,
   followUp: null,
   newComplaint: null,
+  councilCopy: null,
+});
+const councilCopy = (caseNumber: string): TriageProposal => ({
+  decision: 'council_letter_copy',
+  confidence: 'high',
+  reasoning: "A copy of the Council's documents letter, sent to the complainant on that case.",
+  notComplaint: null,
+  followUp: null,
+  newComplaint: null,
+  councilCopy: { caseNumber, letter: 'documents request', because: 'Quotes the case; sent to its complainant.' },
 });
 
 function config(over: Partial<AssistantConfig> = {}): AssistantConfig {
@@ -230,11 +244,79 @@ async function arriveDirect(
     'utf8',
   );
   const parsed = await simpleParser(bytes);
+  // The mailbox named with its account, as the reader names it: that is how the register
+  // knows intake@asst.test is the Council's own address. Without it, the Registrar writing
+  // to intake@asst.test would look like the Council writing to an outsider - a copy of a
+  // Council letter (council-copy.ts) - rather than the office forwarding a complaint.
   const out = await asOfficer(c, (tx) =>
-    mail.ingest(tx, c, parsed, { mailbox: 'INBOX', uid: 1000 + seq, uidValidity: '1', raw: bytes }),
+    mail.ingest(tx, c, parsed, {
+      mailbox: 'intake@asst.test/INBOX',
+      uid: 1000 + seq,
+      uidValidity: '1',
+      raw: bytes,
+    }),
   );
   expect(out.status).toBe('unfiled');
   return out.mailMessageId;
+}
+
+/**
+ * A letter the Council sent from its own address to somebody outside it, with the intake
+ * mailbox in Cc - a copy of a Council letter, as the register recognises one.
+ */
+async function arriveCopy(
+  c: EngineContext,
+  to: { name: string; email: string },
+  subject: string,
+  body = 'Sir/Madam, please send the bills and a timeline of your treatment.',
+): Promise<string> {
+  seq++;
+  const council = c.councilId === councilId ? 'asst' : 'asrp';
+  const bytes = Buffer.from(
+    [
+      `From: Test Registrar <registrar@${council}.test>`,
+      `To: ${to.name} <${to.email}>`,
+      `Cc: intake@${council}.test`,
+      `Subject: ${subject}`,
+      `Message-ID: <asst-copy-${TAG}-${seq}@mail.test>`,
+      'Date: Wed, 7 Oct 2026 10:14:00 +0530',
+      'Content-Type: text/plain; charset=utf-8',
+      '',
+      body,
+    ].join('\r\n'),
+    'utf8',
+  );
+  const parsed = await simpleParser(bytes);
+  const out = await asOfficer(c, (tx) =>
+    mail.ingest(tx, c, parsed, { mailbox: 'INBOX', uid: 1000 + seq, uidValidity: '1', raw: bytes }),
+  );
+  expect(out).toMatchObject({ status: 'unfiled', councilCopy: true });
+  return out.mailMessageId;
+}
+
+/** The documents letter, drafted on the case and confirmed sent - "I have sent this". */
+async function sendDocumentsLetter(c: EngineContext, caseFileId: string): Promise<string> {
+  return asOfficer(c, async (tx) => {
+    const draft = await correspondence.draft(tx, c, { caseFileId, kind: 'request_docs' });
+    await correspondence.markSent(tx, c, {
+      correspondenceId: draft.correspondenceId,
+      sentAt: new Date(Date.now() - 24 * 3600_000),
+    });
+    return draft.correspondenceId;
+  });
+}
+
+/** What a case holds: its letters each way, and whether it is waiting for documents. */
+async function caseState(c: EngineContext, caseFileId: string) {
+  return asOfficer(c, async (tx) => {
+    const rows = await tx.execute<{ inbound: number; outbound: number }>(sql`
+      SELECT count(*) FILTER (WHERE direction = 'in')::int AS inbound,
+             count(*) FILTER (WHERE direction = 'out')::int AS outbound
+      FROM correspondence WHERE council_id = ${c.councilId}::uuid AND case_file_id = ${caseFileId}::uuid
+    `);
+    const waiting = (await followups.liveForCase(tx, c, caseFileId)).some((f) => f.stage === 'await_patient_docs');
+    return { ...rows.rows[0]!, waitingForDocuments: waiting };
+  });
 }
 
 /** Suggestions made today in a council - what the daily limit counts. */
@@ -309,6 +391,10 @@ beforeAll(async () => {
         ON CONFLICT (council_id) DO UPDATE SET config = EXCLUDED.config
       `);
     });
+    // The Council's letter templates, which a copy of one of its letters is recognised by.
+    await withCouncil({ councilId: cid, userId: oid }, (tx) =>
+      correspondence.seedTemplates(tx, { councilId: cid, userId: oid, config: AI_ON }),
+    );
   }
 });
 
@@ -487,7 +573,7 @@ describe('asking the assistant about a message', () => {
     expect(email.attachments).toEqual([]);
     // Nothing else from the row travels.
     expect(Object.keys(email).sort()).toEqual(
-      ['attachments', 'body', 'dateText', 'forwardedBy', 'fromAddress', 'fromName', 'subject'].sort(),
+      ['attachments', 'body', 'dateText', 'forwardedBy', 'fromAddress', 'fromName', 'subject', 'to'].sort(),
     );
   });
 
@@ -729,6 +815,13 @@ describe('asking the assistant about a message', () => {
     );
     expect(out.caseNumber).toBeTruthy();
     expect((await suggestionRows(ctx, id))[0]).toMatchObject({ status: 'edited', outcome_agreed: true });
+  });
+
+  it("shows the original's To line - in a forward, where the complaint was sent, not where it was forwarded", async () => {
+    const id = await arrive(ctx, person(), 'Crown fell out', 'The crown fell out.');
+    await assistant.suggestFor(ctx, id);
+    expect(seen.at(-1)!.to).toMatch(/registrar@asst\.test/);
+    expect(seen.at(-1)!.to).not.toMatch(/intake@asst\.test/);
   });
 
   it("shows a message from the Council's own address as the office forwarding it, with no sender", async () => {
@@ -1883,6 +1976,281 @@ describe('the officer using the ordinary buttons instead', () => {
   });
 });
 
+// ─── Copies of the Council's own letters ─────────────────────────────────────
+
+describe("a copy of a letter the Council sent", () => {
+  it('is shown to the model as the Council writing to the person it went to - not as a forward with no sender', async () => {
+    const who = person('Rekha');
+    const id = await arriveCopy(ctx, who, 'Your complaint - documents still awaited');
+    // Ask mode, or the officer pressing the button: a copy can still be asked about.
+    answer = () => ok(unsure());
+    await assistant.suggestFor(ctx, id);
+    const email = seen.at(-1)!;
+    expect(email.fromAddress).toBe('registrar@asst.test');
+    expect(email.forwardedBy).toBeNull();
+    expect(email.to).toContain(who.email);
+  });
+
+  it('a letter of ours forwarding a complaint on to the dentist is shown whole, as the Council writing', async () => {
+    const complainant = person('Kavya');
+    const dentistAt = person('Mehta');
+    seq++;
+    const bytes = Buffer.from(
+      [
+        'From: Test Registrar <registrar@asst.test>',
+        `To: Dr Mehta <${dentistAt.email}>`,
+        'Cc: intake@asst.test',
+        'Subject: Fwd: Complaint against you',
+        `Message-ID: <asst-onward-${TAG}-${seq}@mail.test>`,
+        'Date: Wed, 7 Oct 2026 10:14:00 +0530',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        'Dear Doctor, the complaint below has been received against you.',
+        '',
+        '---------- Forwarded message ---------',
+        `From: ${complainant.name} <${complainant.email}>`,
+        'Date: Sat, 20 Sep 2026 at 09:00',
+        'Subject: Complaint about my crown',
+        'To: <registrar@asst.test>',
+        '',
+        'The crown came off within a week.',
+      ].join('\r\n'),
+      'utf8',
+    );
+    const out = await asOfficer(ctx, async (tx) =>
+      mail.ingest(tx, ctx, await simpleParser(bytes), {
+        mailbox: 'intake@asst.test/INBOX',
+        uid: 1000 + seq,
+        uidValidity: '1',
+        raw: bytes,
+      }),
+    );
+    expect(out.councilCopy).toBe(true);
+    answer = () => ok(unsure());
+    await assistant.suggestFor(ctx, out.mailMessageId);
+    const email = seen.at(-1)!;
+    expect(email.fromAddress).toBe('registrar@asst.test');
+    expect(email.forwardedBy).toBeNull();
+    expect(email.to).toContain(dentistAt.email);
+    expect(email.subject).toBe('Fwd: Complaint against you');
+    expect(email.body).toContain('Dear Doctor, the complaint below');
+    expect(email.body).toContain('The crown came off within a week.');
+    expect(email.dateText).not.toMatch(/20 Sep/);
+  });
+
+  it('is never read automatically: the sweep spends nothing on it, and reads the mail beside it', async () => {
+    const sweeper = new AssistantService(mail, respondents, storage, fakeTriage, config({ perSweep: 5 }));
+    const copy = await arriveCopy(ctx, person('Sunil'), 'Your complaint - documents still awaited');
+    const plain = await arrive(ctx, person(), 'A crown that came off', 'It came off.');
+    await sweeper.suggestAfterSweep(ctx, [copy, plain]);
+    await sweeper.whenIdle();
+    expect(seen).toHaveLength(1);
+    expect(await suggestionRows(ctx, copy)).toHaveLength(0);
+    expect((await suggestionRows(ctx, plain)).map((r) => r.status)).toEqual(['pending']);
+  });
+
+  it('is stored with its case resolved live, and an answer without its section is not shown', async () => {
+    const existing = await caseFrom(ctx);
+    const id = await arriveCopy(ctx, existing.who, 'Your complaint - documents still awaited');
+    answer = () => ok(councilCopy(existing.caseNumber.toLowerCase()));
+    const view = await assistant.suggestFor(ctx, id);
+    expect(view).toMatchObject({ status: 'pending', decision: 'council_letter_copy', followUp: null });
+    expect(view.councilCopy).toEqual({
+      caseFileId: existing.caseFileId,
+      caseNumber: existing.caseNumber,
+      letter: 'documents request',
+      because: 'Quotes the case; sent to its complainant.',
+      closed: false,
+    });
+
+    answer = () => ok({ ...councilCopy(existing.caseNumber), councilCopy: null });
+    const broken = await assistant.suggestFor(ctx, id);
+    expect(broken.status).toBe('failed');
+  });
+
+  it('accepted, is attached to the letter the case records as sent: nothing new, and the reminder keeps running', async () => {
+    const existing = await caseFrom(ctx);
+    const letterId = await sendDocumentsLetter(ctx, existing.caseFileId);
+    const before = await caseState(ctx, existing.caseFileId);
+    expect(before.waitingForDocuments).toBe(true);
+
+    // Sent to an address the register does not hold, so it could not check the case by
+    // itself and left it in the tray.
+    const id = await arriveCopy(
+      ctx,
+      { name: existing.who.name, email: `other.${existing.who.email}` },
+      `Documents required - ${existing.caseNumber}`,
+    );
+    answer = () => ok(councilCopy(existing.caseNumber));
+    await assistant.suggestFor(ctx, id);
+
+    const out = await asOfficer(ctx, (tx) => assistant.accept(tx, ctx, id));
+    expect(out).toMatchObject({ caseFileId: existing.caseFileId, caseNumber: existing.caseNumber });
+
+    const after = await caseState(ctx, existing.caseFileId);
+    expect(after).toEqual(before); // no letter added either way, and still waiting
+    const msg = await asOfficer(ctx, (tx) =>
+      tx.execute<{ status: string; correspondence_id: string | null }>(sql`
+        SELECT status::text, correspondence_id FROM mail_message WHERE id = ${id}::uuid
+      `),
+    );
+    expect(msg.rows[0]).toEqual({ status: 'filed', correspondence_id: letterId });
+    expect((await suggestionRows(ctx, id))[0]).toMatchObject({
+      status: 'accepted',
+      outcome_action: 'filed_on_case',
+      outcome_agreed: true,
+      outcome_case_file_id: existing.caseFileId,
+    });
+  });
+
+  it("accepted on a copy the register's own check missed: filed as a letter sent, never received, and no reminder moves", async () => {
+    const existing = await caseFrom(ctx);
+    await sendDocumentsLetter(ctx, existing.caseFileId);
+    const before = await caseState(ctx, existing.caseFileId);
+
+    // From the officer's own address outside the Council: the register cannot tell this is
+    // the Council's letter. The assistant could.
+    const id = await arriveDirect(
+      ctx,
+      { name: 'Dental Officer', email: `officer.home.${TAG.toLowerCase()}@example.in` },
+      'Copy of the letter sent today',
+      // No case number: one in the body would file the message by itself, as a reply.
+      `Copy for the file of the reminder sent to ${existing.who.name} today.`,
+    );
+    answer = () => ok(councilCopy(existing.caseNumber));
+    await assistant.suggestFor(ctx, id);
+    await asOfficer(ctx, (tx) => assistant.accept(tx, ctx, id));
+
+    const after = await caseState(ctx, existing.caseFileId);
+    expect(after.inbound).toBe(before.inbound);
+    expect(after.outbound).toBe(before.outbound + 1);
+    expect(after.waitingForDocuments).toBe(true);
+    expect(await messageRow(ctx, id)).toMatchObject({ status: 'filed', case_file_id: existing.caseFileId });
+  });
+
+  it('accepted on another case than suggested: edited, and a disagreement', async () => {
+    const suggested = await caseFrom(ctx);
+    const actual = await caseFrom(ctx);
+    const id = await arriveCopy(ctx, actual.who, 'Your complaint - documents still awaited');
+    answer = () => ok(councilCopy(suggested.caseNumber));
+    await assistant.suggestFor(ctx, id);
+    await asOfficer(ctx, (tx) => assistant.accept(tx, ctx, id, { caseFileId: actual.caseFileId }));
+    expect((await suggestionRows(ctx, id))[0]).toMatchObject({
+      status: 'edited',
+      outcome_agreed: false,
+      outcome_case_file_id: actual.caseFileId,
+    });
+  });
+
+  it('on a case cancelled since: refused without a case chosen', async () => {
+    const gone = await caseFrom(ctx);
+    const id = await arriveCopy(ctx, gone.who, 'Your complaint - documents still awaited');
+    answer = () => ok(councilCopy(gone.caseNumber));
+    await assistant.suggestFor(ctx, id);
+    await asOfficer(ctx, (tx) => lifecycle.cancel(tx, ctx, { caseFileId: gone.caseFileId, reason: 'Opened twice by mistake' }));
+    const view = (await asOfficer(ctx, (tx) => assistant.latestFor(tx, ctx, [id]))).get(id)!;
+    expect(view.councilCopy).toMatchObject({ caseNumber: gone.caseNumber, caseFileId: null });
+    await expect(asOfficer(ctx, (tx) => assistant.accept(tx, ctx, id))).rejects.toMatchObject({ status: 409 });
+  });
+
+  describe('the officer filing it with the ordinary buttons', () => {
+    it('as a copy, on the suggested case: agreed', async () => {
+      const target = await caseFrom(ctx);
+      const id = await arriveCopy(ctx, target.who, 'Your complaint - documents still awaited');
+      answer = () => ok(councilCopy(target.caseNumber));
+      await assistant.suggestFor(ctx, id);
+      await asOfficer(ctx, (tx) =>
+        mail.fileCouncilCopy(tx, ctx, { mailMessageId: id, caseFileId: target.caseFileId, mode: 'record_only' }),
+      );
+      expect((await suggestionRows(ctx, id))[0]).toMatchObject({
+        status: 'handled',
+        outcome_action: 'filed_on_case',
+        outcome_agreed: true,
+        outcome_case_file_id: target.caseFileId,
+        outcome_note: FILED_AS_COPY_NOTE,
+      });
+    });
+
+    it('as a letter received, on the suggested case: not what it suggested', async () => {
+      const target = await caseFrom(ctx);
+      const id = await arrive(ctx, target.who, 'Re: my case', 'Update.');
+      answer = () => ok(councilCopy(target.caseNumber));
+      await assistant.suggestFor(ctx, id);
+      await asOfficer(ctx, (tx) => mail.fileOnCase(tx, ctx, { mailMessageId: id, caseFileId: target.caseFileId }));
+      expect((await suggestionRows(ctx, id))[0]).toMatchObject({ status: 'handled', outcome_agreed: false });
+    });
+
+    it('a follow-up suggested for a copy, which the officer filed as a copy: a disagreement, and no reminder closed', async () => {
+      const target = await caseFrom(ctx);
+      await sendDocumentsLetter(ctx, target.caseFileId);
+      const id = await arriveCopy(ctx, target.who, 'Your complaint - documents still awaited');
+      answer = () => ok(followUp(target.caseNumber));
+      await assistant.suggestFor(ctx, id);
+      // "Add to a case" on a copy files it as a copy (MailIntakeService.fileOnCase).
+      await asOfficer(ctx, (tx) => mail.fileOnCase(tx, ctx, { mailMessageId: id, caseFileId: target.caseFileId }));
+      // Said why, because "added it to a case" alone reads like what it suggested.
+      expect((await suggestionRows(ctx, id))[0]).toMatchObject({
+        status: 'handled',
+        outcome_agreed: false,
+        outcome_note: FILED_AS_COPY_NOTE,
+      });
+      expect((await caseState(ctx, target.caseFileId)).waitingForDocuments).toBe(true);
+    });
+  });
+
+  it('a follow-up suggested for a copy and ACCEPTED on that case is counted exactly as the ordinary buttons count it', async () => {
+    const target = await caseFrom(ctx);
+    await sendDocumentsLetter(ctx, target.caseFileId);
+    const id = await arriveCopy(ctx, target.who, 'Your complaint - documents still awaited');
+    answer = () => ok(followUp(target.caseNumber));
+    await assistant.suggestFor(ctx, id);
+    await asOfficer(ctx, (tx) => assistant.accept(tx, ctx, id));
+    expect((await suggestionRows(ctx, id))[0]).toMatchObject({
+      status: 'edited',
+      outcome_action: 'filed_on_case',
+      outcome_agreed: false,
+      outcome_case_file_id: target.caseFileId,
+      outcome_note: FILED_AS_COPY_NOTE,
+    });
+    // Filed as the copy it is, all the same: nothing received, the reminder still running.
+    expect((await caseState(ctx, target.caseFileId)).waitingForDocuments).toBe(true);
+  });
+
+  it("marks the intake mailbox's own address in the To line, so an unread office forward is not taken for our letter", async () => {
+    seq++;
+    const intake = `ksdc.intake.${TAG.toLowerCase()}@gmail.com`;
+    const bytes = Buffer.from(
+      [
+        'From: Test Registrar <registrar@asst.test>',
+        `To: ${intake}`,
+        'Subject: Fwd: Treatment complaint',
+        `Message-ID: <asst-unread-${TAG}-${seq}@mail.test>`,
+        'Date: Wed, 17 Sep 2026 10:14:00 +0530',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        'Please see below.',
+        '',
+        'The bridge fitted in August has come loose twice.',
+      ].join('\r\n'),
+      'utf8',
+    );
+    const out = await asOfficer(ctx, async (tx) =>
+      mail.ingest(tx, ctx, await simpleParser(bytes), {
+        mailbox: `${intake}/INBOX`,
+        uid: 1000 + seq,
+        uidValidity: '1',
+        raw: bytes,
+      }),
+    );
+    expect(out.councilCopy).toBe(false);
+    answer = () => ok(unsure());
+    await assistant.suggestFor(ctx, out.mailMessageId);
+    const email = seen.at(-1)!;
+    expect(email.to).toBe(`${intake} ${OWN_MAILBOX_MARK}`);
+    expect(email.forwardedBy).toMatch(/registrar@asst\.test/);
+  });
+});
+
 // ─── The report ──────────────────────────────────────────────────────────────
 
 describe('the monthly report', () => {
@@ -1934,11 +2302,18 @@ describe('the monthly report', () => {
     await assistant.suggestFor(c, m6);
     await assistant.suggestFor(c, m6);
 
+    // 7. A copy of a Council letter, accepted: agreed, in a column of its own.
+    const kase = await caseFrom(c);
+    const m7 = await arriveCopy(c, kase.who, 'Your complaint - documents still awaited');
+    answer = () => ok(councilCopy(kase.caseNumber));
+    await assistant.suggestFor(c, m7);
+    await asOfficer(c, (tx) => assistant.accept(tx, c, m7));
+
     const report = await asOfficer(c, (tx) => assistant.report(tx, c, month));
     expect(report).toMatchObject({ enabled: true, reason: null, model: 'fake-model', month });
     expect(report.totals).toEqual({
       pending: 1,
-      accepted: 1,
+      accepted: 2,
       edited: 0,
       rejected: 1,
       handled: 2,
@@ -1949,12 +2324,13 @@ describe('the monthly report', () => {
       new_complaint: { agreed: 0, disagreed: 1 },
       follow_up: { agreed: 0, disagreed: 1 },
       not_a_complaint: { agreed: 1, disagreed: 0 },
+      council_letter_copy: { agreed: 1, disagreed: 0 },
       unsure: { agreed: 0, disagreed: 0 },
     });
-    expect(report.agreement.overall).toEqual({ agreed: 1, disagreed: 2 });
-    // Six calls at a cent and one failure at a fifth of one - failures and superseded
+    expect(report.agreement.overall).toEqual({ agreed: 2, disagreed: 2 });
+    // Seven calls at a cent and one failure at a fifth of one - failures and superseded
     // suggestions included, because they were paid for.
-    expect(report.costUsd).toBeCloseTo(0.062, 6);
+    expect(report.costUsd).toBeCloseTo(0.072, 6);
 
     expect(report.recentDisagreements.map((d) => d.mailMessageId).sort()).toEqual([m2, m3].sort());
     const rejected = report.recentDisagreements.find((d) => d.mailMessageId === m3)!;

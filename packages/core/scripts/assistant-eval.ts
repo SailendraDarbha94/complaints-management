@@ -19,8 +19,9 @@
  * database is opened, and nothing real is sent to the API.
  *
  * Each email is scored on what an officer would care about (eval-score.ts):
- *   - the decision (new complaint / follow-up / not a complaint / unsure);
- *   - for a follow-up, the case number;
+ *   - the decision (new complaint / follow-up / not a complaint / copy of a Council
+ *     letter / unsure);
+ *   - for a follow-up and for a copy of a Council letter, the case number;
  *   - for a new complaint, that exactly the dentists and clinics the answer key names were
  *     named - none missing, none extra - compared loosely (case, punctuation, spacing and
  *     a leading "Dr" do not count), and by name only, never by the clinic a dentist works
@@ -304,7 +305,8 @@ function readsCell(s: Score): string {
 function table(outcomes: Outcome[]): string {
   const rows = outcomes.map((o) => {
     const p = o.result.ok ? o.result.proposal : null;
-    const got = o.result.ok ? (p!.decision + (p!.followUp ? ` ${p!.followUp.caseNumber}` : '')) : 'FAILED';
+    const caseNumber = p?.followUp?.caseNumber ?? p?.councilCopy?.caseNumber ?? null;
+    const got = o.result.ok ? p!.decision + (caseNumber ? ` ${caseNumber}` : '') : 'FAILED';
     const checks = [
       `dec ${mark(o.score.decisionRight)}`,
       `case ${mark(o.score.caseNumberRight)}`,
@@ -492,7 +494,7 @@ export async function main(argv: string[]): Promise<void> {
     const s = summary.byDecision[d];
     if (s.emails === 0) continue;
     console.log(
-      `  ${d.padEnd(16)} ${String(s.emails).padStart(3)} email(s)   decision right ${pct(s.decisionRight, s.emails).padStart(4)}` +
+      `  ${d.padEnd(19)} ${String(s.emails).padStart(3)} email(s)   decision right ${pct(s.decisionRight, s.emails).padStart(4)}` +
         `   fully right ${pct(s.pass, s.emails).padStart(4)}`,
     );
   }

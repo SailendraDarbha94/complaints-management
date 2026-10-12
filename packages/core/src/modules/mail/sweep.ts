@@ -28,7 +28,8 @@ export interface SweepResult {
   deferred: number;
   /**
    * The messages this sweep put in the tray - new, and neither filed by a case number nor
-   * set aside as an account notice. What the mail assistant is asked about.
+   * set aside as an account notice, nor a copy of a letter the Council sent. What the mail
+   * assistant is asked about.
    */
   newInTray: string[];
 }
@@ -183,8 +184,10 @@ export async function sweepMailbox(
       if (result.autoFiledTo) filed++;
       // Only what is waiting for the officer. A reply that filed itself by its case number
       // and an account notice set aside automatically are already decided; asking a model
-      // about them would spend money on a question nobody has.
-      if (result.status === 'unfiled') newInTray.push(result.mailMessageId);
+      // about them would spend money on a question nobody has. Nor is a copy of a letter the
+      // Council itself sent: the register already knows what it is, and the officer files
+      // it from its own panel on the message page (see council-copy.ts).
+      if (result.status === 'unfiled' && !result.councilCopy) newInTray.push(result.mailMessageId);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       const seen = failures.get(key) ?? { count: 0, since: Date.now() };

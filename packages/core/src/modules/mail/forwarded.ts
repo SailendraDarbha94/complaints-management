@@ -47,6 +47,12 @@ export interface ForwardedOriginal {
   dateText: string | null;
   /** The forwarded message's own body, with the header block removed. */
   body: string | null;
+  /**
+   * Who passed it on before it reached the Council, outermost first, when the unwrapper read
+   * through their forward to the message inside it (readThrough): a police station or a
+   * grievance cell forwarding a patient's complaint. Absent when nothing was read through.
+   */
+  via?: Array<{ address: string | null; name: string | null }>;
 }
 
 /** Not a forward: somebody wrote to the intake address directly. */
@@ -146,6 +152,8 @@ interface HeaderBlock {
   rows: string[];
   /** The headers present, with Sent read as Date. */
   fields: Set<string>;
+  /** The index of the block's first line, so a caller can tell which of two things came first. */
+  start: number;
   /** The index of the first line after the block. The body is cut from here. */
   end: number;
 }
@@ -223,7 +231,7 @@ function readHeaderBlock(lines: string[], start: number): HeaderBlock {
     if (!apart || next === lines.length || !LABEL_LINE.test(lines[next]!)) break;
     i = next;
   }
-  return { rows, fields, end: i };
+  return { rows, fields, start, end: i };
 }
 
 /** "Fwd:", "Fw:", "FW:" - the subject a mail client gives a message it is forwarding. */
@@ -344,8 +352,11 @@ function htmlAsText(html: string): string {
  * as `X [X]`, then hard-wraps the result — so the angle bracket that closes the address
  * can end up on the next physical line, and a naive /<([^>]+)>/ returns null. The `[X]`
  * form is tried before the angle-bracket form for exactly that reason.
+ *
+ * One address per call. council-copy.ts splits a To line into its addresses and hands each
+ * to this, so a recipient is read the same way a sender is.
  */
-function addressFrom(value: string): { address: string | null; name: string | null } {
+export function addressFrom(value: string): { address: string | null; name: string | null } {
   const raw = value.trim().replace(/\*/g, '');
   if (!raw) return { address: null, name: null };
 
@@ -386,7 +397,63 @@ function addressFrom(value: string): { address: string | null; name: string | nu
  * `parsed` is what mailparser made of the message that actually arrived. Returns what the
  * ORIGINAL said, or `kind: 'none'` when this was not a forward.
  */
-export async function unwrapForward(parsed: ParsedMail): Promise<ForwardedOriginal> {
+export async function unwrapForward(
+  parsed: ParsedMail,
+  opts: {
+    /**
+     * Read through an original for which this says yes, to `inner`, the forward nested at
+     * the top of its body. The intake service says yes for a message the Council sent only
+     * to itself, and for an outside body passing on somebody else's mail - see readThrough().
+     */
+    readThrough?: (original: ForwardedOriginal, inner: ForwardedOriginal) => boolean;
+  } = {},
+): Promise<ForwardedOriginal> {
+  const top = await unwrapOnce(parsed);
+  return opts.readThrough ? readThrough(top, opts.readThrough) : top;
+}
+
+/** How many forwards deep readThrough() goes. Real chains are two or three. */
+const READ_THROUGH_DEPTH = 3;
+
+/**
+ * The forward inside a forward, when the outer one is only the Council passing mail along.
+ *
+ * The support desk forwards a complaint to the registrar, who forwards it on to the intake
+ * mailbox. The first header block in the text is then the support desk's message to the
+ * registrar, and the complainant is one block further down. Read alone, that named the
+ * support desk as the sender: no complainant to suggest, and the case the complainant's
+ * address is on no longer offered. So when the original was written by the Council to
+ * nobody but the Council, its own body is unwrapped again, as a forward - a block without
+ * a separator is accepted there, so a Roundcube forward inside a Roundcube forward is read
+ * too - and the inner original is taken when it names a sender by address.
+ *
+ * The same holds for an outside body passing a complaint on: a grievance cell or a police
+ * station forwards the patient's complaint to the registrar, who forwards it to the intake
+ * mailbox. Read alone, the first block named the grievance cell as the complainant - the
+ * form was filled in with its address, and the patient's own case was not offered. Which
+ * originals are read through is the caller's to say (council-copy.ts, readsThrough); who
+ * was passed on the way is kept in `via`, so the page can still say how it came.
+ *
+ * Never descended: an original the Council sent to somebody outside it. That is a copy of
+ * the Council's own letter, and its sender must stay the Council (council-copy.ts).
+ */
+function readThrough(
+  top: ForwardedOriginal,
+  through: (original: ForwardedOriginal, inner: ForwardedOriginal) => boolean,
+): ForwardedOriginal {
+  let current = top;
+  const via: NonNullable<ForwardedOriginal['via']> = [];
+  for (let depth = 0; depth < READ_THROUGH_DEPTH && current.body; depth++) {
+    const inner = unwrapInBody(current.body, 'Fwd:');
+    if (!inner.fromAddress || !through(current, inner)) break;
+    via.push({ address: current.fromAddress, name: current.fromName });
+    current = inner;
+  }
+  return via.length ? { ...current, via } : current;
+}
+
+/** Routes 1 to 3, once: what the message that arrived says it forwards. */
+async function unwrapOnce(parsed: ParsedMail): Promise<ForwardedOriginal> {
   // ── Route 1: forwarded as an attachment. Whole, with a real timezone. ──────
   //
   // Detection keys on the content type alone. A message/rfc822 part often carries no
@@ -428,6 +495,25 @@ export async function unwrapForward(parsed: ParsedMail): Promise<ForwardedOrigin
   return fromText;
 }
 
+/** Route 3's reading of a header block found with no separator above it, or null with no sender. */
+function fromHeaderBlock(lines: string[], block: HeaderBlock): ForwardedOriginal | null {
+  const headerBlock = unquote(block.rows.join('\n'));
+  const { address, name } = addressFrom(LABELS.from.exec(headerBlock)?.[1] ?? '');
+  if (!address && !name) return null;
+  return {
+    kind: 'header_block',
+    fromAddress: address,
+    fromName: name,
+    to: LABELS.to.exec(headerBlock)?.[1]?.trim().replace(/\*/g, '') || null,
+    subject: LABELS.subject.exec(headerBlock)?.[1]?.trim().replace(/\*/g, '') || null,
+    // Text, not a timestamp, for the same reason as every other in-body header: the
+    // "2026-09-18 15:15" Roundcube writes carries no timezone at all.
+    date: null,
+    dateText: LABELS.date.exec(headerBlock)?.[1]?.trim().replace(/\*/g, '') || null,
+    body: cleanBody(lines.slice(block.end).join('\n')),
+  };
+}
+
 /** Routes 2 and 3, on one rendering of the message as text. */
 function unwrapInBody(raw: string, envelopeSubject: string | undefined): ForwardedOriginal {
   // Two changes to the text as a whole, and neither alters a word of the letter later cut
@@ -439,9 +525,40 @@ function unwrapInBody(raw: string, envelopeSubject: string | undefined): Forward
   if (!text.trim()) return NOT_A_FORWARD;
 
   // ── Route 2: an in-body separator, matched by shape. ──────────────────────
-  for (const { kind, re } of SEPARATORS) {
-    const m = re.exec(text);
-    if (!m) continue;
+  //
+  // The separator that comes FIRST in the text, not the first kind in the list. A forward
+  // of a message that itself quotes an earlier one holds two separators: the forward's own
+  // at the top, and the quoted letter's further down. Taking them in list order read an
+  // officer's Gmail forward of a patient's Outlook reply as a forward of the letter the
+  // patient was replying to - the Council's own, under the patient's words - because
+  // Outlook's rule of underscores is first in the list. What was forwarded is what the
+  // top block says. On a tie of position the list order still decides.
+  const found = SEPARATORS.map(({ kind, re }) => ({ kind, m: re.exec(text) }))
+    .filter((s): s is { kind: MailForwardKind; m: RegExpExecArray } => s.m !== null)
+    .sort((a, b) => a.m.index - b.m.index);
+
+  // ── Route 3 first, when its header block comes before every separator. ────
+  //
+  // A forward with no separator of its own (Roundcube in HTML compose - the layout of the
+  // Council's own webmail - Zoho's rule of "=", Zimbra, Outlook for Mac) whose forwarded
+  // message quotes an earlier one under an Outlook or Zimbra rule holds exactly one
+  // separator: the quote's, further down. Read alone, that rule made a patient's reply,
+  // forwarded by the office, into "a letter from the Registrar to the patient" - a copy of
+  // the Council's own letter, filed as one, and the reminder the reply answered left open.
+  // The first header block in the text is what was forwarded, with or without a rule above
+  // it; a block sitting directly under a separator starts after it, so the separator still
+  // wins for every client that draws one.
+  const lines = text.split('\n');
+  const isForward = FORWARD_SUBJECT.test(envelopeSubject ?? '');
+  const unruled = isForward ? headerBlockWithoutSeparator(lines) : null;
+  const firstRule = found[0];
+  const ruleLine = firstRule ? text.slice(0, firstRule.m.index).split('\n').length - 1 : Infinity;
+  if (unruled && unruled.start < ruleLine) {
+    const out = fromHeaderBlock(lines, unruled);
+    if (out) return out;
+  }
+
+  for (const { kind, m } of found.slice(0, 1)) {
 
     // Everything after the separator. What precedes it is the officer's own covering
     // note, which belongs to the forward rather than to the complaint.
@@ -485,27 +602,9 @@ function unwrapInBody(raw: string, envelopeSubject: string | undefined): Forward
   // Roundcube - the Council's own webmail - forwards this way, and so do Zimbra and classic
   // Outlook in HTML compose. Only tried when the subject says this IS a forward; see
   // headerBlockWithoutSeparator() for why.
-  if (FORWARD_SUBJECT.test(envelopeSubject ?? '')) {
-    const lines = text.split('\n');
-    const block = headerBlockWithoutSeparator(lines);
-    if (block) {
-      const headerBlock = unquote(block.rows.join('\n'));
-      const { address, name } = addressFrom(LABELS.from.exec(headerBlock)?.[1] ?? '');
-      if (address || name) {
-        return {
-          kind: 'header_block',
-          fromAddress: address,
-          fromName: name,
-          to: LABELS.to.exec(headerBlock)?.[1]?.trim().replace(/\*/g, '') || null,
-          subject: LABELS.subject.exec(headerBlock)?.[1]?.trim().replace(/\*/g, '') || null,
-          // Text, not a timestamp, for the same reason as every other in-body header: the
-          // "2026-09-18 15:15" Roundcube writes carries no timezone at all.
-          date: null,
-          dateText: LABELS.date.exec(headerBlock)?.[1]?.trim().replace(/\*/g, '') || null,
-          body: cleanBody(lines.slice(block.end).join('\n')),
-        };
-      }
-    }
+  if (unruled) {
+    const out = fromHeaderBlock(lines, unruled);
+    if (out) return out;
   }
 
   return NOT_A_FORWARD;

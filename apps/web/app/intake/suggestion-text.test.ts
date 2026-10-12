@@ -9,10 +9,13 @@ import {
   attachmentsReadSummary,
   closedCaseWarning,
   confidenceChipClass,
+  COPY_ACCEPT_EFFECT,
   joinNames,
   knownToRegister,
   normaliseRespondent,
+  notForACopy,
   sameRespondents,
+  suggestedCase,
   suggestionHeadline,
 } from './suggestion-text';
 
@@ -37,6 +40,7 @@ function view(over: Partial<MailSuggestionView>): MailSuggestionView {
     reasoning: 'Because.',
     notComplaint: null,
     followUp: null,
+    councilCopy: null,
     newComplaint: null,
     attachmentsRead: [],
     otherReadingsSent: [],
@@ -130,6 +134,74 @@ describe('acceptBlocker', () => {
     });
     expect(acceptBlocker(nobody)).toMatch(/who complained/);
     expect(suggestionHeadline(nobody)).toMatch(/a complainant it could not name/);
+  });
+});
+
+describe('a copy of a Council letter', () => {
+  const copy = (over: Partial<NonNullable<MailSuggestionView['councilCopy']>> = {}) =>
+    view({
+      decision: 'council_letter_copy',
+      councilCopy: {
+        caseFileId: 'c1',
+        caseNumber: 'KSDC/COMP/2026-27/0042',
+        letter: 'documents request',
+        because: 'quotes the case and went to its complainant',
+        closed: false,
+        ...over,
+      },
+    });
+
+  it('says first that it is our own letter, then the case, then which letter', () => {
+    expect(suggestionHeadline(copy())).toBe(
+      'Suggested: copy of a Council letter → KSDC/COMP/2026-27/0042 — documents request',
+    );
+    expect(suggestionHeadline(copy({ closed: true }))).toBe(
+      'Suggested: copy of a Council letter → KSDC/COMP/2026-27/0042 (closed) — documents request',
+    );
+    // A server not yet rebuilt sends no section; the line still says what it is.
+    expect(suggestionHeadline(view({ decision: 'council_letter_copy' }))).toBe('Suggested: copy of a Council letter');
+  });
+
+  it('is accepted on a live case, warned on a closed one, and not offered on one that is gone', () => {
+    expect(acceptBlocker(copy())).toBeNull();
+    expect(acceptBlocker(copy({ caseFileId: null }))).toMatch(/KSDC\/COMP\/2026-27\/0042 is not a live case/);
+    expect(acceptBlocker(view({ decision: 'council_letter_copy' }))).toMatch(/which case/);
+    expect(closedCaseWarning(copy({ closed: true }))).toMatch(/0042 is closed\. Filing the copy/);
+    expect(closedCaseWarning(copy())).toBeNull();
+    expect(acceptBlocker(copy({ closed: true }))).toBeNull();
+  });
+
+  it("gives the same case to the card and the page as a follow-up's, and says accepting starts nothing", () => {
+    expect(suggestedCase(copy())).toMatchObject({ caseFileId: 'c1', caseNumber: 'KSDC/COMP/2026-27/0042' });
+    expect(suggestedCase(view({ decision: 'not_a_complaint', notComplaint: { reason: 'x' } }))).toBeNull();
+    expect(COPY_ACCEPT_EFFECT).toMatch(/never counts as a reply/);
+    expect(COPY_ACCEPT_EFFECT).toMatch(/no reminder starts or stops/);
+    // And how to start one, since Accept will not.
+    expect(COPY_ACCEPT_EFFECT).toMatch(/record the letter as sent first/);
+  });
+});
+
+describe('notForACopy', () => {
+  const nc = view({
+    decision: 'new_complaint',
+    newComplaint: { summary: 'S', complainantName: 'A Patient', complainantEmail: null, respondents: [] },
+  });
+  const fu = view({
+    decision: 'follow_up',
+    followUp: { caseFileId: 'c1', caseNumber: 'KSDC/COMP/2026-27/0042', because: 'x', closed: false },
+  });
+
+  it('takes Accept away from "open a case" and "add as a reply" on a copy the register recognised', () => {
+    expect(notForACopy(nc, true)).toMatch(/not opened as a case\. File it with the "File the copy" panel/);
+    expect(notForACopy(fu, true)).toMatch(/not added as a reply/);
+  });
+
+  it('leaves everything else alone', () => {
+    expect(notForACopy(nc, false)).toBeNull();
+    expect(notForACopy(fu, false)).toBeNull();
+    expect(notForACopy(view({ decision: 'not_a_complaint', notComplaint: { reason: 'x' } }), true)).toBeNull();
+    expect(notForACopy(view({ decision: 'unsure' }), true)).toBeNull();
+    expect(notForACopy({ ...nc, status: 'accepted' }, true)).toBeNull();
   });
 });
 

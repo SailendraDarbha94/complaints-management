@@ -118,9 +118,26 @@ export {
   type IngestMeta,
   type IngestResult,
   type TrayRow,
+  type CouncilCopyMode,
+  type CouncilCopyPlan,
+  type CouncilCopyFiled,
 } from './modules/mail/mail-intake.service.js';
 export { unwrapForward, snippetOf, type ForwardedOriginal } from './modules/mail/forwarded.js';
-export { matchMessage, referencesIn, type MatchResult } from './modules/mail/matching.js';
+export {
+  matchMessage,
+  matchCouncilCopy,
+  referencesIn,
+  type MatchResult,
+  type CouncilCopyMatch,
+  type CouncilCopyCheck,
+} from './modules/mail/matching.js';
+export {
+  addressesIn,
+  councilCopyOf,
+  inferLetterKind,
+  type CouncilCopy,
+  type CouncilCopyRecipient,
+} from './modules/mail/council-copy.js';
 export {
   sweepMailbox,
   mailboxOrThrow,

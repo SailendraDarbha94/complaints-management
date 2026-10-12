@@ -1,4 +1,5 @@
 import { cookies } from 'next/headers';
+import { errorMessageOf } from './error-message';
 import type {
   MailSuggestionConfidence,
   MailSuggestionDecision,
@@ -160,6 +161,12 @@ export interface CaseLetter {
   despatch_no: string | null;
   despatch_date: string | null;
   created_at: string;
+  /**
+   * An outgoing letter a copy of which reached the intake mailbox and was filed against it:
+   * that message, and when the copy was emailed. Null for every other letter.
+   */
+  copy_mail_id: string | null;
+  copy_emailed_at: string | null;
 }
 
 export interface CaseMail {
@@ -175,6 +182,11 @@ export interface CaseMail {
   body: string | null;
   forward_kind: string;
   matched_rung: string | null;
+  /**
+   * A copy of a letter the Council itself sent, filed against that letter. Never the
+   * complaint: the server lists these after the complaint and replies.
+   */
+  council_copy: boolean;
 }
 
 export interface CaseDocument {
@@ -241,7 +253,10 @@ export interface CaseDetail {
   milestones: CaseMilestone[];
   history: CaseHistoryEntry[];
   letters: CaseLetter[];
-  /** Mail filed on the case, oldest first. The first is the complaint as it was received. */
+  /**
+   * Mail filed on the case: complaints and replies oldest first, then copies of the Council's
+   * own letters (council_copy). The first that is not a copy is the complaint as received.
+   */
   mail: CaseMail[];
   /** Files from this case's mail that are kept but not on the case yet; retried automatically. */
   heldAttachments: number;
@@ -395,7 +410,7 @@ async function get<T>(path: string): Promise<T> {
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new ApiError(res.status, body || res.statusText);
+    throw new ApiError(res.status, errorMessageOf(body, res.statusText));
   }
   return res.json() as Promise<T>;
 }
@@ -450,6 +465,12 @@ export interface TrayCard {
    */
   complainant: { name: string; email: string } | null;
   /**
+   * Set when the message is a copy of a letter the Council itself sent - forwarded to the
+   * intake address, or sent with it in Cc. Who that letter went to. Optional on the wire: a
+   * server not yet rebuilt does not send it.
+   */
+  councilCopy?: CouncilCopyInfo | null;
+  /**
    * What the mail assistant suggests for this message, if it has read it. Null when it has
    * not - switched off, over its daily limit, or the message filed or set itself aside
    * before it was asked.
@@ -500,6 +521,89 @@ export interface TrayMessage {
   suggestion: MailSuggestionView | null;
   /** Whether "Ask the assistant" can be offered, and if not, why not in plain words. */
   assistant: AssistantState;
+}
+
+// ─── Copies of the Council's own letters ─────────────────────────────────────
+
+export interface CouncilCopyInfo {
+  recipients: Array<{ email: string; name: string | null }>;
+  /**
+   * When the letter went out by the copy's own account, and how far that can be trusted
+   * (see CouncilCopyPlan). Sent on the message page, not on the tray's cards.
+   */
+  copyDate?: string;
+  copyDateBasis?: CopyDateBasis;
+}
+
+/**
+ * How far a copy's date can be trusted: 'exact' (a real timestamp), 'stated_day' (the day
+ * the forward's own date line names), or 'forwarded' - only when the copy was forwarded,
+ * which says the letter went out then or earlier.
+ */
+export type CopyDateBasis = 'exact' | 'stated_day' | 'forwarded';
+
+export type CouncilCopyMode = 'link' | 'record_sent' | 'record_only';
+
+/** GET /v1/intake/[id]/council-copy?caseId= - what filing the copy on that case would mean. */
+export interface CouncilCopyPlan {
+  caseFileId: string;
+  caseNumber: string;
+  recipients: Array<{ email: string; name: string | null }>;
+  copyDate: string;
+  copyDateBasis: CopyDateBasis;
+  /** The forward's own date line, as written. */
+  dateText: string | null;
+  kind: string | null;
+  /** The template's own name, or null when the subject is none of the Council's letters. */
+  kindLabel: string | null;
+  /**
+   * Set when the subject is two of the Council's letters at once (the two hearing notices)
+   * and who it went to does not settle which: both, for the officer to choose.
+   */
+  kindOptions: Array<{ kind: string; label: string }>;
+  /** The person it went to, against this case. */
+  check: 'confirmed' | 'mismatch' | 'unverified';
+  checkNote: string;
+  /**
+   * The letter the case records that this is most likely the copy of: 'match', or
+   * 'already_copied' (a copy is already on file), or 'earlier' (recorded well before the
+   * copy's date - perhaps this letter, perhaps an earlier one).
+   */
+  recordedLetter: {
+    id: string;
+    kind: string;
+    subject: string;
+    sentAt: string;
+    how: 'match' | 'already_copied' | 'earlier';
+    /** A copy of it is already on file: filing this one adds a second. */
+    copied: boolean;
+    /**
+     * It is this copy's letter beyond doubt. When not, attaching the copy to it is one of
+     * the choices, worded "if it is", beside putting it on the case as a different letter.
+     */
+    sure: boolean;
+  } | null;
+  draft: { id: string; kind: string; subject: string } | null;
+  event: string | null;
+  eventAvailable: boolean;
+  needsRespondent: boolean;
+  /** sentTo: this dentist's address or name is on the copy's To line. */
+  respondents: Array<{ id: string; name: string; noticeCount: number; sentTo: boolean }>;
+  /** Recommended first. */
+  actions: CouncilCopyMode[];
+  explanation: string;
+  /** What recording it as sent does to the case, in words. */
+  effect: string | null;
+  /** The reminders a letter received would stop: what "it is a reply" closes. */
+  waitingForReply: Array<{ stage: string; label: string }>;
+}
+
+/** POST /v1/intake/[id]/council-copy */
+export interface CouncilCopyFiled {
+  filedAs: CouncilCopyMode;
+  correspondenceId: string;
+  transitioned: string | null;
+  documentsFiled: number;
 }
 
 // ─── The mail assistant ──────────────────────────────────────────────────────
@@ -574,6 +678,18 @@ export interface MailSuggestionView {
    * live: filing on a closed case is allowed, but only after the officer is told.
    */
   followUp: { caseFileId: string | null; caseNumber: string; because: string; closed: boolean } | null;
+  /**
+   * A copy of a letter the Council itself sent: which case it belongs on (resolved and read
+   * live, as followUp's is), which letter it is in plain words, and why. Optional on the
+   * wire: a server not yet rebuilt does not send it.
+   */
+  councilCopy?: {
+    caseFileId: string | null;
+    caseNumber: string;
+    letter: string;
+    because: string;
+    closed: boolean;
+  } | null;
   newComplaint: NewComplaintProposal | null;
   /**
    * The attachments it opened to decide - empty when it went by the email alone, as it
@@ -615,7 +731,7 @@ export interface SuggestionOverrides {
   complainantName?: string;
   complainantEmail?: string | null;
   respondents?: Array<Omit<SuggestedRespondent, 'priorCases'>>;
-  /** For a follow-up: file it on this case instead. */
+  /** For a follow-up or a copy of a Council letter: file it on this case instead. */
   caseFileId?: string;
   /** For a non-complaint: the reason recorded when it is set aside. */
   reason?: string;
@@ -689,6 +805,14 @@ export function fetchTray(status = 'unfiled'): Promise<{ status: string; message
 
 export function fetchTrayMessage(id: string): Promise<TrayMessage> {
   return get<TrayMessage>(`/intake/${id}`);
+}
+
+/** What filing a copy of a Council letter on this case would mean. */
+export function fetchCouncilCopyPlan(id: string, caseId: string, kind?: string | null): Promise<CouncilCopyPlan> {
+  return get<CouncilCopyPlan>(
+    `/intake/${id}/council-copy?caseId=${encodeURIComponent(caseId)}` +
+      (kind ? `&kind=${encodeURIComponent(kind)}` : ''),
+  );
 }
 
 /**

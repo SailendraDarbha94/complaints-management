@@ -34,8 +34,8 @@ export { withoutContacts };
  * attachment with no pages has nothing in it to read, and says so.
  *
  * It behaves like the real lookups where the behaviour changes the model's answer: the
- * same kinds of match (case number, complainant and patient names, the complainant's
- * email, a phone number by its digits, a respondent's name), the match stated in words,
+ * same kinds of match (case number, complainant and patient names, the email of anybody on
+ * the case, a phone number by its digits, a respondent's name), the match stated in words,
  * and NO contact details in any result. A seed's emails and mobiles are there to be
  * searched BY, never returned - exactly the rule the real tools keep - so a model that
  * scores well here has not learned to lean on data it will not get in production.
@@ -67,6 +67,12 @@ export interface EvalSeedLike {
       registrationNo: string | null;
       clinicName: string | null;
       isEstablishment: boolean;
+      /**
+       * The dentist's own address, where the register has one - searched by, never
+       * returned, like the complainant's. The real search matches the email of anybody on
+       * a case, which is how a copy of a letter sent to a dentist finds its case.
+       */
+      email?: string | null;
     }>;
     recentLetters: Array<{ direction: 'in' | 'out'; subject: string; date: string }>;
   }>;
@@ -222,6 +228,7 @@ function matchesOf(query: string, c: SeedCase): string[] {
   if (nameMatches(query, c.complainant.name)) on.push('complainant name');
   if (nameMatches(query, c.patientName)) on.push('patient name');
   if (emailMatches(query, c.complainant.email)) on.push('complainant email');
+  if (c.respondents.some((r) => emailMatches(query, r.email ?? null))) on.push('respondent email');
   if (phoneMatches(query, c.complainant.mobile)) on.push('phone number');
   // A respondent by name only - an establishment's name is its clinic's name. A dentist's
   // clinic is not searched, because the real lookup does not search it (see the header).
@@ -245,6 +252,7 @@ export function evalTriageEmail(email: EvalEmailLike): TriageEmail {
     fromName: email.fromName,
     fromAddress: email.fromAddress,
     forwardedBy: email.forwardedBy,
+    to: email.to,
     subject: email.subject,
     dateText: email.dateText,
     body: email.body,

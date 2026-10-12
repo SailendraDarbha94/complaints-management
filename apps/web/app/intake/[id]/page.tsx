@@ -1,7 +1,16 @@
 import type { Route } from 'next';
 import { notFound, redirect } from 'next/navigation';
-import { fetchCases, fetchTrayMessage, isUnauthorized, type TrayMessage } from '@/lib/api';
+import {
+  ApiError,
+  fetchCases,
+  fetchCouncilCopyPlan,
+  fetchTrayMessage,
+  isUnauthorized,
+  type CouncilCopyPlan,
+  type TrayMessage,
+} from '@/lib/api';
 import { CANCELLED_LABEL, FORWARD_KIND_LABEL, MATCH_RUNG_LABEL, formatDate, label } from '@/lib/labels';
+import { copyQueryOf, planErrorText } from '@/lib/council-copy';
 import { PendingLink } from '@/app/components/pending-link';
 import { MessageActions } from './message-actions';
 
@@ -16,8 +25,19 @@ export const dynamic = 'force-dynamic';
  * The forwarding officer's own covering note is shown separately and below, because it is
  * not part of the complaint — it is how the complaint got here.
  */
-export default async function MessagePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function MessagePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  /**
+   * For a copy of a Council letter: `case`, the case chosen for it when not the suggested
+   * one; `kind`, which letter it is, when its subject is two of them and the officer chose.
+   */
+  searchParams: Promise<{ case?: string; kind?: string }>;
+}) {
   const { id } = await params;
+  const { case: chosenCase, kind: chosenKind } = await searchParams;
 
   let data: TrayMessage;
   let cases: Awaited<ReturnType<typeof fetchCases>>;
@@ -30,6 +50,37 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
   if (!data.message) notFound();
 
   const m = data.message;
+  // A copy of a letter the Council itself sent. It is filed from its own panel, against the
+  // case it belongs to, and never opened as a complaint (see council-copy.ts in core).
+  const copy = m.councilCopy ?? null;
+  // A copy only the assistant recognised - the register could not tell from the addresses,
+  // so `copy` is null. While its suggestion waits, the same panel is shown: its Accept may
+  // be refused with "say which letter it is" or "enter the day it was sent", and those
+  // controls, and "record it as sent", are only on this panel. Filed from it as a copy on
+  // the officer's word (asCouncilCopy).
+  const suggestedCopy =
+    !copy && data.suggestion?.status === 'pending' && data.suggestion.decision === 'council_letter_copy'
+      ? (data.suggestion.councilCopy ?? null)
+      : null;
+  const chosen = copyQueryOf({ case: chosenCase, kind: chosenKind });
+  const copyCaseId =
+    (copy || suggestedCopy) && m.status === 'unfiled'
+      ? (chosen.caseId ?? suggestedCopy?.caseFileId ?? data.candidates[0]?.caseFileId ?? null)
+      : null;
+  let copyPlan: CouncilCopyPlan | null = null;
+  let copyPlanError: string | null = null;
+  if (copyCaseId) {
+    try {
+      copyPlan = await fetchCouncilCopyPlan(id, copyCaseId, chosen.kind);
+    } catch (err) {
+      if (isUnauthorized(err)) redirect('/signin');
+      // Said in the panel, not a crash - and said truly: choosing again helps only when the
+      // case has gone since, never a committee member, whom the route refuses every time;
+      // and never the server's own response, which is JSON (see planErrorText).
+      copyPlanError =
+        err instanceof ApiError ? planErrorText(err.status, err.message) : planErrorText(null, null);
+    }
+  }
   // Decided by the server, never the Council's own address. Null means the message does
   // not say, and the officer is asked below rather than the case going to the wrong person.
   const who = m.complainant?.name ?? null;
@@ -85,7 +136,12 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
         <div>
           <h1>{what}</h1>
           <p className="case-summary">
-            {who ? (
+            {copy ? (
+              <>
+                A copy of the Council&rsquo;s letter to{' '}
+                {copy.recipients.map((r) => r.name ?? r.email).join(', ')}
+              </>
+            ) : who ? (
               <>
                 From {who} {address && address !== who && <span className="mono">&lt;{address}&gt;</span>}
               </>
@@ -134,7 +190,7 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
           <span>{m.dismissed_reason}</span>
         </div>
       )}
-      {!who && m.status === 'unfiled' && (
+      {!who && !copy && m.status === 'unfiled' && (
         <div className="rti-warn">
           This came from the Council&rsquo;s own address, and the original sender could not be
           read from it. Enter the complainant&rsquo;s name and email before opening a case &mdash;
@@ -147,6 +203,7 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
 
       <div className="case-grid">
         <div className="case-main">
+          {copy && <CouncilCopyFacts copy={copy} message={m} plan={copyPlan} />}
           <section className="panel">
             <div className="panel-head">
               <h2>{forwarded ? 'What was sent to the Council' : 'What they wrote'}</h2>
@@ -192,7 +249,7 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
                     </thead>
                     <tbody>
                       {data.attachments.map((a) => (
-                        <tr key={a.id} className={a.skipped_reason ? 'withdrawn' : undefined}>
+                        <tr key={a.id} className={a.skipped_reason && !a.document_id ? 'withdrawn' : undefined}>
                           <td>{a.filename}</td>
                           <td className="num mono">{readableSize(a.size_bytes)}</td>
                           <td>
@@ -208,6 +265,11 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
                                     ? 'A copy goes on the case you add this to.'
                                     : 'It stays there with the rest of that case.'}
                                 </span>
+                              </>
+                            ) : a.document_id && a.skipped_reason ? (
+                              <>
+                                On the case file
+                                <span className="meta">{a.skipped_reason}</span>
                               </>
                             ) : a.document_id ? (
                               'On the case file'
@@ -254,6 +316,17 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
               .map((c) => ({ id: c.id, caseNumber: c.case_number, summary: c.summary }))}
             suggestion={suggestion}
             assistant={assistant}
+            isCouncilCopy={Boolean(copy)}
+            councilCopy={
+              copy || suggestedCopy
+                ? {
+                    caseFileId: copyCaseId,
+                    plan: copyPlan,
+                    error: copyPlanError,
+                    asCouncilCopy: !copy,
+                  }
+                : null
+            }
           />
 
           <section className="panel">
@@ -297,6 +370,83 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
         </div>
       </div>
     </main>
+  );
+}
+
+/**
+ * What the copy is, at the top of the page: who the letter went to, when, which of the
+ * Council's letters it is, and how the person it went to compares with the case chosen in
+ * the panel beside it. The filing itself is in that panel (message-actions.tsx), so that it
+ * and every other button on this page are one set of forms that cannot both land.
+ */
+function CouncilCopyFacts({
+  copy,
+  message,
+  plan,
+}: {
+  copy: NonNullable<NonNullable<TrayMessage['message']>['councilCopy']>;
+  message: NonNullable<TrayMessage['message']>;
+  plan: CouncilCopyPlan | null;
+}) {
+  const when = plan?.copyDate ?? copy.copyDate ?? message.envelope_date;
+  const basis = plan?.copyDateBasis ?? copy.copyDateBasis ?? 'exact';
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h2>A copy of a letter the Council sent</h2>
+      </div>
+      <div className="panel-body">
+        <dl className="pairs">
+          <div>
+            <dt>To</dt>
+            <dd>
+              {copy.recipients.map((r) => (
+                <span key={r.email} className="wrap">
+                  {r.name ? (
+                    <>
+                      {r.name} <span className="mono">&lt;{r.email}&gt;</span>
+                    </>
+                  ) : (
+                    <span className="mono">{r.email}</span>
+                  )}
+                  <br />
+                </span>
+              ))}
+            </dd>
+          </div>
+          <div>
+            {/* The copy's own account of when the letter went out, from the server. When all
+                it knows is when the copy was forwarded, it says that rather than calling
+                the forward's arrival the sending. */}
+            <dt>{basis === 'forwarded' ? 'Forwarded' : 'Sent'}</dt>
+            <dd>
+              {formatDate(when)}
+              {basis === 'forwarded' && (
+                <span className="meta">The letter went out on this day or earlier.</span>
+              )}
+              {message.original_date_text && (
+                <span className="meta">&ldquo;{message.original_date_text}&rdquo; as written in the forward</span>
+              )}
+            </dd>
+          </div>
+          {plan && (
+            <div>
+              <dt>Letter</dt>
+              <dd>{plan.kindLabel ?? "Not one of the Council's letter templates"}</dd>
+            </div>
+          )}
+        </dl>
+        {plan && (
+          <p className={plan.check === 'confirmed' ? 'rti-hint' : 'rti-warn'}>{plan.checkNote}</p>
+        )}
+        {message.status === 'unfiled' && (
+          <p className="rti-hint">
+            It is not a complaint and not a reply, so it is never opened as a case and never
+            stops a reminder. File it on the case it belongs to with the panel beside this one.
+          </p>
+        )}
+      </div>
+    </section>
   );
 }
 

@@ -174,6 +174,18 @@ export function formatDate(iso: string | null | undefined): string {
   });
 }
 
+/** The day of a timestamp as a date input wants it (YYYY-MM-DD), in the Council's own calendar. */
+export function dayInputValue(iso: string | null | undefined): string {
+  const d = iso ? new Date(iso) : new Date();
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '-';
   const d = new Date(iso);
@@ -287,17 +299,19 @@ export const MATCH_RUNG_LABEL: Record<string, string> = {
  * status added in @ksdc/contracts fails the typecheck here instead of reaching the officer
  * as a raw key. A type-only import: nothing from contracts is bundled by these lines.
  *
- * The words are the ordinary buttons' words. The assistant suggests the same three things
- * the officer can already do, and calling them something else on the suggestion would make
+ * The words are the ordinary buttons' words. The assistant suggests the same things the
+ * officer can already do, and calling them something else on the suggestion would make
  * "accept the suggestion" and "press the button" look like different acts. They are not:
  * both go through the same service.
  */
 
-/** What it suggested, as a heading - the same words as the three ordinary buttons. */
+/** What it suggested, as a heading - the same words as the ordinary buttons. */
 export const SUGGESTION_DECISION_LABEL: Record<MailSuggestionDecision, string> = {
   new_complaint: 'Open a case',
   follow_up: 'Add to a case',
   not_a_complaint: 'Not a complaint',
+  // The message page's own button for a copy is "File the copy".
+  council_letter_copy: 'File the copy of our letter',
   unsure: 'Not sure',
 };
 

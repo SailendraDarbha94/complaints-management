@@ -99,6 +99,11 @@ export const mailMessage = pgTable(
       onDelete: 'set null',
     }),
     suggestionNote: text('suggestion_note'),
+    /**
+     * When the officer said this is NOT a copy of the Council's own letter, although its
+     * addresses made it look like one (migration 0020). Set, it is ordinary mail.
+     */
+    notCouncilCopyAt: timestamp('not_council_copy_at', { withTimezone: true }),
 
     filedAt: timestamp('filed_at', { withTimezone: true }),
     filedBy: uuid('filed_by').references(() => appUser.id, { onDelete: 'set null' }),

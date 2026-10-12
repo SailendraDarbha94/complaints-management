@@ -9,6 +9,7 @@ import { BusyButton } from '@/app/components/busy-button';
 import { PendingLink } from '@/app/components/pending-link';
 import { useCardAction } from './card-scope';
 import {
+  COPY_ACCEPT_EFFECT,
   acceptBlocker,
   allFilesSent,
   attachmentReadName,
@@ -17,6 +18,8 @@ import {
   closedCaseWarning,
   confidenceChipClass,
   joinNames,
+  notForACopy,
+  suggestedCase,
   suggestionHeadline,
 } from './suggestion-text';
 
@@ -47,9 +50,12 @@ import {
 export function TraySuggestion({
   messageId,
   suggestion: s,
+  isCouncilCopy = false,
 }: {
   messageId: string;
   suggestion: MailSuggestionView;
+  /** The register itself knows the message is a copy of a letter the Council sent. */
+  isCouncilCopy?: boolean;
 }) {
   const { busy, busyFor, step, setStep, send, errorFor } = useCardAction();
   const [note, setNote] = useState('');
@@ -61,7 +67,10 @@ export function TraySuggestion({
 
   const failed = s.status === 'failed';
   const chip = confidenceChipClass(s);
-  const blocker = acceptBlocker(s);
+  // "Open a case" or "add it as their reply" on a message the register knows is a copy of
+  // our letter: not offered (notForACopy). Rejecting still is.
+  const notCopyAnswer = notForACopy(s, isCouncilCopy);
+  const blocker = notCopyAnswer ?? acceptBlocker(s);
   const review = `/intake/${messageId}` as Route;
 
   function post(path: '/suggestion/accept' | '/suggestion/reject', body: unknown) {
@@ -101,6 +110,10 @@ export function TraySuggestion({
   const nc = s.newComplaint;
   const dentists = nc ? joinNames(nc.respondents.map((r) => r.name)) : '';
   const closed = closedCaseWarning(s);
+  // A follow-up's case, or a copy's: both are one click onto an open case, a confirm
+  // onto a closed one.
+  const onCase = suggestedCase(s);
+  const isCopy = s.decision === 'council_letter_copy';
 
   return (
     <div className="suggest">
@@ -120,7 +133,7 @@ export function TraySuggestion({
       )}
       <WhatItRead suggestion={s} />
 
-      {step === 'accept' && s.decision === 'follow_up' && s.followUp && closed ? (
+      {step === 'accept' && onCase && closed ? (
         <form
           className="row-form"
           onSubmit={(e) => {
@@ -133,8 +146,8 @@ export function TraySuggestion({
           </span>
           {error && <span className="rti-error">{error}</span>}
           <div className="action-buttons">
-            <BusyButton type="submit" busy={mine} disabled={busy} busyLabel="Adding…">
-              Add it to the closed case
+            <BusyButton type="submit" busy={mine} disabled={busy} busyLabel={isCopy ? 'Filing…' : 'Adding…'}>
+              {isCopy ? 'File the copy on the closed case' : 'Add it to the closed case'}
             </BusyButton>
             <button type="button" className="link-button" disabled={busy} onClick={() => setStep(null)}>
               Cancel
@@ -210,18 +223,21 @@ export function TraySuggestion({
                 Accept
               </button>
             )}
-            {s.decision === 'follow_up' && !blocker && s.followUp && (
+            {(s.decision === 'follow_up' || isCopy) && !blocker && onCase && (
               <BusyButton
                 type="button"
                 className="link-button"
                 busy={mine}
                 disabled={busy}
-                busyLabel="Adding…"
+                busyLabel={isCopy ? 'Filing…' : 'Adding…'}
                 // A closed case confirms first (see above); an open one is one click.
+                // A copy is filed as a copy - never as a reply, and starting no reminder.
+                title={isCopy ? COPY_ACCEPT_EFFECT : undefined}
                 onClick={() => (closed ? setStep('accept') : post('/suggestion/accept', {}))}
               >
-                Accept: add to {s.followUp.caseNumber}
-                {s.followUp.closed ? ' (closed)' : ''}
+                {isCopy ? 'Accept: file the copy on ' : 'Accept: add to '}
+                {onCase.caseNumber}
+                {onCase.closed ? ' (closed)' : ''}
               </BusyButton>
             )}
             {s.decision === 'not_a_complaint' && !blocker && (
@@ -244,10 +260,11 @@ export function TraySuggestion({
           {/* Said only where the officer can act on it: a follow-up to a number that is not
               a live case is fixed on the message page, by picking the right case; a new
               complaint with nobody named as complainant, by entering who. */}
-          {s.decision === 'follow_up' && blocker && (
+          {notCopyAnswer && <p className="suggest-note">{notCopyAnswer}</p>}
+          {(s.decision === 'follow_up' || isCopy) && blocker && !notCopyAnswer && (
             <p className="suggest-note">{blocker} Review it to pick the right case.</p>
           )}
-          {s.decision === 'new_complaint' && blocker && (
+          {s.decision === 'new_complaint' && blocker && !notCopyAnswer && (
             <p className="suggest-note">{blocker} Review it to enter the complainant.</p>
           )}
           {error && <p className="rti-error">{error}</p>}

@@ -12,6 +12,8 @@ import {
   type EvalEmailLike,
   type EvalSeedLike,
 } from './eval-tools.js';
+import { ownAddressesOf } from '../mail/complainant.js';
+import { OWN_MAILBOX_MARK, toLineForReader } from '../mail/council-copy.js';
 
 /**
  * The invented register the evaluation runs against.
@@ -32,7 +34,15 @@ const SEED: EvalSeedLike = {
       closed: false,
       complainant: { name: 'Asha Rao', email: 'asha.rao@example.com', mobile: '+91 98450 12345' },
       patientName: 'Ravi Rao',
-      respondents: [{ name: 'Dr. Suresh Rao', registrationNo: 'KSDC-1234', clinicName: 'Smile Dental', isEstablishment: false }],
+      respondents: [
+        {
+          name: 'Dr. Suresh Rao',
+          registrationNo: 'KSDC-1234',
+          clinicName: 'Smile Dental',
+          isEstablishment: false,
+          email: 'dr.suresh.rao@example.in',
+        },
+      ],
       recentLetters: [
         { direction: 'out', subject: 'Notice to respondent', date: '2026-07-10' },
         { direction: 'in', subject: 'Reply sent from 9845012345 on 2026-07-14', date: '2026-07-14' },
@@ -59,7 +69,15 @@ const SEED: EvalSeedLike = {
   ],
 };
 
-const CONTACTS = ['asha.rao@example.com', 'asha.alt@example.org', '98450', '9845012345', '2222 3333', '22223333'];
+const CONTACTS = [
+  'asha.rao@example.com',
+  'asha.alt@example.org',
+  'dr.suresh.rao@example.in',
+  '98450',
+  '9845012345',
+  '2222 3333',
+  '22223333',
+];
 
 const tools = createEvalTools(SEED);
 
@@ -90,6 +108,11 @@ describe('searching cases', () => {
   it('finds the complainant by email address, in any case', async () => {
     expect(await matched('ASHA.RAO@example.com')).toEqual({ 'KSDC/COMP/2026-27/0012': ['complainant email'] });
     expect(await matched('asha@example.com')).toEqual({});
+  });
+
+  it("finds a dentist's case by the dentist's own address - how a copy of a letter sent to them finds it", async () => {
+    expect(await matched('Dr.Suresh.Rao@example.in')).toEqual({ 'KSDC/COMP/2026-27/0012': ['respondent email'] });
+    expect(await matched('suresh.rao@example.in')).toEqual({});
   });
 
   it('finds a phone number by its digits, however it is written', async () => {
@@ -203,7 +226,7 @@ describe('searching dentists', () => {
 describe('contact details', () => {
   it('are never returned, however the register is searched', async () => {
     const queries = [
-      'Asha Rao', 'Rao', 'asha.rao@example.com', '9845012345', '080 2222 3333', 'Irfan', 'Suresh',
+      'Asha Rao', 'Rao', 'asha.rao@example.com', 'dr.suresh.rao@example.in', '9845012345', '080 2222 3333', 'Irfan', 'Suresh',
       'KSDC/COMP/2026-27/0012', 'KSDC/COMP/2025-26/0101', 'Smile Dental', 'Bhat', 'Narayan',
     ];
     const out: unknown[] = [];
@@ -244,11 +267,15 @@ describe('opening attachments', () => {
       fromName: 'A',
       fromAddress: null,
       forwardedBy: null,
+      to: 'Asha Rao <asha.rao@example.com>',
       subject: 's',
       dateText: null,
       body: '',
       attachments: ATTACHMENTS,
     };
+    // The To line goes through as written: it is part of what the model is shown.
+    expect(evalTriageEmail(email).to).toBe('Asha Rao <asha.rao@example.com>');
+    expect(evalTriageEmail({ ...email, to: null }).to).toBeNull();
     expect(evalTriageEmail(email).attachments).toEqual([
       { ref: 'a1', filename: 'scan.pdf', contentType: 'application/pdf', stored: true },
       { ref: 'a2', filename: 'bill.jpg', contentType: 'image/jpeg', stored: true },
@@ -311,25 +338,80 @@ const realCases = (config as Record<string, unknown>).ASSISTANT_EVAL_CASES as
   | Array<{
       id: string;
       email: EvalEmailLike;
+      about: string;
       expected: { decision: string; caseNumber?: string; readsAttachment?: boolean };
     }>
   | undefined;
 
 describe.skipIf(!real || !realCases)('the evaluation set in @ksdc/config', () => {
-  it('has every follow-up answer on its invented register', async () => {
+  it('has every follow-up answer, and every copy of a Council letter, on its invented register', async () => {
     const t = createEvalTools(real!);
     for (const c of realCases!) {
-      if (c.expected.decision !== 'follow_up' || !c.expected.caseNumber) continue;
+      if (!['follow_up', 'council_letter_copy'].includes(c.expected.decision) || !c.expected.caseNumber) continue;
       expect(await t.getCase(c.expected.caseNumber), `${c.id} expects ${c.expected.caseNumber}`).not.toBeNull();
     }
   });
 
+  it('gives every email a To line, or says it has none', () => {
+    for (const c of realCases!) {
+      expect('to' in c.email, c.id).toBe(true);
+      expect(c.email.to === null || typeof c.email.to === 'string', c.id).toBe(true);
+    }
+  });
+
+  it('addresses mail sent to the intake mailbox exactly as production shows it to the model', () => {
+    // The intake mailbox's address marked as the Council's own, by the register's own function.
+    const intake = 'ksdc.intake.test@gmail.com';
+    const own = ownAddressesOf({ officialEmail: 'registrar@ksdc.in', website: 'https://ksdc.in', intakeAccount: intake });
+    const TO_INTAKE = (config as Record<string, unknown>).TO_INTAKE;
+    expect(TO_INTAKE).toBe(toLineForReader(intake, own, intake));
+    expect(TO_INTAKE).toContain(OWN_MAILBOX_MARK);
+    // And the office forward the unwrapper could not read - which reaches production
+    // addressed to the mailbox - is addressed so here.
+    const unread = realCases!.find((c) => c.id === 'new-roundcube-forward-no-separator');
+    expect(unread?.email.to).toBe(TO_INTAKE);
+  });
+
+  it("has the copies of the Council's letters it was promised, each one checkable by whom it was sent to", async () => {
+    const t = createEvalTools(real!);
+    const addressOf = (to: string | null) => /[^\s<>"]+@[^\s<>"]+/.exec(to ?? '')?.[0] ?? '';
+    const copies = realCases!.filter((c) => c.expected.decision === 'council_letter_copy');
+    expect(copies.length).toBeGreaterThanOrEqual(3);
+    for (const c of copies) {
+      // From the Council, to somebody outside it, whose address finds the expected case.
+      expect(c.email.fromAddress ?? c.email.forwardedBy ?? '', c.id).toMatch(/@ksdc\.in>?$/);
+      const found = (await t.searchCases(addressOf(c.email.to))).map((h) => h.caseNumber);
+      expect(found, c.id).toContain(c.expected.caseNumber);
+    }
+    // At least one is not a forward (a Cc or Bcc copy), and at least one quotes no number.
+    expect(copies.some((c) => c.email.forwardedBy === null)).toBe(true);
+    expect(copies.some((c) => !/KSDC\/COMP\//.test(`${c.email.subject}\n${c.email.body}`))).toBe(true);
+
+    // And the one whose number and recipient disagree: the number's case is not the
+    // recipient's, so the right answer is unsure.
+    const torn = realCases!.find((c) => c.id === 'copy-number-and-recipient-disagree')!;
+    expect(torn.expected.decision).toBe('unsure');
+    const quoted = /KSDC\/COMP\/\d{4}-\d{2}\/\d{4}/.exec(torn.email.subject)![0];
+    const theirs = (await t.searchCases(addressOf(torn.email.to))).map((h) => h.caseNumber);
+    expect(theirs.length).toBe(1);
+    expect(theirs).not.toContain(quoted);
+    expect(await t.getCase(quoted)).not.toBeNull();
+  });
+
   it('leaks no contact details through any lookup', async () => {
     const t = createEvalTools(real!);
-    const contacts = real!.cases.flatMap((c) => [c.complainant.email, c.complainant.mobile]).filter((x): x is string => !!x);
+    const contacts = real!.cases
+      .flatMap((c) => [c.complainant.email, c.complainant.mobile, ...c.respondents.map((r) => r.email ?? null)])
+      .filter((x): x is string => !!x);
     const out: unknown[] = [];
     for (const c of real!.cases) {
-      for (const q of [c.complainant.name, c.complainant.email, c.complainant.mobile, c.caseNumber]) {
+      for (const q of [
+        c.complainant.name,
+        c.complainant.email,
+        c.complainant.mobile,
+        c.caseNumber,
+        ...c.respondents.map((r) => r.email ?? null),
+      ]) {
         if (!q) continue;
         out.push(await t.searchCases(q), await t.searchDentists(q), await t.getCase(q));
       }

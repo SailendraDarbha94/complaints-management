@@ -48,20 +48,28 @@ export const GET = withAuth<{ id: string }>(async ({ params, tx, ctx, services }
       tx.execute(sql`
         SELECT event, from_state, to_state, reason, occurred_at, is_system
         FROM case_state_history WHERE case_file_id = ${id}::uuid ORDER BY occurred_at`),
+      // copy_emailed_at: when a copy of an outgoing letter reached the intake mailbox and was
+      // filed against it - the proof of what was sent, shown beside the letter.
       tx.execute(sql`
-        SELECT id, kind, direction, subject, body, to_name, from_email, sent_at, received_at,
-               despatch_no, despatch_date, created_at
-        FROM correspondence WHERE case_file_id = ${id}::uuid
-        ORDER BY coalesce(sent_at, received_at, created_at)`),
-      // The mail filed on this case, oldest first - so the first is the complaint itself,
-      // in the complainant's own words. Without this the case file said who complained
-      // and about what in one line, and the complaint was only readable in the tray.
-      tx.execute(sql`
-        SELECT id, subject, original_subject, original_from, original_from_name,
-               envelope_from, envelope_from_name, envelope_date, original_date_text,
-               coalesce(original_body, body_text) AS body, forward_kind, matched_rung
-        FROM mail_message WHERE case_file_id = ${id}::uuid
-        ORDER BY coalesce(original_date, envelope_date)`),
+        SELECT co.id, co.kind, co.direction, co.subject, co.body, co.to_name, co.from_email,
+               co.sent_at, co.received_at, co.despatch_no, co.despatch_date, co.created_at,
+               cm.id AS copy_mail_id, cm.emailed_at AS copy_emailed_at
+        FROM correspondence co
+        LEFT JOIN LATERAL (
+          SELECT m.id, coalesce(m.original_date, m.envelope_date) AS emailed_at
+          FROM mail_message m
+          WHERE m.council_id = ${ctx.councilId}::uuid AND m.correspondence_id = co.id
+            AND co.direction = 'out'::contact_direction
+          ORDER BY m.ingested_at LIMIT 1
+        ) cm ON true
+        WHERE co.case_file_id = ${id}::uuid
+        ORDER BY coalesce(co.sent_at, co.received_at, co.created_at)`),
+      // The mail filed on this case: complaints and replies oldest first - so the first is
+      // the complaint itself, in the complainant's own words - then any copies of the
+      // Council's own letters, marked council_copy so the page never prints one as the
+      // complaint. Without this the case file said who complained and about what in one
+      // line, and the complaint was only readable in the tray.
+      services.mail.mailForCase(tx, ctx, id),
       services.documents.listForCase(tx, ctx, id),
       services.followups.liveForCase(tx, ctx, id),
     ]);
@@ -86,7 +94,7 @@ export const GET = withAuth<{ id: string }>(async ({ params, tx, ctx, services }
     milestones: milestones.rows,
     history: history.rows,
     letters: letters.rows,
-    mail: mail.rows,
+    mail,
     heldAttachments: held.rows[0]?.n ?? 0,
     documents,
     followups,

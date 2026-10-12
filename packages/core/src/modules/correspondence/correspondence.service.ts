@@ -42,8 +42,11 @@ export interface DraftResult {
  * A letter is not just a record; sending it is the act that moves the case on. Keeping
  * this mapping here, rather than asking the officer to remember to press a second button,
  * is the difference between a register that reflects reality and one that lags it.
+ *
+ * Exported for the mail tray, which records a letter as sent from a copy of it that reached
+ * the intake mailbox, and must say beforehand what recording it will do to the case.
  */
-const EVENT_FOR_KIND: Partial<Record<CorrespondenceKind, CaseEvent>> = {
+export const EVENT_FOR_KIND: Partial<Record<CorrespondenceKind, CaseEvent>> = {
   request_docs: 'REQUEST_DOCUMENTS',
   respondent_explanation_sought: 'ISSUE_RESPONDENT_NOTICE',
   respondent_reminder: 'ISSUE_RESPONDENT_NOTICE',
@@ -207,6 +210,15 @@ export class CorrespondenceService {
     const subject = subjectWithReference(renderedSubject, caseNumber);
 
     const recipient = this.recipientFor(args.kind, merge);
+    // The hearing notice to the dentist and an order to the dentist used to be drafted to the
+    // complainant, or to nobody when no dentist was picked (recipientFor, and the composer,
+    // which did not ask). An unsent draft written that way is the same letter, now drafted
+    // to the dentist: it is rewritten too, rather than left on the case as a "draft" that
+    // nothing on the screens can send or remove.
+    const legacyKind = args.kind === 'summons_respondent' || args.kind === 'order_to_respondent';
+    const complainantName = (merge.complainant as { name?: string } | undefined)?.name ?? null;
+    const legacyAddressee = legacyKind ? complainantName : null;
+    const unaddressedToo = legacyKind && recipient.name !== null;
 
     // Drafting the same letter twice - because the officer added a missing detail and came
     // back, or simply clicked again - rewrites the draft rather than leaving a second one
@@ -221,12 +233,15 @@ export class CorrespondenceService {
           AND kind = ${args.kind}::correspondence_kind
           AND direction = 'out'::contact_direction
           AND sent_at IS NULL
-          AND to_name IS NOT DISTINCT FROM ${recipient.name}
-        ORDER BY created_at
+          AND (to_name IS NOT DISTINCT FROM ${recipient.name}
+            OR (${legacyAddressee}::text IS NOT NULL AND to_name = ${legacyAddressee}::text)
+            OR (${unaddressedToo}::boolean AND to_name IS NULL))
+        ORDER BY (to_name IS NOT DISTINCT FROM ${recipient.name}) DESC, created_at
         LIMIT 1
       ),
       rewritten AS (
         UPDATE correspondence SET
+          to_name = ${recipient.name},
           to_email = ${recipient.email},
           subject = ${subject},
           body = ${body},
@@ -286,7 +301,16 @@ export class CorrespondenceService {
     const respondent = merge.respondent as { name?: string } | undefined;
     const expert = merge.expert as { addresseeTitle?: string } | undefined;
 
-    if (kind.startsWith('respondent_') || kind.startsWith('ethics_')) {
+    // Every letter written to a dentist, not only the respondent_* notices: the hearing
+    // notice to the dentist and an order to the dentist were addressed to the complainant,
+    // and a copy of either then looked like a letter to the wrong person (mail/matching.ts,
+    // findRecordedLetter, which still reads rows written that way by their kind).
+    if (
+      kind.startsWith('respondent_') ||
+      kind.startsWith('ethics_') ||
+      kind === 'summons_respondent' ||
+      kind === 'order_to_respondent'
+    ) {
       return { name: respondent?.name ?? null, email: null };
     }
     if (kind === 'expert_referral_letter') {

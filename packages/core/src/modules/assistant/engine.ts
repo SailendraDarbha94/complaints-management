@@ -250,6 +250,13 @@ const proposalInput = z.object({
       respondents: z.array(respondentInput).max(MAX_RESPONDENTS),
     })
     .nullable(),
+  councilCopy: z
+    .object({
+      caseNumber: z.string().trim().min(1).max(100),
+      letter: z.string().trim().min(1).max(200),
+      because: z.string().trim().min(1).max(1000),
+    })
+    .nullable(),
 });
 
 type ProposalInput = z.infer<typeof proposalInput>;
@@ -258,6 +265,7 @@ const DETAIL_FOR: Record<Exclude<TriageProposal['decision'], 'unsure'>, keyof Pr
   not_a_complaint: 'notComplaint',
   follow_up: 'followUp',
   new_complaint: 'newComplaint',
+  council_letter_copy: 'councilCopy',
 };
 
 /**
@@ -789,11 +797,16 @@ class TriageRun {
     // A follow-up must point at a case a lookup in THIS run returned. A case number the
     // model produced any other way - remembered from the email, or made up - is unchecked,
     // and filing a letter on the wrong case is the most damaging mistake this can make.
-    if (p.followUp && !this.seenCases.has(caseKey(p.followUp.caseNumber))) {
-      problems.push(
-        `No lookup for this email returned the case ${p.followUp.caseNumber}. Open it with ${TOOL_GET_CASE} ` +
-          'first to confirm it exists and fits, or choose another answer.',
-      );
+    // The same for a copy of a Council letter: its number is exactly the thing a copy
+    // quotes, and exactly the thing that may be wrong (a letter sent under the wrong
+    // case's reference), so it counts only once a lookup has confirmed the case.
+    for (const detail of [p.followUp, p.councilCopy]) {
+      if (detail && !this.seenCases.has(caseKey(detail.caseNumber))) {
+        problems.push(
+          `No lookup for this email returned the case ${detail.caseNumber}. Open it with ${TOOL_GET_CASE} ` +
+            'first to confirm it exists and fits, or choose another answer.',
+        );
+      }
     }
 
     if (problems.length > 0) {
@@ -822,6 +835,13 @@ class TriageRun {
             complainantName: oneLine(p.newComplaint.complainantName),
             complainantEmail: this.complainantEmail(p.newComplaint.complainantEmail),
             respondents: p.newComplaint.respondents.map((r) => this.respondent(r)),
+          }
+        : null,
+      councilCopy: p.councilCopy
+        ? {
+            caseNumber: this.seenCases.get(caseKey(p.councilCopy.caseNumber)) ?? p.councilCopy.caseNumber,
+            letter: oneLine(p.councilCopy.letter),
+            because: oneLine(p.councilCopy.because),
           }
         : null,
     };

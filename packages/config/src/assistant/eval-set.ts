@@ -9,7 +9,7 @@ import type { MailSuggestionDecision } from '@ksdc/contracts';
  * an edit is checked before it reaches the real tray: the runner in packages/core feeds
  * each email to the assistant, answers its lookups from ASSISTANT_EVAL_SEED instead of the
  * database, and scores what comes back against `expected`. Running it costs real money
- * (about 40 paid suggestions, a few of them reading invented PDFs page by page), which is
+ * (about 45 paid suggestions, a few of them reading invented PDFs page by page), which is
  * why the runner refuses without --confirm.
  *
  * EVERYTHING HERE IS INVENTED. Every person, clinic, phone number and story is made up;
@@ -23,7 +23,7 @@ import type { MailSuggestionDecision } from '@ksdc/contracts';
  *
  * HOW `expected` IS MEANT TO BE READ.
  *   decision          always scored.
- *   caseNumber        follow_up only: the case it belongs on.
+ *   caseNumber        follow_up and council_letter_copy: the case it belongs on.
  *   respondentNames   new_complaint only: every respondent a right answer names, and only
  *                     those, in any order. Compare loosely - case, punctuation, spacing and
  *                     a leading "Dr" - because "Dr. K.S. Rao" and "Dr K. S. Rao" are the same
@@ -62,6 +62,16 @@ import type { MailSuggestionDecision } from '@ksdc/contracts';
  * read-followup-number-in-attached-letter, inside an attached file: the matcher reads only
  * the email's own subject and body, so a number there reaches the assistant unfiled.
  *
+ * The copies of the Council's own letters are the exception, and quote exact numbers: a
+ * copy files itself only when its case already records that letter as sent, and the number
+ * it quotes is checked against the person it was sent to. So a copy whose case does not
+ * record it, or whose number and recipient disagree, reaches the tray number and all.
+ *
+ * `to` is the email's To line as the register would show it (the original's, for a
+ * forward). Mail written to the Council is addressed to one of its addresses; the copies of
+ * its letters are addressed to the complainant or the dentist, which is how they are told
+ * apart from a complaint and how their case is checked.
+ *
  * The types mirror core's TriageEmail and friends field for field, less the attachment
  * handle (`ref`), which the runner adds by position, and plus the invented `pages`, which
  * only the evaluation has. config cannot import core (core depends on config), so the
@@ -89,6 +99,8 @@ export interface EvalEmail {
   fromName: string | null;
   fromAddress: string | null;
   forwardedBy: string | null;
+  /** The To line, names and addresses as written (the original's, for a forward); null when none. */
+  to: string | null;
   subject: string;
   dateText: string | null;
   body: string;
@@ -109,6 +121,8 @@ export interface EvalSeedCase {
     registrationNo: string | null;
     clinicName: string | null;
     isEstablishment: boolean;
+    /** The dentist's address, where the register holds one: searched by, never returned. */
+    email?: string | null;
   }>;
   recentLetters: Array<{ direction: 'in' | 'out'; subject: string; date: string }>;
 }
@@ -204,6 +218,18 @@ const SIRI_RECEIPTS: string[] = Array.from({ length: 24 }, (_, i) => {
 const REGISTRAR = 'Registrar Karnataka State Dental Council <registrar@ksdc.in>';
 const SUPPORT = 'KSDC Support <support@ksdc.in>';
 
+/** The To line of mail written to the Council, and of mail written to its support desk. */
+const TO_COUNCIL = 'registrar@ksdc.in';
+const TO_SUPPORT = 'support@ksdc.in';
+/**
+ * The To line of mail sent to the intake mailbox itself, as the register shows it to the
+ * model: the mailbox is a Gmail account, so its address is marked as the Council's own
+ * (toLineForReader in core, whose mark this must match - eval-tools.test.ts checks). An
+ * office forward the unwrapper could not read arrives addressed so, and must be shown so
+ * here, or the evaluation would never see what production sends.
+ */
+export const TO_INTAKE = "ksdc.intake.test@gmail.com (this mailbox - the Council's own)";
+
 // ─── The invented register ───────────────────────────────────────────────────
 
 /**
@@ -254,6 +280,7 @@ export const ASSISTANT_EVAL_SEED: AssistantEvalSeed = {
           registrationNo: null,
           clinicName: 'Smile Line Dental, Indiranagar, Bengaluru',
           isEstablishment: false,
+          email: 'farhan.qureshi.dds@example.com',
         },
       ],
       recentLetters: [
@@ -435,6 +462,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Kavya Shenoy',
       fromAddress: 'kavya.shenoy@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Complaint against Dr Nandini Rao, Udupi',
       dateText: 'Sat, 3 Oct 2026 21:07:12 +0530',
       body: lines(
@@ -470,6 +498,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: null,
       fromAddress: null,
       forwardedBy: REGISTRAR,
+      to: TO_INTAKE,
       subject: 'Fwd: Treatment complaint',
       dateText: '2026-10-01 18:05',
       body: lines(
@@ -513,6 +542,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Mohammed Irfan',
       fromAddress: 'irfan.m@example.com',
       forwardedBy: SUPPORT,
+      to: TO_SUPPORT,
       subject: 'Fwd: Complaint regarding overcharging',
       dateText: 'Mon, 28 Sept 2026 at 19:42',
       body: lines(
@@ -552,6 +582,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Rohit Bhandari',
       fromAddress: 'rohit.bhandari@example.com',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Complaint on behalf of my mother - denture problem',
       dateText: 'Fri, 2 Oct 2026 08:31:55 +0530',
       body: lines(
@@ -584,6 +615,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Priya Nambiar',
       fromAddress: 'priya.nambiar@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Complaint against Dantavarna Dental Clinics and Dr Meghana Kulkarni',
       dateText: 'Sun, 4 Oct 2026 16:20:03 +0530',
       body: lines(
@@ -616,6 +648,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Suma Hegde',
       fromAddress: 'suma.hegde@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'ದಂತ ವೈದ್ಯರ ವಿರುದ್ಧ ದೂರು',
       dateText: 'Tue, 6 Oct 2026 11:48:30 +0530',
       body: lines(
@@ -651,6 +684,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Harsha Vardhan',
       fromAddress: 'harsha.v@example.com',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Complaint against two dentists at Reddy Dental Specialities, Kalaburagi',
       dateText: 'Thu, 1 Oct 2026 13:02:19 +0530',
       body: lines(
@@ -686,6 +720,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Section Officer (Complaints), National Dental Commission',
       fromAddress: 'complaints-cell@ndc.example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Forwarding of complaint of Shri Venkatesh Prasad - Ref. NDC/COMP/2026-27/0188',
       dateText: 'Wed, 30 Sep 2026 15:40:00 +0530',
       body: lines(
@@ -728,6 +763,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Manjunath Hiremath',
       fromAddress: 'mh.hiremath@example.com',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Fake dentist in our village',
       dateText: 'Tue, 29 Sep 2026 07:55:41 +0530',
       body: lines(
@@ -759,6 +795,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Abdul Rahim',
       fromAddress: 'abdul.rahim@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: "Complaint about my wife's tooth extraction",
       dateText: 'Mon, 5 Oct 2026 19:12:08 +0530',
       body: lines(
@@ -792,6 +829,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Lakshmi Devaraj',
       fromAddress: 'lakshmi.devaraj@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Complaint No. KSDC/COMP/2026-27/11 - when will it be heard?',
       dateText: 'Tue, 6 Oct 2026 10:03:51 +0530',
       body: lines(
@@ -815,6 +853,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Ramesh Kulkarni',
       fromAddress: 'r.kulkarni@work.example.com',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Change of email address for correspondence',
       dateText: 'Fri, 2 Oct 2026 12:30:00 +0530',
       body: lines(
@@ -841,6 +880,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Abdul Rahim',
       fromAddress: 'abdul.rahim@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Status of my complaint',
       dateText: 'Thu, 1 Oct 2026 09:40:12 +0530',
       body: lines(
@@ -865,6 +905,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Meena Iyer',
       fromAddress: 'meena.r.iyer@example.org',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Regarding my earlier complaint',
       dateText: 'Sat, 3 Oct 2026 07:15:40 +0530',
       body: lines(
@@ -889,6 +930,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Dr Anil Shetty',
       fromAddress: 'drshetty.dental@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Reply to your letter dated 24.09.2026',
       dateText: 'Mon, 5 Oct 2026 17:45:22 +0530',
       body: lines(
@@ -927,6 +969,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'K Devaraj',
       fromAddress: 'k.devaraj@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Documents as requested',
       dateText: 'Sun, 4 Oct 2026 20:10:09 +0530',
       body: lines(
@@ -956,6 +999,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Suresh Murthy',
       fromAddress: 'suresh.m@example.com',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Pooja Murthy - braces complaint',
       dateText: 'Fri, 2 Oct 2026 22:01:37 +0530',
       body: lines(
@@ -982,6 +1026,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Nirmala Joshi',
       fromAddress: 'nirmala.joshi@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Withdrawal of complaint',
       dateText: 'Tue, 6 Oct 2026 14:22:58 +0530',
       body: lines(
@@ -999,6 +1044,168 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
     expected: { decision: 'follow_up', caseNumber: 'KSDC/COMP/2026-27/0014' },
   },
 
+  // ── Copies of the Council's own letters ────────────────────────────────────
+  //
+  // The officer sends the Council's letters from webmail and forwards a copy here, or puts
+  // this mailbox in Cc or Bcc. A copy is neither a complaint nor a reply: filed as a reply it
+  // would close reminders nobody answered. Its case is found from the number it quotes AND
+  // the person it was sent to.
+
+  {
+    id: 'copy-forwarded-documents-request',
+    about:
+      "The officer forwards a copy of the Council's documents letter, sent to the complainant on the case it quotes. The original sender is the Council: a copy, not a complaint by the Registrar and not the complainant's reply.",
+    email: {
+      fromName: 'Registrar Karnataka State Dental Council',
+      fromAddress: 'registrar@ksdc.in',
+      forwardedBy: REGISTRAR,
+      to: 'Abdul Rahim <abdul.rahim@example.in>',
+      subject: 'Documents required - KSDC/COMP/2026-27/0009',
+      dateText: 'Wed, 7 Oct 2026 at 11:20',
+      body: lines(
+        'For the record.',
+        '',
+        '---------- Forwarded message ---------',
+        'From: Registrar Karnataka State Dental Council <registrar@ksdc.in>',
+        'Date: Wed, 7 Oct 2026 at 11:20',
+        'Subject: Documents required - KSDC/COMP/2026-27/0009',
+        'To: Abdul Rahim <abdul.rahim@example.in>',
+        '',
+        'Dear Sri Abdul Rahim,',
+        '',
+        'Sub: Your complaint No. KSDC/COMP/2026-27/0009',
+        '',
+        'With reference to your complaint against Dr Sanjana Pai, Pai Dental Clinic, Basavanagudi, you are requested to send the following within 15 days of this letter, so that the complaint may be examined:',
+        '',
+        '1. Copies of the bills and receipts for the root canal treatment.',
+        '2. The written estimate given to you before the treatment, if any.',
+        '3. A short timeline of your visits.',
+        '',
+        'Registrar',
+        'Karnataka State Dental Council',
+      ),
+      attachments: [],
+    },
+    expected: { decision: 'council_letter_copy', caseNumber: 'KSDC/COMP/2026-27/0009' },
+  },
+
+  {
+    id: 'copy-number-and-recipient-disagree',
+    about:
+      "A copy of a reminder quoting 0005 (Meena Iyer's case) but sent to Lakshmi Devaraj, the complainant on 0011. The number and the person point to different cases: unsure, naming both, so the officer checks whether the letter went to the right person.",
+    email: {
+      fromName: 'Registrar Karnataka State Dental Council',
+      fromAddress: 'registrar@ksdc.in',
+      forwardedBy: REGISTRAR,
+      to: 'Lakshmi Devaraj <lakshmi.devaraj@example.in>',
+      subject: 'Reminder: documents required - KSDC/COMP/2026-27/0005',
+      dateText: 'Thu, 8 Oct 2026 at 15:05',
+      body: lines(
+        '---------- Forwarded message ---------',
+        'From: Registrar Karnataka State Dental Council <registrar@ksdc.in>',
+        'Date: Thu, 8 Oct 2026 at 15:05',
+        'Subject: Reminder: documents required - KSDC/COMP/2026-27/0005',
+        'To: Lakshmi Devaraj <lakshmi.devaraj@example.in>',
+        '',
+        'Dear Sir/Madam,',
+        '',
+        'Sub: Complaint No. KSDC/COMP/2026-27/0005 - reminder',
+        '',
+        'The documents asked for in this office letter in respect of the above complaint have not been received. Kindly send them within 7 days, failing which the complaint may be closed for want of particulars.',
+        '',
+        'Registrar',
+        'Karnataka State Dental Council',
+      ),
+      attachments: [],
+    },
+    expected: { decision: 'unsure' },
+  },
+
+  {
+    id: 'copy-to-patient-no-case-number',
+    about:
+      "A letter from the Registrar to a complainant with this mailbox in Cc and no case number anywhere. The person it was sent to - her address and her name - is how its case is found.",
+    email: {
+      fromName: 'Registrar Karnataka State Dental Council',
+      fromAddress: 'registrar@ksdc.in',
+      forwardedBy: null,
+      to: '"Iyer, Meena" <meena.iyer@example.com>',
+      subject: 'Your complaint - documents still awaited',
+      dateText: 'Fri, 9 Oct 2026 12:40:00 +0530',
+      body: lines(
+        'Dear Smt Meena Iyer,',
+        '',
+        'This is with reference to your complaint about the crown fitted at Smile Line Dental, Indiranagar. The bills and the X-ray you mentioned in your email have not yet reached this office. Kindly send them at the earliest, by email or by post, so that the complaint can be placed before the committee.',
+        '',
+        'Registrar',
+        'Karnataka State Dental Council',
+      ),
+      attachments: [],
+    },
+    expected: { decision: 'council_letter_copy', caseNumber: 'KSDC/COMP/2026-27/0005' },
+  },
+
+  {
+    id: 'copy-bcc-explanation-to-dentist',
+    about:
+      "Not a forward: the Registrar's own letter calling a dentist for his explanation, with this mailbox in Bcc. From the Council, to the respondent on the case it quotes.",
+    email: {
+      fromName: 'Registrar Karnataka State Dental Council',
+      fromAddress: 'registrar@ksdc.in',
+      forwardedBy: null,
+      to: 'Dr Farhan Qureshi <farhan.qureshi.dds@example.com>',
+      subject: 'Explanation called for - KSDC/COMP/2026-27/0005',
+      dateText: 'Fri, 9 Oct 2026 16:10:00 +0530',
+      body: lines(
+        'Dear Doctor,',
+        '',
+        'Sub: Complaint No. KSDC/COMP/2026-27/0005 - explanation called for',
+        '',
+        'A complaint has been received by this Council from Smt Meena Iyer regarding a crown fitted at Smile Line Dental, Indiranagar, Bengaluru, which is said to have come off within a week and not been refitted. A copy of the complaint is enclosed.',
+        '',
+        'You are called upon to submit your written explanation, with the treatment records, within 15 days of the receipt of this letter.',
+        '',
+        'Registrar',
+        'Karnataka State Dental Council',
+      ),
+      attachments: [att('Complaint_copy_0005.pdf', PDF)],
+    },
+    expected: { decision: 'council_letter_copy', caseNumber: 'KSDC/COMP/2026-27/0005', readsAttachment: false },
+  },
+
+  {
+    id: 'reply-quoting-our-documents-letter',
+    about:
+      "A REPLY, not a copy: the complainant answers our documents letter, which her mail program quoted below her own words with the Registrar's From line. She wrote this email, so it is a follow-up - the guard against calling every email that quotes a Council letter a copy.",
+    email: {
+      fromName: 'Lakshmi Devaraj',
+      fromAddress: 'lakshmi.devaraj@example.in',
+      forwardedBy: null,
+      to: TO_COUNCIL,
+      subject: 'Re: Documents required',
+      dateText: 'Sat, 10 Oct 2026 09:12:44 +0530',
+      body: lines(
+        'Respected Sir,',
+        '',
+        'As asked, I am sending the bills from Naik Dental Hospital and the X-ray taken after the extraction. The prescription was lost; I have asked the hospital for a copy.',
+        '',
+        'Lakshmi Devaraj',
+        '',
+        'On Tue, 4 Aug 2026 at 11:02, Registrar Karnataka State Dental Council <registrar@ksdc.in> wrote:',
+        '> Dear Smt Lakshmi Devaraj,',
+        '>',
+        '> With reference to your complaint against Dr Ravi Naik, Naik Dental Hospital, Vidyanagar,',
+        '> Hubballi, you are requested to send copies of the bills, the prescriptions and any',
+        '> X-rays within 15 days of this letter.',
+        '>',
+        '> Registrar',
+        '> Karnataka State Dental Council',
+      ),
+      attachments: [att('Naik_Dental_bills.pdf', PDF), att('xray_after_extraction.jpg', JPEG)],
+    },
+    expected: { decision: 'follow_up', caseNumber: 'KSDC/COMP/2026-27/0011', readsAttachment: false },
+  },
+
   // ── Not complaints ─────────────────────────────────────────────────────────
 
   {
@@ -1008,6 +1215,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'DentaMart Supplies',
       fromAddress: 'offers@dentamart.example.com',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Navaratri Mega Sale - flat 30% off on endo motors and apex locators!',
       dateText: 'Thu, 1 Oct 2026 06:00:00 +0530',
       body: lines(
@@ -1037,6 +1245,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Google',
       fromAddress: 'googleaccount-noreply@google.com',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Security alert',
       dateText: 'Sun, 4 Oct 2026 09:30:17 +0530',
       body: lines(
@@ -1061,6 +1270,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Bengaluru Dental Study Circle',
       fromAddress: 'cde@dentalstudycircle.example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'October newsletter: CDE programme on full-mouth rehabilitation (4 CDE points)',
       dateText: 'Mon, 28 Sep 2026 10:00:00 +0530',
       body: lines(
@@ -1088,6 +1298,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Ananya Kamat',
       fromAddress: 'ananya.kamat.bds@example.com',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Application for any suitable post',
       dateText: 'Wed, 30 Sep 2026 11:11:11 +0530',
       body: lines(
@@ -1113,6 +1324,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Vinay Kumar S',
       fromAddress: 'vinay.rti@example.com',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Application under RTI Act 2005',
       dateText: 'Tue, 29 Sep 2026 16:35:20 +0530',
       body: lines(
@@ -1148,6 +1360,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Dr Shruthi Kamble',
       fromAddress: 'shruthi.kamble.dds@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Renewal of registration - late fee',
       dateText: 'Fri, 2 Oct 2026 15:05:44 +0530',
       body: lines(
@@ -1172,6 +1385,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'KSDC Mail Administrator',
       fromAddress: 'it-helpdesk@ksdc-mailverify.example.com',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'URGENT: Your mailbox will be deactivated in 24 hours',
       dateText: 'Sat, 3 Oct 2026 02:14:09 +0530',
       body: lines(
@@ -1200,6 +1414,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Dr Imran Sheikh',
       fromAddress: 'dr.imran.sheikh@example.com',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Good Standing Certificate for licence in Oman',
       dateText: 'Mon, 5 Oct 2026 08:02:31 +0530',
       body: lines(
@@ -1228,6 +1443,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Devaraj',
       fromAddress: 'devaraj.home@example.com',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Our complaint against Dr Naik',
       dateText: 'Wed, 7 Oct 2026 08:45:00 +0530',
       body: lines(
@@ -1249,6 +1465,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: null,
       fromAddress: 'ganesh.k77@example.com',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'urgent',
       dateText: null,
       body: lines('sir pls call me urgent regarding dentist problem', '90000 22210'),
@@ -1265,6 +1482,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Ramesh Kulkarni',
       fromAddress: 'ramesh.kulkarni@example.in',
       forwardedBy: SUPPORT,
+      to: TO_SUPPORT,
       subject: 'Fwd: Complaint against Dr Anil Shetty - implant failure',
       dateText: 'Sat, 3 Oct 2026 at 18:22',
       body: lines(
@@ -1300,6 +1518,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Rekha Malagi',
       fromAddress: 'rekha.malagi@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Complaint against Dr Tejas Kini, Davanagere',
       dateText: 'Sun, 4 Oct 2026 23:51:16 +0530',
       body: lines(
@@ -1332,6 +1551,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Girish Hosmani',
       fromAddress: 'girish.hosmani@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Complaint about wrong treatment of my ear',
       dateText: 'Thu, 8 Oct 2026 10:12:44 +0530',
       body: lines(
@@ -1358,6 +1578,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Deepa Kamath',
       fromAddress: 'deepa.kamath@example.com',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Complaint against dentist - bridge failed',
       dateText: 'Thu, 8 Oct 2026 16:05:10 +0530',
       body: lines(
@@ -1386,6 +1607,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Section Officer (Complaints), National Dental Commission',
       fromAddress: 'complaints-cell@ndc.example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Forwarding of complaint - Ref. NDC/COMP/2026-27/0203',
       dateText: 'Fri, 9 Oct 2026 11:20:00 +0530',
       body: lines(
@@ -1419,6 +1641,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Shabana Mulla',
       fromAddress: 'shabana.mulla@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Complaint against Dr Ravi Naik (Reg. No. 9311A)',
       dateText: 'Fri, 9 Oct 2026 09:02:51 +0530',
       body: lines(
@@ -1455,6 +1678,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Sowmya R',
       fromAddress: 'sowmya.r1990@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Complaint',
       dateText: 'Wed, 7 Oct 2026 20:14:37 +0530',
       body: '',
@@ -1526,6 +1750,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Section Officer (Complaints), National Dental Commission',
       fromAddress: 'complaints-cell@ndc.example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Forwarding of complaint - Ref. NDC/COMP/2026-27/0231',
       dateText: 'Mon, 5 Oct 2026 12:05:00 +0530',
       body: lines(
@@ -1625,6 +1850,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Sri Sai Xerox and Cyber Centre',
       fromAddress: 'srisaicyber.hubli@example.com',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Letter to KSDC',
       dateText: 'Thu, 8 Oct 2026 12:41:09 +0530',
       body: lines('Sir,', '', 'Please see the attached letter.', '', 'Sri Sai Xerox and Cyber Centre', 'Vidyanagar, Hubballi'),
@@ -1673,6 +1899,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Mallikarjun S',
       fromAddress: 'mallikarjun.sajjan@example.com',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Complaint against dental hospital',
       dateText: 'Tue, 6 Oct 2026 18:30:12 +0530',
       body: lines('Sir,', '', 'My complaint and all the payment receipts are in the attached file. Please take action.', '', 'Mallikarjun'),
@@ -1729,6 +1956,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Fathima Begum',
       fromAddress: 'fathima.begum@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Complaint against Dr Ashwini Gowda, Nisarga Dental Clinic, Hassan',
       dateText: 'Wed, 7 Oct 2026 10:22:45 +0530',
       body: lines(
@@ -1778,6 +2006,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Prakash Hulikal',
       fromAddress: 'prakash.hulikal@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: '',
       dateText: 'Fri, 9 Oct 2026 07:48:02 +0530',
       body: 'Sent from my iPhone',
@@ -1794,6 +2023,7 @@ export const ASSISTANT_EVAL_CASES: EvalCase[] = [
       fromName: 'Naveen Kotian',
       fromAddress: 'naveen.kotian@example.in',
       forwardedBy: null,
+      to: TO_COUNCIL,
       subject: 'Complaint - please see attachment',
       dateText: 'Thu, 8 Oct 2026 21:33:50 +0530',
       body: 'Please see attachment.',

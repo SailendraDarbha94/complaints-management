@@ -453,11 +453,17 @@ export type MailForwardKind = z.infer<typeof mailForwardKindSchema>;
 /**
  * What the assistant can suggest for a message in the tray. `unsure` is a real answer,
  * not a failure: a suggestion it cannot stand behind is worse than none.
+ *
+ * `council_letter_copy` is a copy of a letter the Council itself sent (forwarded to the
+ * intake mailbox, or with it in Cc or Bcc). It is neither a complaint nor anybody's reply,
+ * and filing it as a reply would close reminders nobody answered - see the register's
+ * council-copy.ts. Added in migration 0019, before 'unsure', in the database enum too.
  */
 export const MAIL_SUGGESTION_DECISIONS = tuple([
   'new_complaint',
   'follow_up',
   'not_a_complaint',
+  'council_letter_copy',
   'unsure',
 ] as const);
 export const mailSuggestionDecisionSchema = z.enum(MAIL_SUGGESTION_DECISIONS);

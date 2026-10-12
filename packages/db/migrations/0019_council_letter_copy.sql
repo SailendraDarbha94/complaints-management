@@ -1,0 +1,31 @@
+-- 0019_council_letter_copy.sql
+--
+-- The mail assistant gets a fifth answer: "a copy of a letter the Council sent".
+--
+-- The officer drafts a letter on the case page, sends it from the Council's webmail, and
+-- often forwards a copy of it to the intake mailbox (or puts the intake mailbox in Cc or
+-- Bcc) so that the tray has a record of it. Such a copy is not a complaint and it is not
+-- anybody's reply. Until now the assistant had only four answers for it, and the nearest -
+-- "add to a case" - filed it as a letter RECEIVED, which closed the case's reminders as
+-- though the complainant or the dentist had answered. The register now recognises these
+-- copies by itself (see packages/core/src/modules/mail/council-copy.ts) and never files one
+-- as a reply; this lets the assistant say the same thing for the copies the register's own
+-- check cannot see.
+--
+-- Accepting the new answer files the message through the register's own path for a copy:
+-- attached to the letter the case already records as sent, or put on the case as a letter
+-- sent, changing nothing else. It never starts a reminder and never closes one.
+--
+-- NOT A NEW OUTCOME. What the officer did is still 'filed_on_case' (mail_suggestion's
+-- outcome_action is text with a check, and filing a copy on a case is filing it on a
+-- case). Whether that agreed with the suggestion is decided by the service, which knows
+-- whether the message was filed as a copy.
+--
+-- BEFORE 'unsure', as in MAIL_SUGGESTION_DECISIONS in packages/contracts: the drizzle enum
+-- is generated from that tuple, and the two orders should not drift apart.
+--
+-- ADD VALUE is additive and safe inside a transaction in PostgreSQL 12 and later, provided
+-- the new value is not used in the same transaction. Nothing below uses it. IF NOT EXISTS
+-- makes it safe to run twice.
+
+ALTER TYPE mail_suggestion_decision ADD VALUE IF NOT EXISTS 'council_letter_copy' BEFORE 'unsure';

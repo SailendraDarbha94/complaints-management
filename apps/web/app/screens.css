@@ -484,6 +484,11 @@ button[type='submit']:disabled,
   resize: vertical;
   line-height: 1.5;
 }
+/* A select is as wide as its longest option ("KSDC/COMP/2026-27/0042 - quotes ..."), which
+   pushed it out past the edge of the narrow side panels. */
+.action-form select {
+  max-width: 100%;
+}
 
 label.checkbox {
   flex-direction: row;

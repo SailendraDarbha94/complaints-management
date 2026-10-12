@@ -20,6 +20,12 @@ export interface OwnAddresses {
   addresses: Set<string>;
   /** Domains every address on which is the Council's, lower-cased. */
   domains: Set<string>;
+  /**
+   * Whether the intake mailbox's own address is among `addresses`. Without it, an office
+   * forward addressed to the intake mailbox looks like mail to an outsider, so a rule that
+   * reads the To line as "who the Council wrote to" can only be trusted when this is set.
+   */
+  intakeKnown?: boolean;
 }
 
 /**
@@ -42,6 +48,8 @@ export function ownAddressesOf(council: {
     const clean = a?.trim().toLowerCase();
     if (clean && clean.includes('@')) addresses.add(clean);
   }
+  const intake = council.intakeAccount?.trim().toLowerCase();
+  const intakeKnown = Boolean(intake && intake.includes('@'));
 
   const host = council.website
     ?.trim()
@@ -51,7 +59,7 @@ export function ownAddressesOf(council: {
     .replace(/^www\./, '');
   if (host && host.includes('.')) domains.add(host);
 
-  return { addresses, domains };
+  return { addresses, domains, intakeKnown };
 }
 
 /** The account half of a stored mailbox key - see mailboxKey(), which writes "user/folder". */
@@ -61,10 +69,34 @@ export function intakeAccountOf(mailbox: string | null | undefined): string | nu
   return account.includes('@') ? account : null;
 }
 
+/**
+ * An address as Gmail delivers it: one mailbox has many spellings there. Dots in the name
+ * do not count, anything after a "+" is a tag on the same mailbox, and googlemail.com is
+ * gmail.com - so ksdc.registrar.blr@gmail.com and ksdcregistrarblr+intake@googlemail.com
+ * both reach ksdcregistrarblr@gmail.com. Every other address is only lower-cased: other
+ * providers make no such promise.
+ */
+export function deliveredAddress(address: string): string {
+  const a = address.trim().toLowerCase();
+  const at = a.lastIndexOf('@');
+  if (at <= 0) return a;
+  const domain = a.slice(at + 1);
+  if (domain !== 'gmail.com' && domain !== 'googlemail.com') return a;
+  const local = a.slice(0, at).split('+')[0]!.replace(/\./g, '');
+  return local ? `${local}@gmail.com` : a;
+}
+
 export function isOwnAddress(address: string | null | undefined, own: OwnAddresses): boolean {
   const a = address?.trim().toLowerCase();
   if (!a) return false;
   if (own.addresses.has(a)) return true;
+  // The intake mailbox under another spelling of the same Gmail account: the office writes
+  // it as it likes, and Gmail delivers every spelling to the one mailbox. Read as somebody
+  // else, an office forward "to" it looked like the Council writing to an outsider.
+  const delivered = deliveredAddress(a);
+  for (const mine of own.addresses) {
+    if (deliveredAddress(mine) === delivered) return true;
+  }
   const domain = a.slice(a.lastIndexOf('@') + 1);
   // Subdomains too: mail.ksdc.in is still the Council.
   for (const d of own.domains) {
