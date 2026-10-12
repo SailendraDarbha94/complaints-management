@@ -4,8 +4,10 @@ import { withAuthNoTransaction } from '@/lib/route';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 // A model call with lookups takes seconds, sometimes tens of them. The engine stops a
-// reading at RUN_DEADLINE_MS (150 s, engine.ts) whatever happens; this leaves room above
-// that for the two short database scopes, so the reading ends - and its row says why -
+// reading at RUN_DEADLINE_MS (150 s, engine.ts) whatever happens - time spent fetching an
+// attachment counts towards it, though a fetch already under way is not cut short - and
+// this leaves room above that for the short database scopes around it (one more for each
+// file read), so the reading ends - and its row says why -
 // before the platform cuts the request off. (The row is written before the model is
 // called, so even a request cut off here is counted against the daily limit.)
 export const maxDuration = 180;

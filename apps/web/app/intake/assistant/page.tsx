@@ -118,6 +118,8 @@ export default async function AssistantReportPage({
           {report.automatic
             ? 'The assistant is on and reads each new email in the tray by itself.'
             : "The assistant is on, but reads only the emails you ask it about, from each email's page."}
+          {report.readsAttachments &&
+            ' The attachment reader is on too: when an email alone is not enough, it may open an attached file and send it to Anthropic. Every suggestion says which files it sent.'}
         </p>
       )}
 

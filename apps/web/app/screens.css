@@ -1230,10 +1230,22 @@ label.checkbox {
 .suggest .row-form {
   margin-top: 6px;
 }
+/* "It read 1 attachment". Filenames are often one unbroken word ("IMG_20261003_114512.jpg"),
+   which must wrap rather than push the card wider than the tray. */
+.suggest-read p,
+.assistant-read {
+  overflow-wrap: anywhere;
+}
+.suggest-why + .suggest-read {
+  margin-top: 2px;
+}
 
 /* The message page's panel, in the 300px side column. */
 .assistant-reasoning {
   margin-top: 8px;
+}
+.assistant-read {
+  margin: 8px 0 0;
 }
 .assistant-pairs,
 .assistant-outcome {

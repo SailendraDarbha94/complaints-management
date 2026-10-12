@@ -1,3 +1,5 @@
+import { PDFDocument, StandardFonts, type PDFFont } from 'pdf-lib';
+import { prepareAttachment } from './attachment-prep.js';
 import {
   canonicalCaseNumber,
   nameHasWords,
@@ -5,17 +7,31 @@ import {
   registrationMatches,
   withoutContacts,
 } from './text-rules.js';
-import type { CaseDetail, CaseSearchHit, DentistHit, TriageTools } from './types.js';
+import type {
+  AttachmentReadResult,
+  CaseDetail,
+  CaseSearchHit,
+  DentistHit,
+  TriageEmail,
+  TriageTools,
+} from './types.js';
 
 export { withoutContacts };
 
 /**
- * The three lookups, answered from an invented register held in memory.
+ * The three lookups, answered from an invented register held in memory - and the
+ * attachment reader, answered from invented files.
  *
  * For the evaluation runner (scripts/assistant-eval.ts) only. It lets the assistant be
  * scored against known answers without a database - and, more to the point, without the
  * real register: the evaluation sends every email and every lookup result to the API,
  * and nothing real belongs in that.
+ *
+ * AN INVENTED FILE is the text of each of its pages (the eval set's `pages`), drawn into a
+ * real PDF here and then handed to the very function the register's reader uses
+ * (attachment-prep.ts), so it is cut, measured and refused exactly as a real file would
+ * be. Whatever an attachment's name or declared type, if it has pages it is that PDF; an
+ * attachment with no pages has nothing in it to read, and says so.
  *
  * It behaves like the real lookups where the behaviour changes the model's answer: the
  * same kinds of match (case number, complainant and patient names, the complainant's
@@ -60,6 +76,20 @@ export interface EvalSeedLike {
     clinicName: string | null;
     priorCases: number;
   }>;
+}
+
+/** The eval set's attachment, as config's EvalAttachment writes it. */
+export interface EvalAttachmentLike {
+  filename: string;
+  contentType: string | null;
+  stored: boolean;
+  /** The text of each page of an invented PDF, plain ASCII / Latin-1 (drawn in Helvetica). */
+  pages?: string[];
+}
+
+/** The eval set's email, as config's EvalEmail writes it: core's TriageEmail without refs. */
+export interface EvalEmailLike extends Omit<TriageEmail, 'attachments'> {
+  attachments: EvalAttachmentLike[];
 }
 
 type SeedCase = EvalSeedLike['cases'][number];
@@ -199,10 +229,159 @@ function matchesOf(query: string, c: SeedCase): string[] {
   return on;
 }
 
-export function createEvalTools(seed: EvalSeedLike): TriageTools {
+// ─── Attachments ─────────────────────────────────────────────────────────────
+
+/**
+ * The handle of the attachment at this index: a1, a2... in the order of the email's
+ * attachments array - the same numbering the service gives the tray's attachments.
+ */
+export function attachmentRef(index: number): string {
+  return `a${index + 1}`;
+}
+
+/** An evaluation email as the engine is given it: handles assigned, page texts left behind. */
+export function evalTriageEmail(email: EvalEmailLike): TriageEmail {
+  return {
+    fromName: email.fromName,
+    fromAddress: email.fromAddress,
+    forwardedBy: email.forwardedBy,
+    subject: email.subject,
+    dateText: email.dateText,
+    body: email.body,
+    attachments: email.attachments.map((a, i) => ({
+      ref: attachmentRef(i),
+      filename: a.filename,
+      contentType: a.contentType,
+      stored: a.stored,
+    })),
+  };
+}
+
+/** A4, in points, with margins a letter would have. */
+const PAGE_SIZE: [number, number] = [595.28, 841.89];
+const MARGIN = 56;
+/** Largest first; a page that will not fit in 11-point type is tried smaller, down to 6. */
+const FONT_SIZES = [11, 10, 9, 8, 7, 6];
+
+/**
+ * Typographic characters an author is likely to paste, in their plain forms. Anything
+ * else Helvetica's WinAnsi encoding cannot draw - the rupee sign above all - stops the
+ * rendering with a message naming the page, rather than being quietly changed.
+ */
+const PLAIN: Array<[RegExp, string]> = [
+  [/[‘’]/g, "'"],
+  [/[“”]/g, '"'],
+  [/[–—]/g, '-'],
+  [/…/g, '...'],
+  [/[   ]/g, ' '],
+  [/\t/g, '    '],
+];
+
+function plain(text: string): string {
+  return PLAIN.reduce((t, [re, to]) => t.replace(re, to), text);
+}
+
+/** Greedy word wrap to `width` points; a word longer than a line is broken where it must be. */
+export function wrapText(text: string, font: PDFFont, size: number, width: number): string[] {
+  const fits = (s: string) => font.widthOfTextAtSize(s, size) <= width;
+  const lines: string[] = [];
+  for (const paragraph of text.split(/\r?\n/)) {
+    let line = '';
+    for (const word of paragraph.split(/ +/).filter(Boolean)) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (fits(candidate)) {
+        line = candidate;
+        continue;
+      }
+      if (line) lines.push(line);
+      line = '';
+      let rest = word;
+      while (!fits(rest)) {
+        let n = rest.length - 1;
+        while (n > 1 && !fits(rest.slice(0, n))) n--;
+        lines.push(rest.slice(0, n));
+        rest = rest.slice(n);
+      }
+      line = rest;
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+/**
+ * The invented file: one A4 page per string, its text wrapped to the page. A page that
+ * does not fit even in 6-point type is an error in the evaluation set, not something to
+ * spill onto a page the answer key never wrote - so it throws, naming the page.
+ */
+export async function renderEvalPdf(pages: string[]): Promise<Buffer> {
+  // No metadata of its own (no creation date), so the same pages are the same bytes.
+  const doc = await PDFDocument.create({ updateMetadata: false });
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const width = PAGE_SIZE[0] - 2 * MARGIN;
+  const height = PAGE_SIZE[1] - 2 * MARGIN;
+
+  for (const [i, raw] of pages.entries()) {
+    const text = plain(raw);
+    let laid: { lines: string[]; size: number; leading: number } | null = null;
+    try {
+      for (const size of FONT_SIZES) {
+        const lines = wrapText(text, font, size, width);
+        const leading = size * 1.3;
+        if (lines.length * leading <= height) {
+          laid = { lines, size, leading };
+          break;
+        }
+      }
+    } catch (err) {
+      throw new Error(
+        `Evaluation attachment page ${i + 1} has a character Helvetica cannot draw ` +
+          `(${err instanceof Error ? err.message : String(err)}). Write it in plain ASCII - "Rs", not the rupee sign.`,
+      );
+    }
+    if (!laid) throw new Error(`Evaluation attachment page ${i + 1} does not fit on one page, even in 6-point type.`);
+
+    const page = doc.addPage(PAGE_SIZE);
+    let y = PAGE_SIZE[1] - MARGIN - laid.size;
+    for (const line of laid.lines) {
+      if (line) page.drawText(line, { x: MARGIN, y, size: laid.size, font });
+      y -= laid.leading;
+    }
+  }
+  return Buffer.from(await doc.save());
+}
+
+export interface EvalToolsOptions {
+  /** The email being triaged: read_attachment opens these, by handle (a1 is the first). */
+  attachments?: EvalAttachmentLike[];
+  /**
+   * MAIL_ASSISTANT_MAX_PDF_PAGES. The runner passes the configured value; the default is
+   * the setting's own (ASSISTANT_DEFAULTS in config.ts, not imported so that these tools
+   * do not load @ksdc/config).
+   */
+  maxPdfPages?: number;
+}
+
+/**
+ * The tools for ONE evaluation email: the lookups are the invented register's, the same
+ * for every email; the reader opens this email's attachments only, as the register's
+ * reader opens only the message it was built for.
+ */
+export function createEvalTools(seed: EvalSeedLike, opts: EvalToolsOptions = {}): TriageTools {
   const dentists = knownDentists(seed);
+  const attachments = opts.attachments ?? [];
+  const maxPdfPages = opts.maxPdfPages ?? 10;
 
   return {
+    async readAttachment(ref): Promise<AttachmentReadResult> {
+      const m = /^a(\d+)$/i.exec(ref.trim());
+      const a = m ? attachments[Number(m[1]) - 1] : undefined;
+      if (!a) return { ok: false, reason: 'There is no attachment with that handle.' };
+      if (!a.stored) return { ok: false, reason: 'The register did not keep this file.' };
+      if (!a.pages?.length) return { ok: false, reason: 'This test attachment has no contents.' };
+      return prepareAttachment(await renderEvalPdf(a.pages), { maxPdfPages });
+    },
+
     async searchCases(query) {
       return seed.cases
         .map((c) => ({ c, on: matchesOf(query, c) }))

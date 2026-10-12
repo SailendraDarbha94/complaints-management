@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { simpleParser } from 'mailparser';
+import { PDFDocument } from 'pdf-lib';
 import { closeDb, initDb, withCouncil, type Tx } from '@ksdc/db';
 import { KSDC_CONFIG } from '@ksdc/config';
 import { CaseIntakeService } from '../cases/case-intake.service.js';
@@ -17,8 +18,11 @@ import { AssistantService, SET_ASIDE_PREFIX, STILL_READING } from './assistant.s
 import { assistantConfigFromEnv, playbookVersionOf, type AssistantConfig } from './config.js';
 import { registerTools } from './register-tools.js';
 import type {
+  AttachmentReadRecord,
+  AttachmentReadResult,
   RunTriage,
   TriageEmail,
+  TriageOptions,
   TriageProposal,
   TriageResult,
   TriageTools,
@@ -65,12 +69,14 @@ const respondents = new RespondentService();
 type Answer = (email: TriageEmail, tools: TriageTools) => Promise<TriageResult> | TriageResult;
 let answer: Answer;
 let seen: TriageEmail[] = [];
-const fakeTriage: RunTriage = async (email, tools) => {
+let seenOpts: TriageOptions[] = [];
+const fakeTriage: RunTriage = async (email, tools, opts) => {
   seen.push(email);
+  seenOpts.push(opts);
   return answer(email, tools);
 };
 
-function ok(proposal: TriageProposal, costUsd = 0.01): TriageResult {
+function ok(proposal: TriageProposal, costUsd = 0.01, attachmentsRead: AttachmentReadRecord[] = []): TriageResult {
   return {
     ok: true,
     proposal,
@@ -78,6 +84,7 @@ function ok(proposal: TriageProposal, costUsd = 0.01): TriageResult {
     usage: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 900, cacheWriteTokens: 0 },
     costUsd,
     toolCalls: 2,
+    attachmentsRead,
   };
 }
 const notComplaint = (reason = 'A circular from another body, not a complaint.'): TriageProposal => ({
@@ -123,6 +130,10 @@ function config(over: Partial<AssistantConfig> = {}): AssistantConfig {
     dailyLimit: 10_000,
     perSweep: 5,
     maxToolCalls: 8,
+    // Off, as it ships: the file reader's own tests below switch it on.
+    readAttachments: false,
+    maxAttachmentReads: 3,
+    maxPdfPages: 10,
     playbook: 'test playbook',
     playbookVersion: playbookVersionOf('test playbook'),
     ...over,
@@ -136,7 +147,7 @@ const mail = new MailIntakeService(storage, intake, correspondence, documents, f
   officerActed: (tx, c, id, act) => assistant.officerActed(tx, c, id, act),
   suggestAfterSweep: (c, ids) => assistant.suggestAfterSweep(c, ids),
 });
-assistant = new AssistantService(mail, respondents, fakeTriage, config());
+assistant = new AssistantService(mail, respondents, storage, fakeTriage, config());
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -261,10 +272,11 @@ async function suggestionRows(c: EngineContext, mailMessageId: string) {
       playbook_version: string;
       error: string | null;
       proposal: TriageProposal | null;
+      attachments_read: AttachmentReadRecord[];
     }>(sql`
       SELECT status::text, decision::text, outcome_action, outcome_agreed, outcome_case_file_id,
              outcome_note, acted_by, created_by, cost_usd, input_tokens, playbook_version, error,
-             proposal
+             proposal, attachments_read
       FROM mail_suggestion
       WHERE council_id = ${c.councilId}::uuid AND mail_message_id = ${mailMessageId}::uuid
       ORDER BY created_at, (status = 'pending')
@@ -306,6 +318,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   seen = [];
+  seenOpts = [];
   answer = () => ok(notComplaint());
 });
 
@@ -366,6 +379,47 @@ describe('whether the assistant is on', () => {
     const words = assistantConfigFromEnv({ ...KEY, MAIL_ASSISTANT: 'on', MAIL_ASSISTANT_DAILY_LIMIT: 'fifty' });
     expect(words.enabled).toBe(false);
     expect(words.reason).toMatch(/MAIL_ASSISTANT_DAILY_LIMIT/);
+  });
+
+  it('reads attachments only when that is switched on too, within two limits of its own', () => {
+    // Off by default, even with the assistant on: a file read is a file sent to Anthropic.
+    const plain = assistantConfigFromEnv({ ...KEY, MAIL_ASSISTANT: 'on' });
+    expect(plain).toMatchObject({ enabled: true, readAttachments: false, maxAttachmentReads: 3, maxPdfPages: 10 });
+    expect(assistantConfigFromEnv({})).toMatchObject({ readAttachments: false, maxAttachmentReads: 3, maxPdfPages: 10 });
+
+    const reading = assistantConfigFromEnv({
+      ...KEY,
+      MAIL_ASSISTANT: 'on',
+      MAIL_ASSISTANT_ATTACHMENTS: 'on',
+      MAIL_ASSISTANT_MAX_ATTACHMENT_READS: '5',
+      MAIL_ASSISTANT_MAX_PDF_PAGES: '20',
+    });
+    expect(reading).toMatchObject({ enabled: true, readAttachments: true, maxAttachmentReads: 5, maxPdfPages: 20 });
+
+    // Spelled one way. Anything else leaves the reader off - and the assistant on, because
+    // the email-only assistant is the one the Council agreed to.
+    for (const v of ['true', '1', 'yes', 'ON ', 'off']) {
+      expect(assistantConfigFromEnv({ ...KEY, MAIL_ASSISTANT: 'on', MAIL_ASSISTANT_ATTACHMENTS: v })).toMatchObject({
+        enabled: true,
+        readAttachments: false,
+      });
+    }
+
+    // A limit that cannot be read, or of nothing, is a misconfiguration: off, by name.
+    const noFiles = assistantConfigFromEnv({ ...KEY, MAIL_ASSISTANT: 'on', MAIL_ASSISTANT_MAX_ATTACHMENT_READS: '0' });
+    expect(noFiles.enabled).toBe(false);
+    expect(noFiles.reason).toMatch(/MAIL_ASSISTANT_MAX_ATTACHMENT_READS must be a whole number from 1 to 10/);
+    // And a ceiling: a slipped extra zero must not send a hundred files of one email.
+    const tooMany = assistantConfigFromEnv({ ...KEY, MAIL_ASSISTANT: 'on', MAIL_ASSISTANT_MAX_ATTACHMENT_READS: '50' });
+    expect(tooMany.enabled).toBe(false);
+    expect(tooMany.reason).toMatch(/MAIL_ASSISTANT_MAX_ATTACHMENT_READS must be a whole number from 1 to 10/);
+    expect(assistantConfigFromEnv({ ...KEY, MAIL_ASSISTANT: 'on', MAIL_ASSISTANT_MAX_ATTACHMENT_READS: '10' })).toMatchObject({
+      enabled: true,
+      maxAttachmentReads: 10,
+    });
+    const pages = assistantConfigFromEnv({ ...KEY, MAIL_ASSISTANT: 'on', MAIL_ASSISTANT_MAX_PDF_PAGES: 'ten' });
+    expect(pages.enabled).toBe(false);
+    expect(pages.reason).toMatch(/MAIL_ASSISTANT_MAX_PDF_PAGES/);
   });
 });
 
@@ -441,6 +495,7 @@ describe('asking the assistant about a message', () => {
     const off = new AssistantService(
       mail,
       respondents,
+      storage,
       fakeTriage,
       config({ enabled: false, automatic: false, reason: 'MAIL_ASSISTANT is not set to on or ask.' }),
     );
@@ -454,13 +509,18 @@ describe('asking the assistant about a message', () => {
 
     expect(seen).toHaveLength(0);
     expect(await suggestionRows(ctx, id)).toHaveLength(0);
-    expect(off.status()).toEqual({ enabled: false, reason: 'MAIL_ASSISTANT is not set to on or ask.', automatic: false });
+    expect(off.status()).toEqual({
+      enabled: false,
+      reason: 'MAIL_ASSISTANT is not set to on or ask.',
+      automatic: false,
+      readsAttachments: false,
+    });
   });
 
   it('in "ask" mode reads nothing by itself, but answers when the officer asks', async () => {
     // For trying the assistant on mail the officer chose - their own made-up complaints -
     // before the Council has agreed that real complainants' mail may go to the model.
-    const askOnly = new AssistantService(mail, respondents, fakeTriage, config({ automatic: false }));
+    const askOnly = new AssistantService(mail, respondents, storage, fakeTriage, config({ automatic: false }));
     const id = await arrive(ctx, person(), 'Loose crown', 'My crown came off twice.');
 
     await askOnly.suggestAfterSweep(ctx, [id]);
@@ -470,7 +530,7 @@ describe('asking the assistant about a message', () => {
     const asked = await askOnly.suggestFor(ctx, id);
     expect(seen).toHaveLength(1);
     expect(asked.status).toBe('pending');
-    expect(askOnly.status(ctx)).toEqual({ enabled: true, reason: null, automatic: false });
+    expect(askOnly.status(ctx)).toEqual({ enabled: true, reason: null, automatic: false, readsAttachments: false });
   });
 
   it('stops at the daily limit, before calling the model, with a 429', async () => {
@@ -484,6 +544,7 @@ describe('asking the assistant about a message', () => {
     const limited = new AssistantService(
       mail,
       respondents,
+      storage,
       fakeTriage,
       config({ dailyLimit: used.rows[0]!.n + 1 }),
     );
@@ -509,6 +570,7 @@ describe('asking the assistant about a message', () => {
       usage: { inputTokens: 5000, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0 },
       costUsd: 0.0234,
       toolCalls: 8,
+      attachmentsRead: [],
     });
     const failed = await assistant.suggestFor(ctx, id);
     expect(failed.status).toBe('failed');
@@ -583,9 +645,9 @@ describe('asking the assistant about a message', () => {
     expect(await suggestionRows(ctx, id)).toHaveLength(0);
 
     expect(assistant.status(councilOff)).toMatchObject({ enabled: false, reason: expect.stringMatching(/aiEnabled/) });
-    expect(assistant.status(ctx)).toEqual({ enabled: true, reason: null, automatic: true });
+    expect(assistant.status(ctx)).toEqual({ enabled: true, reason: null, automatic: true, readsAttachments: false });
     // Both switches off: both reasons, so one restart fixes both.
-    const bothOff = new AssistantService(mail, respondents, fakeTriage, config({ enabled: false, automatic: false, reason: 'ANTHROPIC_API_KEY is missing.' }));
+    const bothOff = new AssistantService(mail, respondents, storage, fakeTriage, config({ enabled: false, automatic: false, reason: 'ANTHROPIC_API_KEY is missing.' }));
     expect(bothOff.status(councilOff).reason).toMatch(/ANTHROPIC_API_KEY is missing\..*aiEnabled/);
   });
 
@@ -595,6 +657,7 @@ describe('asking the assistant about a message', () => {
     const limited = new AssistantService(
       mail,
       respondents,
+      storage,
       fakeTriage,
       config({ dailyLimit: (await madeToday(ctx)) + 1 }),
     );
@@ -633,6 +696,7 @@ describe('asking the assistant about a message', () => {
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
       costUsd: 0,
       toolCalls: 0,
+      attachmentsRead: [],
     });
     await assistant.suggestFor(ctx, id);
 
@@ -684,7 +748,7 @@ describe('asking the assistant about a message', () => {
 
 describe('the sweep hook', () => {
   it('reads at most perSweep messages, one at a time, and a failure does not stop the next', async () => {
-    const sweeper = new AssistantService(mail, respondents, fakeTriage, config({ perSweep: 2 }));
+    const sweeper = new AssistantService(mail, respondents, storage, fakeTriage, config({ perSweep: 2 }));
     const a = await arrive(ctx, person(), 'One', 'one');
     const b = await arrive(ctx, person(), 'Two', 'two');
     const c = await arrive(ctx, person(), 'Three', 'three');
@@ -707,7 +771,7 @@ describe('the sweep hook', () => {
   it('sweeps arriving while it reads join the one reader: never two readings at once', async () => {
     // The sweep does not wait for the assistant (sweep.ts), so a second sweep can hand over
     // mail while the first batch is still being read. One drain, one reading at a time.
-    const sweeper = new AssistantService(mail, respondents, fakeTriage, config({ perSweep: 5 }));
+    const sweeper = new AssistantService(mail, respondents, storage, fakeTriage, config({ perSweep: 5 }));
     const a = await arrive(ctx, person(), 'First', 'one');
     const b = await arrive(ctx, person(), 'Second', 'two');
     const c = await arrive(ctx, person(), 'Third', 'three');
@@ -734,10 +798,496 @@ describe('the sweep hook', () => {
   });
 });
 
+// ─── Reading attachments ─────────────────────────────────────────────────────
+
+describe('reading an attachment', () => {
+  // The bytes are real - a PNG, a PDF made here, a Word file - and go through the real
+  // ingest, the real store and the real attachment-prep. Only the model is fake: each test
+  // has it ask for files the way the engine would.
+
+  /** A one-pixel PNG: as far as the reader is concerned, a phone photo of a bill. */
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  /** A second, different image. Trailing bytes after IEND leave it a PNG. */
+  const PNG2 = Buffer.concat([PNG, Buffer.from('second photo', 'latin1')]);
+  /** A Word file is a zip, which the register refuses at ingest: it sniffs as nothing it keeps. */
+  const DOCX = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(64, 1)]);
+  const DOCX_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+  async function pdfOf(pages: number): Promise<Buffer> {
+    const doc = await PDFDocument.create();
+    for (let i = 0; i < pages; i++) doc.addPage([595, 842]);
+    return Buffer.from(await doc.save());
+  }
+
+  type File = { filename: string; type: string; bytes: Buffer };
+
+  /** A complainant's own email with files attached, as a mail server hands it over. */
+  async function arriveWithFiles(c: EngineContext, subject: string, files: File[]): Promise<string> {
+    seq++;
+    const who = person();
+    const bytes = Buffer.from(
+      [
+        `From: ${who.name} <${who.email}>`,
+        'To: intake@asst.test',
+        `Subject: ${subject}`,
+        `Message-ID: <asst-files-${TAG}-${seq}@mail.test>`,
+        'Date: Wed, 17 Sep 2026 10:14:00 +0530',
+        'MIME-Version: 1.0',
+        'Content-Type: multipart/mixed; boundary="part"',
+        '',
+        '--part',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        'Please see the attached.',
+        ...files.flatMap((f) => [
+          '--part',
+          `Content-Type: ${f.type}`,
+          'Content-Transfer-Encoding: base64',
+          `Content-Disposition: attachment; filename="${f.filename}"`,
+          '',
+          f.bytes.toString('base64'),
+        ]),
+        '--part--',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    const parsed = await simpleParser(bytes);
+    const out = await asOfficer(c, (tx) =>
+      mail.ingest(tx, c, parsed, { mailbox: 'INBOX', uid: 1000 + seq, uidValidity: '1', raw: bytes }),
+    );
+    expect(out.status).toBe('unfiled');
+    return out.mailMessageId;
+  }
+
+  /** What the engine would report for a file it sent. */
+  function record(email: TriageEmail, ref: string, r: AttachmentReadResult): AttachmentReadRecord {
+    return {
+      ref,
+      filename: email.attachments.find((a) => a.ref === ref)!.filename,
+      pagesSent: r.ok ? r.pagesSent : null,
+      pagesTotal: r.ok ? r.pagesTotal : null,
+    };
+  }
+
+  const refOf = (email: TriageEmail, filename: string) => email.attachments.find((a) => a.filename === filename)!.ref;
+
+  // On, as MAIL_ASSISTANT_ATTACHMENTS=on would make it, with PDFs cut at two pages.
+  const reader = new AssistantService(
+    mail,
+    respondents,
+    storage,
+    fakeTriage,
+    config({ readAttachments: true, maxAttachmentReads: 3, maxPdfPages: 2 }),
+  );
+
+  it('lists every attachment by ref, and each ref opens the file listed under it', async () => {
+    const id = await arriveWithFiles(ctx, 'Complaint enclosed', [
+      { filename: 'letter.pdf', type: 'application/pdf', bytes: await pdfOf(3) },
+      { filename: 'bill.png', type: 'image/png', bytes: PNG },
+      { filename: 'notes.docx', type: DOCX_TYPE, bytes: DOCX },
+    ]);
+    const opened: Record<string, AttachmentReadResult> = {};
+    answer = async (email, tools) => {
+      for (const a of email.attachments) opened[a.ref] = await tools.readAttachment(a.ref);
+      return ok(notComplaint());
+    };
+    await reader.suggestFor(ctx, id);
+
+    // a1, a2, a3 - in the order the register lists them, which is the order the reader
+    // resolves them in.
+    const email = seen.at(-1)!;
+    const listed = await asOfficer(ctx, (tx) =>
+      tx.execute<{ filename: string }>(sql`
+        SELECT filename FROM mail_attachment
+        WHERE council_id = ${councilId}::uuid AND mail_message_id = ${id}::uuid
+        ORDER BY created_at, id
+      `),
+    );
+    expect(email.attachments.map((a) => a.ref)).toEqual(['a1', 'a2', 'a3']);
+    expect(email.attachments.map((a) => a.filename)).toEqual(listed.rows.map((r) => r.filename));
+    expect(email.attachments.map((a) => a.filename).sort()).toEqual(['bill.png', 'letter.pdf', 'notes.docx']);
+    // Refused files are listed too - the model is told a file came - but marked unkept.
+    const named = (f: string) => email.attachments.find((a) => a.filename === f)!;
+    expect(named('notes.docx')).toMatchObject({ stored: false, contentType: DOCX_TYPE });
+    expect(named('letter.pdf')).toMatchObject({ stored: true, contentType: 'application/pdf' });
+    expect(named('bill.png')).toMatchObject({ stored: true, contentType: 'image/png' });
+
+    // The staged PDF, cut to the configured two pages of its three.
+    expect(opened[refOf(email, 'letter.pdf')]).toMatchObject({
+      ok: true,
+      kind: 'pdf',
+      mediaType: 'application/pdf',
+      pagesTotal: 3,
+      pagesSent: 2,
+    });
+    // The staged image, as it came.
+    const image = opened[refOf(email, 'bill.png')]!;
+    expect(image).toMatchObject({ ok: true, kind: 'image', mediaType: 'image/png', pagesTotal: null, pagesSent: null });
+    expect(image.ok && image.data.equals(PNG)).toBe(true);
+    // The refused file says why, in words, and nothing is fetched for it.
+    expect(opened[refOf(email, 'notes.docx')]).toEqual({
+      ok: false,
+      reason: expect.stringMatching(/did not keep this file.*Not a kind the register stores/),
+    });
+
+    // And the engine was told it may read, and how many.
+    expect(seenOpts.at(-1)).toMatchObject({ readAttachments: true, maxAttachmentReads: 3 });
+    // So are the screens - before anything is asked - but only while the assistant is on.
+    expect(reader.status(ctx)).toMatchObject({ enabled: true, readsAttachments: true });
+    expect(reader.status({ ...ctx, config: KSDC_CONFIG })).toMatchObject({ enabled: false, readsAttachments: false });
+  });
+
+  it('records on the suggestion exactly what was sent, from the moment it is handed over, and the card shows it', async () => {
+    const id = await arriveWithFiles(ctx, 'Referral from the district office', [
+      { filename: 'referral.pdf', type: 'application/pdf', bytes: await pdfOf(3) },
+      { filename: 'photo.png', type: 'image/png', bytes: PNG },
+    ]);
+    let midway: Awaited<ReturnType<typeof suggestionRows>> = [];
+    answer = async (email, tools) => {
+      const pdfRef = refOf(email, 'referral.pdf');
+      const pngRef = refOf(email, 'photo.png');
+      const pdf = await tools.readAttachment(pdfRef);
+      const png = await tools.readAttachment(pngRef);
+      // Already on the row, while the model is still reading: a reading cut off here has
+      // still sent both.
+      midway = await suggestionRows(ctx, id);
+      return ok(notComplaint(), 0.03, [record(email, pdfRef, pdf), record(email, pngRef, png)]);
+    };
+    const view = await reader.suggestFor(ctx, id);
+
+    expect(midway).toHaveLength(1);
+    expect(midway[0]).toMatchObject({ status: 'failed', error: STILL_READING });
+    expect(midway[0]!.attachments_read.map((r) => r.filename).sort()).toEqual(['photo.png', 'referral.pdf']);
+
+    // The card: file names and pages, not the model's refs.
+    expect(view.status).toBe('pending');
+    expect(view.attachmentsRead).toEqual([
+      { filename: 'referral.pdf', pagesSent: 2, pagesTotal: 3 },
+      { filename: 'photo.png', pagesSent: null, pagesTotal: null },
+    ]);
+    const shown = (await asOfficer(ctx, (tx) => assistant.latestFor(tx, ctx, [id]))).get(id)!;
+    expect(shown.attachmentsRead).toEqual(view.attachmentsRead);
+    // The row keeps the refs as well, for tracing a reading back to the files.
+    const rows = await suggestionRows(ctx, id);
+    expect(rows[0]!.attachments_read).toEqual([
+      { ref: refOf(seen.at(-1)!, 'referral.pdf'), filename: 'referral.pdf', pagesSent: 2, pagesTotal: 3 },
+      { ref: refOf(seen.at(-1)!, 'photo.png'), filename: 'photo.png', pagesSent: null, pagesTotal: null },
+    ]);
+
+    // A reading that read nothing records nothing - and the card it replaces the first one
+    // on still says what the first one sent.
+    answer = () => ok(notComplaint());
+    const plain = await reader.suggestFor(ctx, id);
+    expect(plain.attachmentsRead).toEqual([]);
+    expect(plain.otherReadingsSent).toEqual([
+      { filename: 'referral.pdf', pagesSent: 2, pagesTotal: 3 },
+      { filename: 'photo.png', pagesSent: null, pagesTotal: null },
+    ]);
+    expect(view.otherReadingsSent).toEqual([]);
+  });
+
+  it('shows what a failed "ask again" sent, though the card still shows the pending suggestion', async () => {
+    const id = await arriveWithFiles(ctx, 'Letter about my case', [
+      { filename: 'letter.pdf', type: 'application/pdf', bytes: await pdfOf(3) },
+      { filename: 'photo.png', type: 'image/png', bytes: PNG },
+    ]);
+    // First reading: the photo, then a suggestion.
+    answer = async (email, tools) => {
+      const ref = refOf(email, 'photo.png');
+      return ok(notComplaint(), 0.01, [record(email, ref, await tools.readAttachment(ref))]);
+    };
+    const first = await reader.suggestFor(ctx, id);
+    // Asked again: it opens the letter (and the photo once more), then fails.
+    answer = async (email, tools) => {
+      const sent: AttachmentReadRecord[] = [];
+      for (const f of ['letter.pdf', 'photo.png']) {
+        const ref = refOf(email, f);
+        sent.push(record(email, ref, await tools.readAttachment(ref)));
+      }
+      return {
+        ok: false,
+        error: 'Claude is busy or unavailable just now. Try again later.',
+        model: 'fake-model',
+        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        costUsd: 0.02,
+        toolCalls: 0,
+        attachmentsRead: sent,
+      };
+    };
+    const again = await reader.suggestFor(ctx, id);
+    expect(again.status).toBe('failed');
+
+    // The card shows the suggestion still live - and that the letter went too. The photo
+    // is named once, by the reading shown.
+    const shown = (await asOfficer(ctx, (tx) => assistant.latestFor(tx, ctx, [id]))).get(id)!;
+    expect(shown).toMatchObject({ id: first.id, status: 'pending' });
+    expect(shown.attachmentsRead).toEqual([{ filename: 'photo.png', pagesSent: null, pagesTotal: null }]);
+    expect(shown.otherReadingsSent).toEqual([{ filename: 'letter.pdf', pagesSent: 2, pagesTotal: 3 }]);
+  });
+
+  it('keeps the record on a failed reading, and on one the engine threw out of', async () => {
+    const id = await arriveWithFiles(ctx, 'Scanned complaint', [
+      { filename: 'scan.pdf', type: 'application/pdf', bytes: await pdfOf(1) },
+      { filename: 'bill.png', type: 'image/png', bytes: PNG },
+    ]);
+
+    // The engine read a file, then failed: the file went all the same.
+    answer = async (email, tools) => {
+      const ref = refOf(email, 'scan.pdf');
+      const r = await tools.readAttachment(ref);
+      return {
+        ok: false,
+        error: 'The assistant stopped after too many lookups.',
+        model: 'fake-model',
+        usage: { inputTokens: 4000, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        costUsd: 0.02,
+        toolCalls: 8,
+        attachmentsRead: [record(email, ref, r)],
+      };
+    };
+    const failed = await reader.suggestFor(ctx, id);
+    expect(failed).toMatchObject({ status: 'failed', error: expect.stringMatching(/too many lookups/) });
+    expect(failed.attachmentsRead).toEqual([{ filename: 'scan.pdf', pagesSent: 1, pagesTotal: 1 }]);
+
+    // The engine read a file and then threw. Nobody can say whether it reached Anthropic,
+    // so it is recorded as having gone.
+    answer = async (email, tools) => {
+      await tools.readAttachment(refOf(email, 'bill.png'));
+      throw new Error('socket hang up');
+    };
+    const thrown = await reader.suggestFor(ctx, id);
+    expect(thrown).toMatchObject({ status: 'failed', error: expect.stringMatching(/could not be reached/) });
+    expect(thrown.attachmentsRead).toEqual([{ filename: 'bill.png', pagesSent: null, pagesTotal: null }]);
+    // Shown on this card, the earlier failure's file is not lost from view either.
+    expect(thrown.otherReadingsSent).toEqual([{ filename: 'scan.pdf', pagesSent: 1, pagesTotal: 1 }]);
+
+    const rows = await suggestionRows(ctx, id);
+    expect(rows.map((r) => r.attachments_read.map((a) => a.filename))).toEqual([['scan.pdf'], ['bill.png']]);
+  });
+
+  it("opens only this message's files, whatever ref the model writes", async () => {
+    const other = await arriveWithFiles(ctx, 'Somebody else entirely', [
+      { filename: 'their-bill.png', type: 'image/png', bytes: PNG },
+      { filename: 'their-notes.docx', type: DOCX_TYPE, bytes: DOCX },
+    ]);
+    const otherIds = await asOfficer(ctx, (tx) =>
+      tx.execute<{ id: string }>(sql`
+        SELECT id FROM mail_attachment
+        WHERE council_id = ${councilId}::uuid AND mail_message_id = ${other}::uuid
+      `),
+    );
+    const id = await arriveWithFiles(ctx, 'My letter', [
+      { filename: 'mine.pdf', type: 'application/pdf', bytes: await pdfOf(1) },
+    ]);
+
+    const asked: Record<string, AttachmentReadResult> = {};
+    answer = async (_email, tools) => {
+      // The other message has an a2; this one does not.
+      for (const ref of ['a2', ' A1 ', 'a0', '../a1', otherIds.rows[0]!.id, 'their-bill.png']) {
+        asked[ref] = await tools.readAttachment(ref);
+      }
+      return ok(notComplaint());
+    };
+    await reader.suggestFor(ctx, id);
+
+    expect(asked['a2']).toEqual({
+      ok: false,
+      reason: expect.stringMatching(/no attachment "a2" on this email\. Its attachments are a1\./),
+    });
+    // Written loosely, a1 is still this message's a1 - its PDF, not the other's image.
+    expect(asked[' A1 ']).toMatchObject({ ok: true, kind: 'pdf', pagesTotal: 1 });
+    for (const ref of ['a0', '../a1', otherIds.rows[0]!.id, 'their-bill.png']) {
+      expect(asked[ref]).toMatchObject({ ok: false });
+    }
+
+    // An email with no files at all says so.
+    const bare = await arrive(ctx, person(), 'No files', 'Nothing attached.');
+    let none: AttachmentReadResult | undefined;
+    answer = async (_email, tools) => {
+      none = await tools.readAttachment('a1');
+      return ok(notComplaint());
+    };
+    await reader.suggestFor(ctx, bare);
+    expect(none).toEqual({ ok: false, reason: 'This email has no attachments.' });
+  });
+
+  it('reads a file from the case document it became, and not one withdrawn as misfiled', async () => {
+    // A message opened as a case, the case then cancelled as opened in error: the message
+    // is back in the tray, and its files are documents on the cancelled case. The staged
+    // copy MOVED when it became a document, so the staging key names nothing any more.
+    const id = await arriveWithFiles(ctx, 'Bill for the crown', [
+      { filename: 'bill.png', type: 'image/png', bytes: PNG },
+      { filename: 'xray.png', type: 'image/png', bytes: PNG2 },
+    ]);
+    const opened = await asOfficer(ctx, (tx) => mail.openCase(tx, ctx, { mailMessageId: id }));
+    expect(opened.documentsFiled).toBe(2);
+    await asOfficer(ctx, (tx) =>
+      lifecycle.cancel(tx, ctx, { caseFileId: opened.caseFileId, reason: 'Opened twice by mistake' }),
+    );
+    expect((await messageRow(ctx, id)).status).toBe('unfiled');
+
+    const files = await asOfficer(ctx, (tx) =>
+      tx.execute<{ filename: string; staging_key: string; document_id: string | null }>(sql`
+        SELECT filename, staging_key, document_id FROM mail_attachment
+        WHERE council_id = ${councilId}::uuid AND mail_message_id = ${id}::uuid
+      `),
+    );
+    const bill = files.rows.find((f) => f.filename === 'bill.png')!;
+    const xray = files.rows.find((f) => f.filename === 'xray.png')!;
+    expect(bill.document_id).not.toBeNull();
+    await expect(storage.read(bill.staging_key)).rejects.toThrow();
+
+    // The X-ray turns out to be another patient's.
+    await asOfficer(ctx, (tx) =>
+      documents.markMisfiled(tx, ctx, { documentId: xray.document_id!, reason: "Another patient's X-ray" }),
+    );
+
+    const got: Record<string, AttachmentReadResult> = {};
+    answer = async (email, tools) => {
+      for (const a of email.attachments) got[a.filename] = await tools.readAttachment(a.ref);
+      return ok(notComplaint());
+    };
+    const view = await reader.suggestFor(ctx, id);
+
+    expect(got['bill.png']).toMatchObject({ ok: true, kind: 'image', mediaType: 'image/png' });
+    expect(got['bill.png']!.ok && got['bill.png']!.data.equals(PNG)).toBe(true);
+    expect(got['xray.png']).toEqual({ ok: false, reason: expect.stringMatching(/withdrawn from the case as misfiled/) });
+    expect(view.status).toBe('pending');
+  });
+
+  it('reads from the document when the officer files the message while the model is reading', async () => {
+    // The staged file moves to the case document the moment the case is opened; the staging
+    // key still names where it was. Looked for there, the file would be "not found".
+    const id = await arriveWithFiles(ctx, 'Bills', [{ filename: 'bill.png', type: 'image/png', bytes: PNG }]);
+    let got: AttachmentReadResult | undefined;
+    answer = async (email, tools) => {
+      await asOfficer(ctx, (tx) => mail.openCase(tx, ctx, { mailMessageId: id }));
+      got = await tools.readAttachment('a1');
+      return ok(notComplaint(), 0.01, [record(email, 'a1', got)]);
+    };
+    const view = await reader.suggestFor(ctx, id);
+
+    expect(got).toMatchObject({ ok: true, kind: 'image' });
+    expect(got!.ok && got!.data.equals(PNG)).toBe(true);
+    // Not a suggestion for a message already dealt with - but what was sent is still recorded.
+    expect(view).toMatchObject({ status: 'failed', error: expect.stringMatching(/dealt with while/) });
+    expect(view.attachmentsRead).toEqual([{ filename: 'bill.png', pagesSent: null, pagesTotal: null }]);
+  });
+
+  it('switched off, refuses every file - the model sees names only, and nothing is recorded', async () => {
+    const id = await arriveWithFiles(ctx, 'Letter attached', [
+      { filename: 'letter.pdf', type: 'application/pdf', bytes: await pdfOf(1) },
+    ]);
+    let r: AttachmentReadResult | undefined;
+    answer = async (_email, tools) => {
+      // An engine that offered the tool anyway gets nothing from it.
+      r = await tools.readAttachment('a1');
+      return ok(notComplaint());
+    };
+    const view = await assistant.suggestFor(ctx, id);
+
+    expect(seenOpts.at(-1)).toMatchObject({ readAttachments: false });
+    expect(seen.at(-1)!.attachments).toEqual([
+      { ref: 'a1', filename: 'letter.pdf', contentType: 'application/pdf', stored: true },
+    ]);
+    expect(r).toEqual({ ok: false, reason: expect.stringMatching(/switched off.*MAIL_ASSISTANT_ATTACHMENTS/) });
+    expect(view.attachmentsRead).toEqual([]);
+    expect((await suggestionRows(ctx, id))[0]!.attachments_read).toEqual([]);
+  });
+
+  it('never hands over more files than its limit, however the engine asks', async () => {
+    const twoOnly = new AssistantService(
+      mail,
+      respondents,
+      storage,
+      fakeTriage,
+      config({ readAttachments: true, maxAttachmentReads: 2, maxPdfPages: 10 }),
+    );
+    const id = await arriveWithFiles(ctx, 'Everything I have', [
+      { filename: 'letter.pdf', type: 'application/pdf', bytes: await pdfOf(1) },
+      { filename: 'bill.png', type: 'image/png', bytes: PNG },
+      { filename: 'notes.docx', type: DOCX_TYPE, bytes: DOCX },
+      { filename: 'photo.png', type: 'image/png', bytes: PNG2 },
+    ]);
+
+    const order: Array<[string, boolean]> = [];
+    let atOnce: AttachmentReadResult[] = [];
+    let handedOver: AttachmentReadRecord[] = [];
+    answer = async (email, tools) => {
+      // A refused file costs nothing from the budget...
+      for (const f of ['notes.docx', 'letter.pdf']) {
+        order.push([f, (await tools.readAttachment(refOf(email, f))).ok]);
+      }
+      // ...and two asked for at once at the last place: exactly one gets it.
+      const refs = [refOf(email, 'bill.png'), refOf(email, 'photo.png')];
+      atOnce = await Promise.all(refs.map((ref) => tools.readAttachment(ref)));
+      // While still reading: what has been handed over is already on the row.
+      handedOver = (await suggestionRows(ctx, id))[0]!.attachments_read;
+      return ok(notComplaint());
+    };
+    await twoOnly.suggestFor(ctx, id);
+
+    expect(order).toEqual([
+      ['notes.docx', false],
+      ['letter.pdf', true],
+    ]);
+    expect(atOnce.filter((r) => r.ok)).toHaveLength(1);
+    expect(atOnce.find((r) => !r.ok)).toEqual({ ok: false, reason: expect.stringMatching(/At most 2 attachment/) });
+    // Two files, not three - and not the refused one.
+    expect(handedOver.map((r) => r.filename)).toHaveLength(2);
+    expect(handedOver.map((r) => r.filename)).toContain('letter.pdf');
+    expect(handedOver.map((r) => r.filename)).not.toContain('notes.docx');
+  });
+
+  it("refuses, before handing it over, a file the engine's budget for the email would refuse", async () => {
+    // Two 60-page PDFs are 120 pages, past the 100 one email may send. The engine would
+    // refuse the second; the reader refuses it first, so it is neither counted against the
+    // read limit nor written onto the suggestion as sent.
+    const longPdfs = new AssistantService(
+      mail,
+      respondents,
+      storage,
+      fakeTriage,
+      config({ readAttachments: true, maxAttachmentReads: 2, maxPdfPages: 60 }),
+    );
+    const id = await arriveWithFiles(ctx, 'Two bundles', [
+      { filename: 'first.pdf', type: 'application/pdf', bytes: await pdfOf(60) },
+      { filename: 'second.pdf', type: 'application/pdf', bytes: await pdfOf(60) },
+      { filename: 'bill.png', type: 'image/png', bytes: PNG },
+    ]);
+    const got: Record<string, AttachmentReadResult> = {};
+    let handedOver: AttachmentReadRecord[] = [];
+    answer = async (email, tools) => {
+      for (const f of ['first.pdf', 'second.pdf', 'bill.png']) got[f] = await tools.readAttachment(refOf(email, f));
+      handedOver = (await suggestionRows(ctx, id))[0]!.attachments_read;
+      return ok(notComplaint());
+    };
+    await longPdfs.suggestFor(ctx, id);
+
+    expect(got['first.pdf']).toMatchObject({ ok: true, pagesSent: 60 });
+    expect(got['second.pdf']).toEqual({ ok: false, reason: expect.stringMatching(/too many pages to send together/) });
+    // Its read place given back: the picture is the second of two.
+    expect(got['bill.png']).toMatchObject({ ok: true, kind: 'image' });
+    expect(handedOver.map((r) => r.filename)).toEqual(['first.pdf', 'bill.png']);
+  });
+});
+
 // ─── The lookups ─────────────────────────────────────────────────────────────
 
 describe('what the model may look up', () => {
-  const tools = registerTools(ctx, respondents);
+  // The file reader is the attachment tests' business; here it is off, and points at no
+  // message at all.
+  const tools = registerTools(ctx, respondents, {
+    mailMessageId: '00000000-0000-4000-8000-0000000000aa',
+    storage,
+    enabled: false,
+    maxReads: 3,
+    maxPdfPages: 10,
+  });
 
   it('finds a case by the sender, says how, and never hands back an email address or phone number', async () => {
     const live = await caseFrom(ctx);
@@ -1374,6 +1924,7 @@ describe('the monthly report', () => {
       usage: { inputTokens: 10, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
       costUsd: 0.002,
       toolCalls: 0,
+      attachmentsRead: [],
     });
     await assistant.suggestFor(c, m5);
 

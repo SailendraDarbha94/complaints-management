@@ -2,7 +2,10 @@ import { sql, type SQL } from 'drizzle-orm';
 import { withCouncil, type Tx } from '@ksdc/db';
 import type { EngineContext } from '../followups/followup.service.js';
 import type { RespondentService } from '../cases/respondent.service.js';
+import type { StoragePort } from '../documents/storage.js';
+import { Logger } from '../../common/logger.js';
 import { pgTextArray } from '../../common/pg-array.js';
+import { overEmailBudget, type EmailFilesSent } from './attachment-budget.js';
 import {
   canonicalCaseNumber,
   nameHasWords,
@@ -10,12 +13,19 @@ import {
   registrationMatches,
   withoutContacts,
 } from './text-rules.js';
-import type { CaseDetail, CaseSearchHit, DentistHit, TriageTools } from './types.js';
+import type {
+  AttachmentReadRecord,
+  AttachmentReadResult,
+  CaseDetail,
+  CaseSearchHit,
+  DentistHit,
+  TriageTools,
+} from './types.js';
 
 /**
- * The three lookups the model may make, answered from the register.
+ * The lookups the model may make, answered from the register - and the one file reader.
  *
- * READ-ONLY, all three, and that is the whole of stage 1's safety argument: nothing the
+ * READ-ONLY, all four, and that is the whole of stage 1's safety argument: nothing the
  * model can call changes a row. It can find out what the register knows; only the officer
  * can change it.
  *
@@ -38,6 +48,16 @@ import type { CaseDetail, CaseSearchHit, DentistHit, TriageTools } from './types
  * seconds at a time; a transaction held open across that would pin a pooled connection
  * idle-in-transaction for the length of the conversation. So each call opens a scope,
  * reads, and closes it.
+ *
+ * THE FILE READER (readAttachment) is the one tool whose answer leaves the building: what
+ * it returns is sent to Anthropic. So it opens only the files of the ONE message being
+ * read - never another's, whatever ref the model writes - and only when the reader is
+ * switched on and within its budgets (how many files, and what they add up to), all
+ * checked here as well as in the engine, which is meant to stop first. These checks are the floor beneath the engine's, so that a fault
+ * there cannot send what the configuration says must not go. Its database lookup is a
+ * short scope like the others; the file itself is fetched from the store with NO
+ * transaction open, because a twenty-megabyte scan can take seconds to arrive. And what is
+ * in a file is never logged - not its text, not its bytes, not its name - only ids.
  */
 
 /** Enough to choose between, few enough that a list of them stays cheap to send. */
@@ -47,15 +67,274 @@ const RECENT_LETTERS = 10;
 /** A query is a name, a number or an address - never an essay. */
 const MAX_QUERY = 200;
 
-export function registerTools(ctx: EngineContext, respondents: RespondentService): TriageTools {
+const log = new Logger('assistant:files');
+
+/** What the file reader needs: whose files, from where, and how much of each. */
+export interface AttachmentAccess {
+  /** The message being read. Its attachments - and no other message's - can be opened. */
+  mailMessageId: string;
+  storage: StoragePort;
+  /** MAIL_ASSISTANT_ATTACHMENTS=on. Off, every request is refused. */
+  enabled: boolean;
+  /** MAIL_ASSISTANT_MAX_ATTACHMENT_READS: files handed over for this message, at most. */
+  maxReads: number;
+  /** MAIL_ASSISTANT_MAX_PDF_PAGES: a longer PDF is cut to this many pages first. */
+  maxPdfPages: number;
+  /**
+   * Told of each file BEFORE it is handed over for the model, and awaited: if it throws,
+   * the file is not handed over. The engine reports what it sent; this is how the service
+   * records what MAY have gone while the reading is still under way - so a reading cut off
+   * part-way, or an engine that throws, still leaves the record of what left.
+   */
+  onRead?: (record: AttachmentReadRecord) => void | Promise<void>;
+}
+
+export function registerTools(
+  ctx: EngineContext,
+  respondents: RespondentService,
+  files: AttachmentAccess,
+): TriageTools {
   const scope = <T>(fn: (tx: Tx) => Promise<T>): Promise<T> =>
     withCouncil({ councilId: ctx.councilId, userId: ctx.userId ?? null }, fn);
+
+  // Files handed over so far, counting one the moment it is asked for: the engine may ask
+  // for two at once, and a count taken only after each arrived would let both through at
+  // the limit. A request that comes to nothing gives its place back.
+  let taken = 0;
+  // What the files handed over add up to, against the email's budget - the engine's own
+  // rule (attachment-budget.ts), applied BEFORE a file is handed over and written onto the
+  // suggestion, so that the reader never passes a file the engine would then refuse.
+  const sent: EmailFilesSent = { bytes: 0, pdfPages: 0 };
 
   return {
     searchCases: (query) => scope((tx) => searchCases(tx, ctx, query)),
     getCase: (caseNumber) => scope((tx) => getCase(tx, ctx, caseNumber)),
     searchDentists: (query) => scope((tx) => searchDentists(tx, ctx, respondents, query)),
+    readAttachment: async (ref) => {
+      if (!files.enabled) {
+        return {
+          ok: false,
+          reason:
+            'Reading attachments is switched off for this installation (MAIL_ASSISTANT_ATTACHMENTS), ' +
+            'so only their names can be seen.',
+        };
+      }
+      if (taken >= files.maxReads) {
+        return {
+          ok: false,
+          reason:
+            `At most ${files.maxReads} attachment(s) are read for one email, and that many have ` +
+            'been read already. Decide on what has been read, or say what is missing.',
+        };
+      }
+      taken++;
+      const result = await readAttachment(ctx, scope, files, ref, sent).catch((err: unknown) => {
+        log.error(
+          `reading an attachment of message ${files.mailMessageId} failed: ${errorKind(err)}`,
+        );
+        return { ok: false as const, reason: 'That attachment could not be read just now.' };
+      });
+      if (!result.ok) taken--;
+      return result;
+    },
   };
+}
+
+// ─── Attachments ─────────────────────────────────────────────────────────────
+
+/** One file on a message, as the reader and the service both see it. */
+export interface MessageAttachment {
+  /** 'a1', 'a2'... - the handle the model asks for it by. See attachmentsOf. */
+  ref: string;
+  id: string;
+  filename: string;
+  declaredType: string | null;
+  /** Where the bytes wait while the message is in the tray. Stale once documentId is set. */
+  stagingKey: string | null;
+  documentId: string | null;
+  /** Set when the register refused the file at ingest: there are no bytes to read. */
+  skippedReason: string | null;
+  /** The document's current version, when the file has become a case document. */
+  documentKey: string | null;
+  documentStatus: string | null;
+}
+
+/**
+ * The message's attachments, each with its ref - THE one place refs are given out.
+ *
+ * The service lists these for the model and the reader resolves a ref against the same
+ * list, built by this same query, so "a2" is always the same file to both: given out by
+ * one rule and looked up by another, a ref could open a different file from the one the
+ * model was shown the name of.
+ *
+ * Ordered by (created_at, id). Stable - the same message always lists the same way - but
+ * not necessarily the email's own order: every attachment of a message is written in the
+ * one ingest transaction and so shares its created_at, and the id that breaks the tie is
+ * random. The model is shown each ref beside its filename, so the order is a convenience
+ * and the stability is the rule.
+ *
+ * Every row, refused ones included, so the model is told a file came even when the
+ * register did not keep it - a refused .docx is still a clue that the complaint is in it.
+ */
+export async function attachmentsOf(
+  tx: Tx,
+  ctx: EngineContext,
+  mailMessageId: string,
+): Promise<MessageAttachment[]> {
+  const rows = await tx.execute<{
+    id: string;
+    filename: string;
+    declared_type: string | null;
+    staging_key: string | null;
+    document_id: string | null;
+    skipped_reason: string | null;
+    document_key: string | null;
+    document_status: string | null;
+  }>(sql`
+    SELECT a.id, a.filename, a.declared_type, a.staging_key, a.document_id, a.skipped_reason,
+           dv.storage_key AS document_key, d.status::text AS document_status
+    FROM mail_attachment a
+    LEFT JOIN document d ON d.id = a.document_id AND d.council_id = a.council_id
+    LEFT JOIN document_version dv ON dv.id = d.current_version_id
+    WHERE a.council_id = ${ctx.councilId}::uuid AND a.mail_message_id = ${mailMessageId}::uuid
+    ORDER BY a.created_at, a.id
+  `);
+  return rows.rows.map((r, i) => ({
+    ref: `a${i + 1}`,
+    id: r.id,
+    filename: r.filename,
+    declaredType: r.declared_type,
+    stagingKey: r.staging_key,
+    documentId: r.document_id,
+    skippedReason: r.skipped_reason,
+    documentKey: r.document_key,
+    documentStatus: r.document_status,
+  }));
+}
+
+/**
+ * One attachment's contents, for the model - or why not, in words it can pass on.
+ *
+ * Where the bytes are depends on how far the message has got. In the tray they are at the
+ * staging key. Once the message is filed they have MOVED to the case document's own key
+ * and the staging key still names where they were - so the document is looked at first,
+ * and the staging key only when there is none. That also covers a message back in the
+ * tray from a case cancelled as opened in error: its files are documents on that case.
+ *
+ * Whatever the file turns out to be, prepareAttachment decides whether it can be read - the
+ * same function the evaluation uses, so the two can never disagree about what is readable.
+ */
+async function readAttachment(
+  ctx: EngineContext,
+  scope: <T>(fn: (tx: Tx) => Promise<T>) => Promise<T>,
+  files: AttachmentAccess,
+  rawRef: unknown,
+  sent: EmailFilesSent,
+): Promise<AttachmentReadResult> {
+  const ref = cleanQuery(rawRef).toLowerCase();
+
+  // The lookup, in its own short scope - and only this message's files are in it.
+  const list = await scope((tx) => attachmentsOf(tx, ctx, files.mailMessageId));
+  const a = list.find((x) => x.ref === ref);
+  if (!a) {
+    return {
+      ok: false,
+      reason:
+        list.length === 0
+          ? 'This email has no attachments.'
+          : `There is no attachment "${ref.slice(0, 20)}" on this email. Its attachments are ` +
+            `${list.length === 1 ? 'a1' : `a1 to a${list.length}`}.`,
+    };
+  }
+
+  if (a.skippedReason) {
+    // The register's own words for why, which the model can pass on ("over the 50 MB
+    // limit", "another email attached - read it in the mailbox"). Cut short, because for an
+    // attached email they quote its subject and sender, which whoever sent it chose.
+    return {
+      ok: false,
+      reason:
+        'The register did not keep this file, so it cannot be read. Why: ' +
+        a.skippedReason.slice(0, 300),
+    };
+  }
+
+  let key: string | null;
+  if (a.documentId) {
+    // Withdrawn as misfiled: the officer said it is not this complainant's, and nothing
+    // reads from quarantine - not a case sheet, not a bundle, and not this.
+    if (a.documentStatus !== 'stored') {
+      return {
+        ok: false,
+        reason: 'This file was withdrawn from the case as misfiled, so it is not read.',
+      };
+    }
+    key = a.documentKey;
+  } else {
+    key = a.stagingKey;
+  }
+  if (!key) {
+    return { ok: false, reason: 'The register has no copy of this file to read.' };
+  }
+
+  // The store, with no transaction open.
+  let bytes: Buffer;
+  try {
+    bytes = await files.storage.read(key);
+  } catch (err) {
+    log.warn(`attachment ${a.id} of message ${files.mailMessageId} could not be fetched: ${errorKind(err)}`);
+    return {
+      ok: false,
+      reason: 'This file could not be fetched from the file store just now. Try again later.',
+    };
+  }
+
+  // Loaded on first use, as the engine is (assistant.service.ts): every route handler
+  // constructs these tools' service, and none of them should load a PDF library to do it.
+  const { prepareAttachment } = await import('./attachment-prep.js');
+  const prepared = await prepareAttachment(bytes, { maxPdfPages: files.maxPdfPages });
+  if (!prepared.ok) return prepared;
+
+  // The email's budget, by the engine's own rule - checked and taken in one synchronous
+  // step, so two reads in flight cannot both fit into the last of it.
+  const file = { bytes: prepared.data.length, pdfPages: prepared.pagesSent };
+  const over = overEmailBudget(sent, file);
+  if (over) {
+    return {
+      ok: false,
+      reason:
+        over === 'bytes'
+          ? 'This file is too large to send together with the files already read for this email.'
+          : 'This file has too many pages to send together with the files already read for this email.',
+    };
+  }
+  sent.bytes += file.bytes;
+  sent.pdfPages += file.pdfPages ?? 0;
+
+  // Recorded first, handed over second: a file whose going cannot be written down does
+  // not go (the caller turns the failure into a refusal), and gives its budget back.
+  try {
+    await files.onRead?.({
+      ref: a.ref,
+      filename: a.filename,
+      pagesSent: prepared.pagesSent,
+      pagesTotal: prepared.pagesTotal,
+    });
+  } catch (err) {
+    sent.bytes -= file.bytes;
+    sent.pdfPages -= file.pdfPages ?? 0;
+    throw err;
+  }
+  return prepared;
+}
+
+/** The kind of an error, never its message: a store's or a parser's can quote the file. */
+function errorKind(err: unknown): string {
+  if (err instanceof Error) {
+    const code = (err as { code?: unknown }).code;
+    return `${err.name}${typeof code === 'string' ? ` ${code}` : ''}`;
+  }
+  return 'unknown error';
 }
 
 function cleanQuery(q: unknown): string {

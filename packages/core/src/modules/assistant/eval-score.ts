@@ -32,6 +32,12 @@ export interface EvalExpectedLike {
   unlinkedRespondents?: string[];
   /** new_complaint only, lower-case. */
   complainantEmail?: string;
+  /**
+   * true: the right answer needs a file's contents. false: the email alone is enough, and
+   * opening a file is money spent and a patient's papers sent for nothing. Left out when
+   * either could be right.
+   */
+  readsAttachment?: boolean;
 }
 
 export interface Score {
@@ -46,8 +52,26 @@ export interface Score {
   linksRight: boolean | null;
   wronglyLinked: string[];
   complainantEmailRight: boolean | null;
-  /** Every check that applies, passed. */
+  /** Attachments whose contents were sent, failed runs included. */
+  reads: number;
+  /**
+   * FLAGGED, NOT FAILED: the key says the email alone was enough, and a file was opened
+   * anyway. The answer may still be right; the flag is about the habit - reading that the
+   * playbook should be discouraging - which is invisible in the pass rate.
+   */
+  unnecessaryRead: boolean;
+  /**
+   * FLAGGED, NOT FAILED: the key says the answer needs a file, the reader was on, and
+   * nothing was opened. A right answer here was reached without the evidence for it.
+   */
+  missedRead: boolean;
+  /** Every check that applies, passed. The reading flags do not count. */
   pass: boolean;
+}
+
+export interface ScoreOptions {
+  /** Whether the reader was switched on for the run; with it off, nothing can be "missed". */
+  attachmentsOn?: boolean;
 }
 
 /**
@@ -79,8 +103,12 @@ function caseKey(text: string): string {
   return (canonicalCaseNumber(text) ?? text).trim().toUpperCase().replace(/\s+/g, '');
 }
 
-export function scoreCase(expected: EvalExpectedLike, result: TriageResult): Score {
+export function scoreCase(expected: EvalExpectedLike, result: TriageResult, opts: ScoreOptions = {}): Score {
   const p = result.ok ? result.proposal : null;
+  // On both arms: a run that failed after opening a file still opened it.
+  const reads = result.attachmentsRead.length;
+  const unnecessaryRead = expected.readsAttachment === false && reads > 0;
+  const missedRead = expected.readsAttachment === true && (opts.attachmentsOn ?? true) && reads === 0;
   const decisionRight = !!p && p.decision === expected.decision;
 
   let caseNumberRight: boolean | null = null;
@@ -134,6 +162,9 @@ export function scoreCase(expected: EvalExpectedLike, result: TriageResult): Sco
     linksRight,
     wronglyLinked,
     complainantEmailRight,
+    reads,
+    unnecessaryRead,
+    missedRead,
     pass,
   };
 }

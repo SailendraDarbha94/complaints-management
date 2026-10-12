@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { respondentKey, scoreCase, type EvalExpectedLike } from './eval-score.js';
-import type { SuggestedRespondent, TriageProposal, TriageResult } from './types.js';
+import type { AttachmentReadRecord, SuggestedRespondent, TriageProposal, TriageResult } from './types.js';
 
 /**
  * The evaluation's marking, without spending anything.
@@ -12,8 +12,8 @@ import type { SuggestedRespondent, TriageProposal, TriageResult } from './types.
 
 const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
 
-function answered(proposal: TriageProposal): TriageResult {
-  return { ok: true, proposal, model: 'm', usage, costUsd: 0, toolCalls: 0 };
+function answered(proposal: TriageProposal, attachmentsRead: AttachmentReadRecord[] = []): TriageResult {
+  return { ok: true, proposal, model: 'm', usage, costUsd: 0, toolCalls: 0, attachmentsRead };
 }
 
 const dentist = (name: string, over: Partial<SuggestedRespondent> = {}): SuggestedRespondent => ({
@@ -127,7 +127,48 @@ describe('the rest of the key', () => {
     const key: EvalExpectedLike = { decision: 'new_complaint', complainantEmail: 'a@example.in' };
     expect(scoreCase(key, complaint([], 'A@Example.in')).complainantEmailRight).toBe(true);
     expect(scoreCase(key, complaint([], null)).pass).toBe(false);
-    const failed: TriageResult = { ok: false, error: 'e', model: 'm', usage, costUsd: 0, toolCalls: 0 };
+    const failed: TriageResult = { ok: false, error: 'e', model: 'm', usage, costUsd: 0, toolCalls: 0, attachmentsRead: [] };
     expect(scoreCase({ decision: 'not_a_complaint' }, failed)).toMatchObject({ decisionRight: false, pass: false });
+  });
+});
+
+describe('opening attachments', () => {
+  const NOT_A_COMPLAINT: TriageProposal = {
+    decision: 'not_a_complaint',
+    confidence: 'high',
+    reasoning: 'r',
+    notComplaint: { reason: 'a catalogue' },
+    followUp: null,
+    newComplaint: null,
+  };
+  const bill: AttachmentReadRecord = { ref: 'a1', filename: 'bill.jpg', pagesSent: null, pagesTotal: null };
+
+  it('flags a file opened when the email alone was enough - and does not fail the email for it', () => {
+    const s = scoreCase({ decision: 'not_a_complaint', readsAttachment: false }, answered(NOT_A_COMPLAINT, [bill]));
+    expect(s).toMatchObject({ reads: 1, unnecessaryRead: true, missedRead: false, pass: true });
+  });
+
+  it('does not flag reading the key does not rule on, or reading nothing', () => {
+    expect(scoreCase({ decision: 'not_a_complaint' }, answered(NOT_A_COMPLAINT, [bill]))).toMatchObject({ reads: 1, unnecessaryRead: false });
+    expect(scoreCase({ decision: 'not_a_complaint', readsAttachment: false }, answered(NOT_A_COMPLAINT))).toMatchObject({
+      reads: 0,
+      unnecessaryRead: false,
+    });
+  });
+
+  it('flags a file NOT opened when the answer needs one, only while the reader was on', () => {
+    const key = { decision: 'not_a_complaint' as const, readsAttachment: true };
+    expect(scoreCase(key, answered(NOT_A_COMPLAINT))).toMatchObject({ missedRead: true, pass: true });
+    expect(scoreCase(key, answered(NOT_A_COMPLAINT), { attachmentsOn: false })).toMatchObject({ missedRead: false });
+    expect(scoreCase(key, answered(NOT_A_COMPLAINT, [bill]))).toMatchObject({ missedRead: false, reads: 1 });
+  });
+
+  it('counts the files a failed run opened', () => {
+    const failed: TriageResult = { ok: false, error: 'e', model: 'm', usage, costUsd: 0, toolCalls: 0, attachmentsRead: [bill] };
+    expect(scoreCase({ decision: 'new_complaint', readsAttachment: false }, failed)).toMatchObject({
+      reads: 1,
+      unnecessaryRead: true,
+      pass: false,
+    });
   });
 });

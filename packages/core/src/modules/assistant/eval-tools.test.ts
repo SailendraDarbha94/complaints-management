@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import { PDFDocument, StandardFonts } from 'pdf-lib';
 import * as config from '@ksdc/config';
-import { createEvalTools, withoutContacts, type EvalSeedLike } from './eval-tools.js';
+import {
+  attachmentRef,
+  createEvalTools,
+  evalTriageEmail,
+  renderEvalPdf,
+  withoutContacts,
+  wrapText,
+  type EvalAttachmentLike,
+  type EvalEmailLike,
+  type EvalSeedLike,
+} from './eval-tools.js';
 
 /**
  * The invented register the evaluation runs against.
@@ -214,13 +225,94 @@ describe('contact details', () => {
   });
 });
 
+describe('opening attachments', () => {
+  const LETTER = [
+    'To the Registrar, Karnataka State Dental Council',
+    'Sub: Complaint against Dr. Suresh Rao, Smile Dental, Rs 18,000 charged for a crown that came off.',
+    'I, Asha Rao, write to complain. '.repeat(60),
+  ];
+  const ATTACHMENTS: EvalAttachmentLike[] = [
+    { filename: 'scan.pdf', contentType: 'application/pdf', stored: true, pages: LETTER },
+    { filename: 'bill.jpg', contentType: 'image/jpeg', stored: true },
+    { filename: 'CV.docx', contentType: 'application/msword', stored: false, pages: ['never kept'] },
+    { filename: 'bundle.pdf', contentType: 'application/pdf', stored: true, pages: Array.from({ length: 14 }, (_, i) => `Page ${i + 1}`) },
+  ];
+  const reader = createEvalTools(SEED, { attachments: ATTACHMENTS, maxPdfPages: 10 });
+
+  it('gives the email handles in the order of its attachments, and leaves the page texts behind', () => {
+    const email: EvalEmailLike = {
+      fromName: 'A',
+      fromAddress: null,
+      forwardedBy: null,
+      subject: 's',
+      dateText: null,
+      body: '',
+      attachments: ATTACHMENTS,
+    };
+    expect(evalTriageEmail(email).attachments).toEqual([
+      { ref: 'a1', filename: 'scan.pdf', contentType: 'application/pdf', stored: true },
+      { ref: 'a2', filename: 'bill.jpg', contentType: 'image/jpeg', stored: true },
+      { ref: 'a3', filename: 'CV.docx', contentType: 'application/msword', stored: false },
+      { ref: 'a4', filename: 'bundle.pdf', contentType: 'application/pdf', stored: true },
+    ]);
+    expect(attachmentRef(0)).toBe('a1');
+  });
+
+  it('opens an invented file as a real PDF, one page per page of text', async () => {
+    const r = await reader.readAttachment('a1');
+    expect(r).toMatchObject({ ok: true, kind: 'pdf', mediaType: 'application/pdf', pagesTotal: 3, pagesSent: 3 });
+    if (!r.ok) return;
+    expect((await PDFDocument.load(r.data)).getPageCount()).toBe(3);
+  });
+
+  it('cuts a long one exactly as the register\'s reader would', async () => {
+    expect(await reader.readAttachment('a4')).toMatchObject({ ok: true, pagesTotal: 14, pagesSent: 10 });
+    const fewer = createEvalTools(SEED, { attachments: ATTACHMENTS, maxPdfPages: 2 });
+    expect(await fewer.readAttachment('a4')).toMatchObject({ ok: true, pagesTotal: 14, pagesSent: 2 });
+  });
+
+  it('has nothing to show for an attachment without contents, or one the register did not keep', async () => {
+    expect(await reader.readAttachment('a2')).toEqual({ ok: false, reason: 'This test attachment has no contents.' });
+    expect(await reader.readAttachment('a3')).toEqual({ ok: false, reason: 'The register did not keep this file.' });
+    expect(await reader.readAttachment('a9')).toMatchObject({ ok: false });
+  });
+
+  it('opens only the attachments of the email it was made for', async () => {
+    expect(await tools.readAttachment('a1')).toMatchObject({ ok: false });
+  });
+
+  it('wraps text to the page, breaking a word only when it must', async () => {
+    const doc = await PDFDocument.create();
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    const lines = wrapText('one two three four five six seven\n\nx' + 'y'.repeat(80), font, 11, 100);
+    for (const l of lines) expect(font.widthOfTextAtSize(l, 11)).toBeLessThanOrEqual(100);
+    expect(lines.join(' ').replace(/\s+/g, ' ')).toContain('one two three');
+    expect(lines).toContain('');
+    expect(lines.join('')).toContain('x' + 'y'.repeat(10));
+  });
+
+  it('refuses page text Helvetica cannot draw, naming the page - the rupee sign above all', async () => {
+    await expect(renderEvalPdf(['fine', 'Fee ₹18,000'])).rejects.toThrow(/page 2 .*"Rs", not the rupee sign/);
+    // Typographic quotes and dashes are made plain rather than refused.
+    await expect(renderEvalPdf(['“Smile” Dental – it’s …'])).resolves.toBeInstanceOf(Buffer);
+  });
+
+  it('refuses a page that will not fit on one page', async () => {
+    await expect(renderEvalPdf(['word '.repeat(20_000)])).rejects.toThrow(/page 1 does not fit/);
+  });
+});
+
 /**
  * The real evaluation set, when @ksdc/config has been built with it. Skipped otherwise -
  * these check the set's own consistency, not the tools, and the set is written elsewhere.
  */
 const real = (config as Record<string, unknown>).ASSISTANT_EVAL_SEED as EvalSeedLike | undefined;
 const realCases = (config as Record<string, unknown>).ASSISTANT_EVAL_CASES as
-  | Array<{ id: string; expected: { decision: string; caseNumber?: string } }>
+  | Array<{
+      id: string;
+      email: EvalEmailLike;
+      expected: { decision: string; caseNumber?: string; readsAttachment?: boolean };
+    }>
   | undefined;
 
 describe.skipIf(!real || !realCases)('the evaluation set in @ksdc/config', () => {
@@ -247,6 +339,23 @@ describe.skipIf(!real || !realCases)('the evaluation set in @ksdc/config', () =>
       expect(text).not.toContain(c);
       const digits = c.replace(/\D/g, '');
       if (digits.length >= 10) expect(text.replace(/\D/g, ' ')).not.toContain(digits.slice(-10));
+    }
+  });
+
+  it('has every invented file drawable and readable', async () => {
+    for (const c of realCases!) {
+      const t = createEvalTools(real!, { attachments: c.email.attachments, maxPdfPages: 10 });
+      for (const [i, a] of c.email.attachments.entries()) {
+        if (!a.stored || !a.pages?.length) continue;
+        expect((await t.readAttachment(attachmentRef(i))).ok, `${c.id} ${a.filename}`).toBe(true);
+      }
+    }
+  });
+
+  it('gives every email whose answer needs a file a file with something in it', () => {
+    for (const c of realCases!) {
+      if (c.expected.readsAttachment !== true) continue;
+      expect(c.email.attachments.some((a) => a.stored && a.pages?.length), c.id).toBe(true);
     }
   });
 });

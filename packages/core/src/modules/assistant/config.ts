@@ -16,6 +16,11 @@ import type { AssistantEffort } from './types.js';
  * also turns it off, with the variable named. Guessing what was meant is the wrong way
  * round for something that spends money: a typo should stop the spending, not set it.
  *
+ * Reading ATTACHMENTS is a third switch, off by default even with the assistant on
+ * (MAIL_ASSISTANT_ATTACHMENTS=on). With it off the model sees files by name only, as it
+ * always has; with it on, it may ask for a file's contents, and that file goes to
+ * Anthropic. Its two limits - files per email, pages per PDF - are checked like the rest.
+ *
  * The API key itself is deliberately not held here. Only whether it is present: this
  * object is logged, returned by routes and compared in tests, and a secret has no
  * business in any of those. The engine reads the key where it builds the client.
@@ -51,6 +56,17 @@ export interface AssistantConfig {
   perSweep: number;
   /** Lookups per email before the engine gives up cleanly. */
   maxToolCalls: number;
+  /**
+   * Whether the model may ask for an attachment's contents (MAIL_ASSISTANT_ATTACHMENTS=on).
+   * Off by default, and a switch of its own: reading a file sends it to Anthropic, which
+   * is a bigger step than sending the email it came with, and costs more than the rest of
+   * the reading together.
+   */
+  readAttachments: boolean;
+  /** Files read per email at most (MAIL_ASSISTANT_MAX_ATTACHMENT_READS). */
+  maxAttachmentReads: number;
+  /** A PDF longer than this is cut to its first pages before it is sent (MAIL_ASSISTANT_MAX_PDF_PAGES). */
+  maxPdfPages: number;
   /** The Council's playbook - the cached system prompt. */
   playbook: string;
   /** sha256 of the playbook, stored on every suggestion so a change can be traced. */
@@ -66,29 +82,49 @@ export const ASSISTANT_DEFAULTS = {
   dailyLimit: 50,
   perSweep: 5,
   maxToolCalls: 8,
+  // Three files covers the cases reading is for - the letter, the referral, the enclosure
+  // with the case number - without letting one email's bundle of bills become the day's
+  // spending. Ten pages is a complaint letter with its annexures. A PDF page is roughly
+  // 1,500-3,000 tokens plus its page image (USD 0.006-0.014 a page on Sonnet 5.5), so a
+  // full ten-page read costs six to fourteen cents - more than the email it came with.
+  maxAttachmentReads: 3,
+  maxPdfPages: 10,
 } as const;
 
 export function playbookVersionOf(playbook: string): string {
   return createHash('sha256').update(playbook, 'utf8').digest('hex');
 }
 
-/** A whole number >= min, or the default when unset; anything else is a misconfiguration. */
+/**
+ * A whole number from min to max, or the default when unset; anything else is a
+ * misconfiguration.
+ */
 function intSetting(
   env: NodeJS.ProcessEnv,
   name: string,
   fallback: number,
   min: number,
+  max = Infinity,
 ): { value: number; problem: string | null } {
   const raw = env[name]?.trim();
   if (!raw) return { value: fallback, problem: null };
-  if (!/^\d+$/.test(raw) || Number(raw) < min) {
-    return {
-      value: fallback,
-      problem: `${name} must be a whole number${min > 0 ? ` of at least ${min}` : ''}.`,
-    };
+  if (!/^\d+$/.test(raw) || Number(raw) < min || Number(raw) > max) {
+    const range = Number.isFinite(max)
+      ? ` from ${min} to ${max}`
+      : min > 0
+        ? ` of at least ${min}`
+        : '';
+    return { value: fallback, problem: `${name} must be a whole number${range}.` };
   }
   return { value: Number(raw), problem: null };
 }
+
+/**
+ * The most files the reader may open for one email, whatever the setting says. Each file
+ * is a page or a picture of somebody's medical record sent abroad; ten covers any genuine
+ * complaint, and a ceiling means a slipped zero cannot send a hundred.
+ */
+export const MAX_ATTACHMENT_READS_CEILING = 10;
 
 export function assistantConfigFromEnv(env: NodeJS.ProcessEnv = process.env): AssistantConfig {
   const problems: string[] = [];
@@ -111,7 +147,25 @@ export function assistantConfigFromEnv(env: NodeJS.ProcessEnv = process.env): As
   const daily = intSetting(env, 'MAIL_ASSISTANT_DAILY_LIMIT', ASSISTANT_DEFAULTS.dailyLimit, 0);
   const perSweep = intSetting(env, 'MAIL_ASSISTANT_PER_SWEEP', ASSISTANT_DEFAULTS.perSweep, 1);
   const maxTools = intSetting(env, 'MAIL_ASSISTANT_MAX_TOOL_CALLS', ASSISTANT_DEFAULTS.maxToolCalls, 1);
-  for (const s of [daily, perSweep, maxTools]) if (s.problem) problems.push(s.problem);
+  // At least one each: a reader switched on with a budget of no files, or of no pages,
+  // could only ever refuse - better said now, by name, than discovered on a card.
+  const maxReads = intSetting(
+    env,
+    'MAIL_ASSISTANT_MAX_ATTACHMENT_READS',
+    ASSISTANT_DEFAULTS.maxAttachmentReads,
+    1,
+    MAX_ATTACHMENT_READS_CEILING,
+  );
+  const maxPages = intSetting(env, 'MAIL_ASSISTANT_MAX_PDF_PAGES', ASSISTANT_DEFAULTS.maxPdfPages, 1);
+  // Checked whether or not the reader is on, like every other limit here: a typo in a
+  // setting somebody took the trouble to write is a misconfiguration either way, and
+  // finding it only on the day the reader is switched on is finding it too late.
+  for (const s of [daily, perSweep, maxTools, maxReads, maxPages]) if (s.problem) problems.push(s.problem);
+
+  // Exactly "on", as MAIL_ASSISTANT is. Anything else - unset, "true", "yes" - leaves the
+  // reader off without turning the assistant off: the email-only assistant is the one the
+  // Council agreed to, and a half-remembered spelling must not widen what is sent.
+  const readAttachments = env.MAIL_ASSISTANT_ATTACHMENTS?.trim() === 'on';
 
   // The order of these is the order the officer would fix them in.
   let reason: string | null = null;
@@ -140,6 +194,9 @@ export function assistantConfigFromEnv(env: NodeJS.ProcessEnv = process.env): As
     dailyLimit: daily.value,
     perSweep: perSweep.value,
     maxToolCalls: maxTools.value,
+    readAttachments,
+    maxAttachmentReads: maxReads.value,
+    maxPdfPages: maxPages.value,
     playbook,
     playbookVersion: playbookVersionOf(playbook),
   };

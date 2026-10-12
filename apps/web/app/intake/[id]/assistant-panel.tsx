@@ -20,6 +20,7 @@ import { BusyButton } from '@/app/components/busy-button';
 import { PendingLink } from '@/app/components/pending-link';
 import {
   acceptBlocker,
+  attachmentsReadLine,
   closedCaseWarning,
   confidenceChipClass,
   joinNames,
@@ -35,12 +36,19 @@ export type AssistantPath = '/suggestion/accept' | '/suggestion/reject' | '/sugg
 type CaseOption = { id: string; caseNumber: string; summary: string };
 type Candidate = { caseFileId: string; caseNumber: string; because: string; isClosed: boolean };
 
+/** Beside the buttons that send the email, while the attachment reader is on. */
+const MAY_OPEN_A_FILE =
+  'If the email alone is not enough, it may also open an attached file, and then that file is sent to Anthropic too.';
+/** Anthropic's figures for a PDF page on Sonnet 5.5 (docs/mail-assistant.md), not yet measured here. */
+const FILE_COST = 'Opening a file costs extra: about half a rupee to just over a rupee for each page sent.';
+
 /**
  * The assistant's panel on the message page - at the top of the side column, because it is
  * the first opinion on what to do with the message, and the forms below it are the means.
  *
- * Everything the card shows, in full: what it suggests, how sure it is, why, and the
- * particulars it would carry out - who the complainant is, which dentists, which case. From
+ * Everything the card shows, in full: what it suggests, how sure it is, why, which
+ * attachments it opened to decide (and so sent to Anthropic), and the particulars it would
+ * carry out - who the complainant is, which dentists, which case. From
  * here the officer can accept it, change it and accept, reject it with a note, or ask
  * again. None of that is the model acting: Accept goes through the same services as the
  * ordinary forms below, and only the officer's click changes the register.
@@ -126,6 +134,10 @@ export function AssistantPanel({
             suggests: nothing changes until you accept.
             {!assistant.automatic &&
               ' It reads only the emails you ask it about: this one is sent to it only if you press the button.'}
+            {/* Said BEFORE the press, because in ask mode the press is the officer deciding
+                what leaves the office - and with the reader on, that can be a patient's
+                papers as well as the email. */}
+            {assistant.readsAttachments && ` ${MAY_OPEN_A_FILE}`}
           </p>
           {failed('/suggestion/refresh')}
           <div className="action-row">
@@ -143,6 +155,7 @@ export function AssistantPanel({
           <p className="rti-hint">
             Each reading uses a little of the Council&rsquo;s Claude credits and counts towards
             the daily limit. It can take up to a minute.
+            {assistant.readsAttachments && ` ${FILE_COST}`}
           </p>
         </div>
       </section>
@@ -157,6 +170,7 @@ export function AssistantPanel({
   const nc = s.newComplaint;
   const fu = s.followUp;
   const closed = closedCaseWarning(s);
+  const read = attachmentsReadLine(s);
   // See the header: these two confirm before they act; the rest are one click.
   const confirmFirst = s.decision === 'new_complaint' || Boolean(closed);
 
@@ -181,6 +195,12 @@ export function AssistantPanel({
         {!isFailed && s.reasoning && s.decision !== 'unsure' && (
           <p className="action-why assistant-reasoning">{s.reasoning}</p>
         )}
+
+        {/* Which attachments it opened, and so sent to Anthropic - beside its reasons,
+            because a suggestion that leans on a file should be checked against that file.
+            In every mode and on a failed or settled reading too: it is part of the record
+            of what left the office, not a detail of the form. */}
+        {read && <p className="rti-hint assistant-read">{read}</p>}
 
         {mode !== 'edit' && s.decision === 'new_complaint' && nc && (
           <dl className="pairs assistant-pairs">
@@ -405,6 +425,7 @@ export function AssistantPanel({
               Council&rsquo;s Claude credits
               {s.costUsd > 0 ? <> &mdash; this reading cost {formatRupeesFromUsd(s.costUsd)}</> : null}{' '}
               &mdash; and can take up to a minute.
+              {assistant.readsAttachments && ` ${MAY_OPEN_A_FILE} ${FILE_COST}`}
             </p>
             {failed('/suggestion/refresh')}
           </div>

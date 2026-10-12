@@ -144,9 +144,18 @@ export {
   ASSISTANT_EFFORTS,
   type AssistantConfig,
 } from './modules/assistant/config.js';
-export { registerTools, CASE_SEARCH_LIMIT } from './modules/assistant/register-tools.js';
+export {
+  registerTools,
+  attachmentsOf,
+  CASE_SEARCH_LIMIT,
+  type AttachmentAccess,
+  type MessageAttachment,
+} from './modules/assistant/register-tools.js';
 export type {
   TriageEmail,
+  TriageAttachment,
+  AttachmentReadResult,
+  AttachmentReadRecord,
   TriageTools,
   CaseSearchHit,
   CaseDetail,
@@ -159,6 +168,7 @@ export type {
   AssistantEffort,
   RunTriage,
   MailSuggestionView,
+  SuggestionFileSent,
   SuggestionOverrides,
   AssistantReport,
 } from './modules/assistant/types.js';

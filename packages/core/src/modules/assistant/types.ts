@@ -10,7 +10,8 @@ import type {
  * This file is the contract between the parts, written before any of them:
  *
  *   engine.ts            talks to Claude. Knows nothing about the database: it is handed an
- *                        email and three lookup functions, and returns a proposal.
+ *                        email, three lookup functions and the attachment reader, and
+ *                        returns a proposal.
  *   assistant.service.ts the register's side. Builds the email from the tray, answers the
  *                        lookups from the database, stores suggestions, and carries out an
  *                        accepted one through the SAME services the officer's buttons use.
@@ -25,8 +26,10 @@ import type {
 /**
  * One email, as the assistant sees it - and everything it sees about it.
  *
- * Deliberately narrow. Attachments go by NAME only (stage 1 does not send their contents),
- * and nothing else from the tray row - addresses, the raw source, the HTML - is passed on.
+ * Deliberately narrow. Attachments go by NAME; a file's CONTENTS are sent only when the
+ * model asks for that one file through readAttachment, and only when the attachment reader
+ * is switched on (MAIL_ASSISTANT_ATTACHMENTS=on). Nothing else from the tray row -
+ * addresses, the raw source, the HTML - is passed on.
  */
 export interface TriageEmail {
   /** The ORIGINAL sender - the unwrapped forward, not the office that forwarded it. */
@@ -38,7 +41,51 @@ export interface TriageEmail {
   /** As written in the email; a forwarded date carries no timezone, so it stays text. */
   dateText: string | null;
   body: string;
-  attachments: Array<{ filename: string; contentType: string | null; stored: boolean }>;
+  attachments: TriageAttachment[];
+}
+
+export interface TriageAttachment {
+  /**
+   * The handle the model asks for this file by: 'a1', 'a2'... Not the filename - two
+   * attachments are often both called "scan.pdf". Given out by ONE rule per side, so the
+   * reader resolves a ref to the file the model was shown under it: for the register,
+   * attachmentsOf() in register-tools.ts (stable, though not always the email's own order);
+   * for the evaluation, the order of the eval set's attachments array.
+   */
+  ref: string;
+  filename: string;
+  contentType: string | null;
+  /** False when the register refused to keep it (a .docx, a logo): it cannot be read. */
+  stored: boolean;
+}
+
+/**
+ * One attachment's contents, ready for the model - or, in plain words, why not.
+ *
+ * Prepared by attachment-prep.ts for both the register and the evaluation, so the two can
+ * never disagree about what is readable: the type is sniffed from the bytes, a PDF is cut
+ * to its first MAIL_ASSISTANT_MAX_PDF_PAGES pages, and anything too large or of a kind the
+ * model cannot read is refused with a reason the model passes on to the officer.
+ */
+export type AttachmentReadResult =
+  | {
+      ok: true;
+      kind: 'pdf' | 'image';
+      /** application/pdf, image/jpeg, image/png, image/gif or image/webp - from the bytes. */
+      mediaType: string;
+      data: Buffer;
+      /** PDFs: pages in the file, and pages actually sent. Null for an image. */
+      pagesTotal: number | null;
+      pagesSent: number | null;
+    }
+  | { ok: false; reason: string };
+
+/** What was sent to the model, recorded with every suggestion. Successful reads only. */
+export interface AttachmentReadRecord {
+  ref: string;
+  filename: string;
+  pagesSent: number | null;
+  pagesTotal: number | null;
 }
 
 /** A case the lookup found, with no contact details - only what matched. */
@@ -81,11 +128,13 @@ export interface DentistHit {
   source: string;
 }
 
-/** The lookups the model may call. READ-ONLY, all three. */
+/** The lookups the model may call. READ-ONLY, all four. */
 export interface TriageTools {
   searchCases(query: string): Promise<CaseSearchHit[]>;
   getCase(caseNumber: string): Promise<CaseDetail | null>;
   searchDentists(query: string): Promise<DentistHit[]>;
+  /** One attachment's contents, by its ref. Offered to the model only when readAttachments is on. */
+  readAttachment(ref: string): Promise<AttachmentReadResult>;
 }
 
 // ─── What the model answers ──────────────────────────────────────────────────
@@ -139,6 +188,8 @@ export type TriageResult =
       usage: TriageUsage;
       costUsd: number;
       toolCalls: number;
+      /** Attachments whose contents were sent to the model - shown to the officer. */
+      attachmentsRead: AttachmentReadRecord[];
     }
   | {
       ok: false;
@@ -148,6 +199,8 @@ export type TriageResult =
       usage: TriageUsage;
       costUsd: number;
       toolCalls: number;
+      /** Attachments whose contents were sent to the model - shown to the officer. */
+      attachmentsRead: AttachmentReadRecord[];
     };
 
 export type AssistantEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -161,6 +214,13 @@ export interface TriageOptions {
   playbookVersion: string;
   /** Upper bound on lookups per email; the engine stops and fails cleanly beyond it. */
   maxToolCalls: number;
+  /** Offer read_attachment to the model at all (MAIL_ASSISTANT_ATTACHMENTS=on). */
+  readAttachments: boolean;
+  /**
+   * Upper bound on attachments read per email (MAIL_ASSISTANT_MAX_ATTACHMENT_READS) - a
+   * budget of its own, because one PDF can cost more than every lookup together.
+   */
+  maxAttachmentReads: number;
 }
 
 /** engine.ts exports a function of this type. */
@@ -171,6 +231,13 @@ export type RunTriage = (
 ) => Promise<TriageResult>;
 
 // ─── What the screens are given ──────────────────────────────────────────────
+
+/** One file whose contents went to Anthropic, as the officer is shown it: by name, never by ref. */
+export interface SuggestionFileSent {
+  filename: string;
+  pagesSent: number | null;
+  pagesTotal: number | null;
+}
 
 export interface MailSuggestionView {
   id: string;
@@ -188,6 +255,15 @@ export interface MailSuggestionView {
    */
   followUp: { caseFileId: string | null; caseNumber: string; because: string; closed: boolean } | null;
   newComplaint: TriageProposal['newComplaint'];
+  /** Attachments whose contents the assistant read (and so were sent to Anthropic). */
+  attachmentsRead: SuggestionFileSent[];
+  /**
+   * Files this message's OTHER readings sent to Anthropic - a failed or replaced "ask
+   * again", or one still under way - that attachmentsRead does not already name, oldest
+   * first, each once. The screens show one reading per message (the pending one when there
+   * is one), so without this a file sent by any other reading would be on no screen at all.
+   */
+  otherReadingsSent: SuggestionFileSent[];
   model: string;
   costUsd: number;
   /** Set when status is 'failed'. */
@@ -227,6 +303,8 @@ export interface AssistantReport {
   enabled: boolean;
   /** Reads new mail by itself (MAIL_ASSISTANT=on), or only when asked (=ask). */
   automatic: boolean;
+  /** May open attached files when the email alone is not enough (MAIL_ASSISTANT_ATTACHMENTS=on). */
+  readsAttachments: boolean;
   /** Why it is off, in words for the officer - the setting to fix. Null when it is on. */
   reason: string | null;
   model: string;

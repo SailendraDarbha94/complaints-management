@@ -136,7 +136,9 @@ export async function getServices(): Promise<Services> {
         assistant ? assistant.suggestAfterSweep(ctx, ids) : Promise.resolve(),
     },
   );
-  assistant = new AssistantService(mail, respondents);
+  // The same store the mail service stages attachments into: the assistant's file reader
+  // (off unless MAIL_ASSISTANT_ATTACHMENTS=on) reads them from where the tray keeps them.
+  assistant = new AssistantService(mail, respondents, storage);
 
   const services: Services = {
     tokens,

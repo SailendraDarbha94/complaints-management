@@ -547,6 +547,18 @@ export interface NewComplaintProposal {
 
 export type SuggestionOutcomeAction = 'opened_case' | 'filed_on_case' | 'set_aside' | 'rejected';
 
+/**
+ * One attached file whose CONTENTS the assistant read, and so sent to Anthropic. For a PDF,
+ * how many of its pages were sent, of how many: a long one is cut to its first few, and a
+ * suggestion made from ten pages of twenty-five may have missed the eleventh. Both null
+ * for a photograph.
+ */
+export interface SuggestionAttachmentRead {
+  filename: string;
+  pagesSent: number | null;
+  pagesTotal: number | null;
+}
+
 export interface MailSuggestionView {
   id: string;
   mailMessageId: string;
@@ -563,6 +575,18 @@ export interface MailSuggestionView {
    */
   followUp: { caseFileId: string | null; caseNumber: string; because: string; closed: boolean } | null;
   newComplaint: NewComplaintProposal | null;
+  /**
+   * The attachments it opened to decide - empty when it went by the email alone, as it
+   * should for most mail. Recorded on a FAILED reading too: the files were sent before it
+   * failed, and the officer must be able to see everything that left the office.
+   */
+  attachmentsRead: SuggestionAttachmentRead[];
+  /**
+   * Files this message's OTHER readings sent - a failed or replaced "ask again", or one
+   * still under way - that attachmentsRead does not already name. The screens show one
+   * reading per message, so without this those files would be on no screen at all.
+   */
+  otherReadingsSent: SuggestionAttachmentRead[];
   model: string;
   costUsd: number;
   /** Set when status is 'failed'. Plain English, and never quotes the email. */
@@ -610,6 +634,11 @@ export interface AssistantState {
   reason: string | null;
   /** Reads new mail by itself (MAIL_ASSISTANT=on), or only the emails the officer asks about (=ask). */
   automatic: boolean;
+  /**
+   * May open an attached file when the email alone is not enough (MAIL_ASSISTANT_ATTACHMENTS=on),
+   * and so send it. Optional on the wire: a server not yet rebuilt does not send it.
+   */
+  readsAttachments?: boolean;
 }
 
 /** GET /v1/assistant/report */
@@ -617,6 +646,8 @@ export interface AssistantReport {
   enabled: boolean;
   /** Reads new mail by itself (MAIL_ASSISTANT=on), or only the emails the officer asks about (=ask). */
   automatic: boolean;
+  /** May open attached files when the email alone is not enough (MAIL_ASSISTANT_ATTACHMENTS=on). */
+  readsAttachments?: boolean;
   /** Why it is off - which setting to fix - in plain words; null when it is on. */
   reason: string | null;
   model: string;

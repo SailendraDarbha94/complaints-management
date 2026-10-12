@@ -10,6 +10,10 @@ import { PendingLink } from '@/app/components/pending-link';
 import { useCardAction } from './card-scope';
 import {
   acceptBlocker,
+  allFilesSent,
+  attachmentReadName,
+  attachmentsReadLine,
+  attachmentsReadSummary,
   closedCaseWarning,
   confidenceChipClass,
   joinNames,
@@ -36,6 +40,9 @@ import {
  * Rejecting changes nothing but the suggestion: the message stays in the tray, and the
  * officer still decides it. A failure says so quietly and offers nothing to press - there is
  * nothing to accept, and the ordinary buttons beside it still work.
+ *
+ * Either way, when it opened an attachment, the card says so (WhatItRead): a file's
+ * contents went to Anthropic, and a failed reading does not take that back.
  */
 export function TraySuggestion({
   messageId,
@@ -83,7 +90,12 @@ export function TraySuggestion({
   }
 
   if (failed) {
-    return <p className="suggest suggest-quiet">{headline}</p>;
+    return (
+      <div className="suggest suggest-quiet">
+        <p className="suggest-line">{headline}</p>
+        <WhatItRead suggestion={s} />
+      </div>
+    );
   }
 
   const nc = s.newComplaint;
@@ -106,6 +118,7 @@ export function TraySuggestion({
           <p>{s.reasoning}</p>
         </details>
       )}
+      <WhatItRead suggestion={s} />
 
       {step === 'accept' && s.decision === 'follow_up' && s.followUp && closed ? (
         <form
@@ -241,5 +254,25 @@ export function TraySuggestion({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * "It read 1 attachment", opening to which files and that they went to Anthropic - the names
+ * also on hover. Short on the card because what the officer scanning the tray needs is
+ * THAT it looked inside a file (this suggestion leans on more than the email); which file,
+ * and how much of it, is one click away, in the very sentence the message page uses. Files
+ * sent by another reading of the same email (a failed "ask again") are counted here too:
+ * the card is the only place the officer would see them.
+ */
+function WhatItRead({ suggestion: s }: { suggestion: MailSuggestionView }) {
+  const summary = attachmentsReadSummary(s);
+  const line = attachmentsReadLine(s);
+  if (!summary || !line) return null;
+  return (
+    <details className="suggest-why suggest-read">
+      <summary title={joinNames(allFilesSent(s).map(attachmentReadName))}>{summary}</summary>
+      <p>{line}</p>
+    </details>
   );
 }

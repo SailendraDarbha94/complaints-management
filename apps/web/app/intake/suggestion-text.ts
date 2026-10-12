@@ -1,6 +1,7 @@
 import type {
   MailSuggestionView,
   SuggestedRespondent,
+  SuggestionAttachmentRead,
   SuggestionOverrides,
 } from '@/lib/api';
 
@@ -138,6 +139,119 @@ export function respondentParticulars(r: SuggestedRespondent): string {
   ]
     .filter(Boolean)
     .join(' · ');
+}
+
+// ─── What it read ────────────────────────────────────────────────────────────
+
+/*
+ * The assistant opens an attached file only when the email alone does not let it decide,
+ * and whatever it opens is sent to Anthropic. The Registrar's sign-off is about what is
+ * sent, so every suggestion says which files went - on the card and on the message page,
+ * in the same words, failed readings included - and so do the readings of the same email
+ * that are NOT the one on screen (a failed "ask again", one replaced since).
+ */
+
+/**
+ * The files it read for this suggestion; empty when it went by the email alone. `?? []`
+ * because the web app reads core from its BUILT output: a server not yet rebuilt sends no
+ * such field, and a tray that crashed on that would be worse than one that said nothing.
+ */
+export function attachmentsRead(s: MailSuggestionView): SuggestionAttachmentRead[] {
+  return s.attachmentsRead ?? [];
+}
+
+/** Files the email's other readings sent, not already named by this one. `?? []` as above. */
+export function otherReadingsSent(s: MailSuggestionView): SuggestionAttachmentRead[] {
+  return s.otherReadingsSent ?? [];
+}
+
+/** Every file named on the card, this reading's first: for the names shown on hover. */
+export function allFilesSent(s: MailSuggestionView): SuggestionAttachmentRead[] {
+  return [...attachmentsRead(s), ...otherReadingsSent(s)];
+}
+
+/**
+ * One file as the officer reads it: "letter.pdf (first 10 of 25 pages)", "scan.pdf (all 3
+ * pages)", "photo.jpg". A PDF cut short says how short, since what it did not see may
+ * matter; a whole one says so too, so that "it saw all of it" is never left to a guess.
+ */
+export function attachmentReadName(a: SuggestionAttachmentRead): string {
+  const name = a.filename.trim() || 'a file with no name';
+  const sent = a.pagesSent;
+  const total = a.pagesTotal;
+  if (sent === null || sent === undefined) return name;
+  const pages = (n: number) => `${n} page${n === 1 ? '' : 's'}`;
+  if (typeof total !== 'number') return `${name} (${pages(sent)})`;
+  if (sent < total) return `${name} (first ${sent} of ${pages(total)})`;
+  return `${name} (${total === 1 ? '1 page' : `all ${total} pages`})`;
+}
+
+const attachments = (n: number) => `${n} attachment${n === 1 ? '' : 's'}`;
+
+/**
+ * "It read 1 attachment" - the card's short form, which opens to the full line. Null when
+ * no reading of this email sent a file. "It", here and below: a bare "Read: letter.pdf"
+ * can be taken as an instruction to the officer, which is the opposite of what it means.
+ */
+export function attachmentsReadSummary(s: MailSuggestionView): string | null {
+  const own = attachmentsRead(s).length;
+  const others = otherReadingsSent(s).length;
+  if (own === 0 && others === 0) return null;
+  if (others === 0) return `It read ${attachments(own)}`;
+  if (own === 0) return `Another reading of this email read ${attachments(others)}`;
+  return `It read ${attachments(own)}, and another reading ${others} more`;
+}
+
+/**
+ * "It read letter.pdf (first 10 of 25 pages) and photo.jpg. Their contents were sent to
+ * Anthropic with the email." Then, when another reading of the same email sent files this
+ * one does not name, a sentence saying so. Null when no reading sent anything.
+ *
+ * A failed reading says the files WERE sent: "the assistant could not read this one" must
+ * not be taken to mean nothing left the office. And it does not say the reading has ended:
+ * a row also reads as failed while the model is still at work on it (STILL_READING, whose
+ * own words allow for both), so the sentence is worded to be true either way.
+ */
+export function attachmentsReadLine(s: MailSuggestionView): string | null {
+  const parts: string[] = [];
+  const read = attachmentsRead(s);
+  if (read.length > 0) {
+    const files = joinNames(read.map(attachmentReadName));
+    parts.push(
+      s.status === 'failed'
+        ? `It read ${files}, so ${read.length === 1 ? 'its' : 'their'} contents were sent to Anthropic, ` +
+            'though this reading has no suggestion to show.'
+        : `It read ${files}. ${read.length === 1 ? 'Its' : 'Their'} contents were sent to Anthropic with the email.`,
+    );
+  }
+  const elsewhere = otherReadingsSent(s);
+  if (elsewhere.length > 0) {
+    const files = joinNames(elsewhere.map(attachmentReadName));
+    const its = elsewhere.length === 1 ? 'Its' : 'Their';
+    parts.push(
+      read.length > 0
+        ? `Another reading of this email also read ${files}. ${its} contents were sent to Anthropic too.`
+        : `Another reading of this email, not the one shown here, read ${files}. ${its} contents were sent to Anthropic.`,
+    );
+  }
+  return parts.length > 0 ? parts.join(' ') : null;
+}
+
+/**
+ * What to say when "Ask again" over a suggestion still on the card comes back failed.
+ *
+ * A failed reading never replaces a pending suggestion - the card goes on showing the one
+ * that is live - so without this the press would look as though nothing had happened, and
+ * the officer would not know to look at what that reading sent (the card's own line names
+ * it once the page refreshes). Null when the answer is what the page will show anyway.
+ */
+export function askAgainFailed(
+  shown: MailSuggestionView | null,
+  returned: MailSuggestionView | null | undefined,
+): string | null {
+  if (!returned || returned.status !== 'failed') return null;
+  if (!shown || shown.status !== 'pending' || shown.id === returned.id) return null;
+  return `Asking again did not work, so the suggestion above still stands: ${returned.error ?? 'no reason was given.'}`;
 }
 
 // ─── Building overrides ──────────────────────────────────────────────────────

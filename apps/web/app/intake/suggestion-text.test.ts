@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { MailSuggestionView, SuggestedRespondent } from '@/lib/api';
 import {
   acceptBlocker,
+  allFilesSent,
+  askAgainFailed,
+  attachmentReadName,
+  attachmentsReadLine,
+  attachmentsReadSummary,
   closedCaseWarning,
   confidenceChipClass,
   joinNames,
@@ -33,6 +38,8 @@ function view(over: Partial<MailSuggestionView>): MailSuggestionView {
     notComplaint: null,
     followUp: null,
     newComplaint: null,
+    attachmentsRead: [],
+    otherReadingsSent: [],
     model: 'claude-opus-5-5',
     costUsd: 0.03,
     error: null,
@@ -157,6 +164,90 @@ describe('knownToRegister', () => {
     );
     expect(knownToRegister(dentist({ partyId: 'p1', priorCases: 1 }))).toMatch(/1 earlier case$/);
     expect(knownToRegister(dentist({ registeredDentistId: 'r1', priorCases: 0 }))).toMatch(/no earlier cases/);
+  });
+});
+
+describe('what it read', () => {
+  const letter = { filename: 'complaint_letter.pdf', pagesSent: 10, pagesTotal: 25 };
+  const photo = { filename: 'photo.jpg', pagesSent: null, pagesTotal: null };
+
+  it('names each file, and how much of a PDF went', () => {
+    expect(attachmentReadName(letter)).toBe('complaint_letter.pdf (first 10 of 25 pages)');
+    expect(attachmentReadName(photo)).toBe('photo.jpg');
+    expect(attachmentReadName({ filename: 'scan.pdf', pagesSent: 3, pagesTotal: 3 })).toBe('scan.pdf (all 3 pages)');
+    expect(attachmentReadName({ filename: 'note.pdf', pagesSent: 1, pagesTotal: 1 })).toBe('note.pdf (1 page)');
+    expect(attachmentReadName({ filename: ' ', pagesSent: null, pagesTotal: null })).toBe('a file with no name');
+  });
+
+  it('says nothing when it went by the email alone', () => {
+    expect(attachmentsReadSummary(view({}))).toBeNull();
+    expect(attachmentsReadLine(view({}))).toBeNull();
+    // A server not yet rebuilt sends no such fields at all.
+    const old = view({});
+    delete (old as Partial<MailSuggestionView>).attachmentsRead;
+    delete (old as Partial<MailSuggestionView>).otherReadingsSent;
+    expect(attachmentsReadLine(old)).toBeNull();
+    expect(attachmentsReadSummary(old)).toBeNull();
+  });
+
+  it('says which files went to Anthropic, on the card and the page alike', () => {
+    const s = view({ decision: 'not_a_complaint', attachmentsRead: [letter, photo] });
+    expect(attachmentsReadSummary(s)).toBe('It read 2 attachments');
+    expect(attachmentsReadLine(s)).toBe(
+      'It read complaint_letter.pdf (first 10 of 25 pages) and photo.jpg. ' +
+        'Their contents were sent to Anthropic with the email.',
+    );
+    expect(attachmentsReadSummary(view({ attachmentsRead: [photo] }))).toBe('It read 1 attachment');
+  });
+
+  it('still says so when the reading failed - or is still under way - since the files had gone', () => {
+    // A row reads as failed while the model is still at work on it too, so the sentence
+    // must not say the reading has ended.
+    const s = view({ status: 'failed', error: 'The service was busy.', attachmentsRead: [letter] });
+    expect(attachmentsReadLine(s)).toBe(
+      'It read complaint_letter.pdf (first 10 of 25 pages), so its contents were sent to Anthropic, ' +
+        'though this reading has no suggestion to show.',
+    );
+    expect(attachmentsReadLine(s)).not.toMatch(/before it failed/i);
+  });
+
+  it("names what the email's other readings sent, which no other screen shows", () => {
+    // The pending suggestion read the photo; a failed "ask again" also opened the letter.
+    const both = view({ attachmentsRead: [photo], otherReadingsSent: [letter] });
+    expect(attachmentsReadSummary(both)).toBe('It read 1 attachment, and another reading 1 more');
+    expect(attachmentsReadLine(both)).toBe(
+      'It read photo.jpg. Its contents were sent to Anthropic with the email. ' +
+        'Another reading of this email also read complaint_letter.pdf (first 10 of 25 pages). ' +
+        'Its contents were sent to Anthropic too.',
+    );
+    expect(allFilesSent(both).map((a) => a.filename)).toEqual(['photo.jpg', 'complaint_letter.pdf']);
+
+    // This one went by the email alone; the one before it did not.
+    const onlyOthers = view({ otherReadingsSent: [letter, photo] });
+    expect(attachmentsReadSummary(onlyOthers)).toBe('Another reading of this email read 2 attachments');
+    expect(attachmentsReadLine(onlyOthers)).toBe(
+      'Another reading of this email, not the one shown here, read complaint_letter.pdf (first 10 of 25 pages) ' +
+        'and photo.jpg. Their contents were sent to Anthropic.',
+    );
+  });
+});
+
+describe('askAgainFailed', () => {
+  const live = view({ id: 's1', status: 'pending', decision: 'not_a_complaint' });
+  const failed = view({ id: 's2', status: 'failed', error: 'Claude is busy or unavailable just now. Try again later.' });
+
+  it('speaks up when the failed reading will not be the one on the card', () => {
+    expect(askAgainFailed(live, failed)).toBe(
+      'Asking again did not work, so the suggestion above still stands: ' +
+        'Claude is busy or unavailable just now. Try again later.',
+    );
+  });
+
+  it('says nothing when the page will show the answer anyway', () => {
+    expect(askAgainFailed(null, failed)).toBeNull();
+    expect(askAgainFailed(view({ id: 's0', status: 'failed' }), failed)).toBeNull();
+    expect(askAgainFailed(live, view({ id: 's3', status: 'pending' }))).toBeNull();
+    expect(askAgainFailed(live, undefined)).toBeNull();
   });
 });
 

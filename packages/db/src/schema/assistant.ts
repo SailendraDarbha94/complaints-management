@@ -70,6 +70,16 @@ export const mailSuggestion = pgTable(
     costUsd: numeric('cost_usd', { precision: 10, scale: 6 }).notNull().default('0'),
     /** Plain English, safe to show the officer. Never the email's text. */
     error: text('error'),
+    /**
+     * The attachments whose contents this reading sent to the model - and so to Anthropic:
+     * core's AttachmentReadRecord[] ({ ref, filename, pagesSent, pagesTotal }). Empty when
+     * only the email went. Kept on failed rows too: a file read before a failure was still
+     * sent. See migration 0018.
+     */
+    attachmentsRead: jsonb('attachments_read')
+      .$type<Array<Record<string, unknown>>>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
 
     /** 'opened_case' | 'filed_on_case' | 'set_aside' | 'rejected' - checked in the table. */
     outcomeAction: text('outcome_action'),
@@ -103,6 +113,7 @@ export const mailSuggestion = pgTable(
     ),
     check('mail_suggestion_failed_says_why', sql`status <> 'failed' OR error IS NOT NULL`),
     check('mail_suggestion_has_decision', sql`status = 'failed' OR decision IS NOT NULL`),
+    check('mail_suggestion_attachments_read_is_array', sql`jsonb_typeof(attachments_read) = 'array'`),
     check(
       'mail_suggestion_counts_not_negative',
       sql`input_tokens >= 0 AND output_tokens >= 0 AND cache_read_tokens >= 0 AND cache_write_tokens >= 0 AND tool_calls >= 0 AND cost_usd >= 0`,

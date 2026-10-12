@@ -5,6 +5,7 @@ import type { AssistantState, MailSuggestionView } from '@/lib/api';
 import { PUBLIC_API_URL } from '@/lib/public-api';
 import { BusyButton } from '@/app/components/busy-button';
 import { useAction } from '@/app/components/use-action';
+import { askAgainFailed } from '../suggestion-text';
 import { AssistantPanel, type AssistantPath } from './assistant-panel';
 
 type Doing = '/open-case' | '/file' | '/dismiss' | '/restore' | AssistantPath;
@@ -49,7 +50,7 @@ export function MessageActions({
   const [email, setEmail] = useState(defaults.complainantEmail);
   const [caseFileId, setCaseFileId] = useState(candidates[0]?.caseFileId ?? cases[0]?.id ?? '');
   const [reason, setReason] = useState('');
-  const { pending: busy, error, run } = useAction();
+  const { pending: busy, error, setError, run } = useAction();
   // Which of the forms was sent. All of them stop taking clicks while one is in flight -
   // opening a case and setting the message aside must not both land - but only the one
   // pressed spins, and a refusal is shown beside the button that caused it.
@@ -68,16 +69,23 @@ export function MessageActions({
         const payload = (await res.json().catch(() => ({}))) as {
           message?: string;
           caseFileId?: string;
+          suggestion?: MailSuggestionView;
         };
         if (!res.ok) throw new Error(payload.message ?? 'That did not go through.');
-        return payload.caseFileId;
+        return {
+          caseFileId: payload.caseFileId,
+          // A failed "Ask again" the refreshed page will not show (see askAgainFailed).
+          unseen: path === '/suggestion/refresh' ? askAgainFailed(suggestion, payload.suggestion) : null,
+        };
       },
       // Inside the transition, so "Opening…" holds until the case page is on screen. The
       // case exists by now; a button that woke up in the meantime would only invite a
       // second press and a "that message is already on a case" for the officer's trouble.
-      (caseFileId, router) => {
+      ({ caseFileId, unseen }, router) => {
         if (caseFileId) router.push(`/cases/${caseFileId}`);
         else router.refresh();
+        // Refreshed all the same: what that reading sent is on the panel's own line.
+        if (unseen) setError(unseen);
       },
     );
   }
