@@ -8,7 +8,7 @@ import type { AssistantEffort } from './types.js';
  * OFF unless somebody turns it on, on purpose. Every suggestion is a paid call to the
  * Anthropic API, billed to credits the officer bought, so the default must cost nothing:
  * a fresh clone, a test run or a misread .env file must never start spending. Turning it
- * on takes two things - MAIL_ASSISTANT=on and an API key - and when either is missing the
+ * on takes two things - MAIL_ASSISTANT=on (or =ask) and an API key - and when either is missing the
  * assistant is off WITH A REASON, because "it isn't doing anything" with no explanation is
  * the one state nobody can fix.
  *
@@ -38,6 +38,11 @@ export interface AssistantConfig {
   enabled: boolean;
   /** Why it is off, in words for the officer. Null when it is on. */
   reason: string | null;
+  /**
+   * Whether it reads new mail by itself (MAIL_ASSISTANT=on) or only the messages the
+   * officer asks it about (MAIL_ASSISTANT=ask). False whenever it is off.
+   */
+  automatic: boolean;
   model: string;
   effort: AssistantEffort;
   /** Suggestions per council per day (the Council's own day), counting failures. */
@@ -110,10 +115,15 @@ export function assistantConfigFromEnv(env: NodeJS.ProcessEnv = process.env): As
 
   // The order of these is the order the officer would fix them in.
   let reason: string | null = null;
-  // Exactly "on". Not "true", not "1", not "yes": the switch that spends money is spelled
-  // one way, so a value somebody half-remembers leaves it off rather than guessing.
-  if (env.MAIL_ASSISTANT?.trim() !== 'on') {
-    reason = 'MAIL_ASSISTANT is not set to on.';
+  // Exactly "on" or "ask". Not "true", not "1", not "yes": the switch that spends money is
+  // spelled one way, so a value somebody half-remembers leaves it off rather than guessing.
+  //   on   reads each new message in the tray by itself;
+  //   ask  reads only the messages the officer asks about, from the message page - for
+  //        trying it on mail the officer chose (their own made-up complaints) before the
+  //        Council has decided that real complainants' mail may go to the model.
+  const mode = env.MAIL_ASSISTANT?.trim();
+  if (mode !== 'on' && mode !== 'ask') {
+    reason = 'MAIL_ASSISTANT is not set to on or ask.';
   } else if (!env.ANTHROPIC_API_KEY?.trim()) {
     reason = 'ANTHROPIC_API_KEY is missing.';
   } else if (problems.length) {
@@ -124,6 +134,7 @@ export function assistantConfigFromEnv(env: NodeJS.ProcessEnv = process.env): As
   return {
     enabled: reason === null,
     reason,
+    automatic: reason === null && mode === 'on',
     model,
     effort,
     dailyLimit: daily.value,

@@ -28,7 +28,16 @@ It is **off** until you switch it on, and switching it on takes two separate swi
 
 ## Switching it on and off
 
-**First, the Council's own AI switch.** The register has had one from the start: `aiEnabled` in the Council's configuration, which ships as `false`. While it is off, the assistant reads nothing, whatever the settings files below say - so a key added to a file by mistake, or to try something out, cannot send a single complainant's email abroad. Turn it on **only after the Registrar has signed off** (see Privacy, below): change `aiEnabled: false` to `aiEnabled: true` in `packages/config/src/ksdc.seed.ts`, update the check in `packages/config/src/ksdc.seed.test.ts` that it ships off, re-run the seed (`pnpm db:seed`) against the database the register uses, and restart. To switch the assistant off for good, set it back to `false` the same way.
+**First, the Council's own AI switch.** The register has had one from the start: `aiEnabled` in the Council's configuration, which ships as `false`. While it is off, the assistant reads nothing, whatever the settings files below say - so a key added to a file by mistake, or to try something out, cannot send a single complainant's email abroad.
+
+The switch lives in the Council's stored configuration in the register's database (Supabase), not in a file. It was turned on on 12 October 2026 for the "ask" trial below. To turn it off, or back on, run one line in the Supabase SQL editor and restart both programs:
+
+```
+UPDATE council_config SET config = jsonb_set(config, '{aiEnabled}', 'false');   -- off
+UPDATE council_config SET config = jsonb_set(config, '{aiEnabled}', 'true');    -- on
+```
+
+(The copy in `packages/config/src/ksdc.seed.ts` stays `false`: it is only the starting value for a brand-new installation.)
 
 **Then the settings files.** Two are involved, and **both need the same lines**:
 
@@ -43,6 +52,11 @@ It is **off** until you switch it on, and switching it on takes two separate swi
 MAIL_ASSISTANT=on
 ANTHROPIC_API_KEY=paste-your-key-here
 ```
+
+`MAIL_ASSISTANT` takes one of two values:
+
+- **`ask`** - on, but it reads **only the emails you ask it about**, with the "Ask the assistant" button on each email's page. Nothing is sent to Anthropic unless you press that button. Use this to try it out on your own made-up complaints before the Council has signed off on real complainants' mail. This is how it is set up now.
+- **`on`** - it reads each new email that lands in Inward mail by itself (up to the per-sweep and daily limits).
 
 Then **restart both**: the mail reader (`pnpm --filter @ksdc/core mail`) and the web app (`pnpm --filter @ksdc/web dev`). These files are only read when a program starts, so a change does nothing until you restart.
 

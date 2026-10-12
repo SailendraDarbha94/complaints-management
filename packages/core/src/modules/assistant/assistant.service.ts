@@ -314,11 +314,18 @@ export class AssistantService implements MailAssistantHook {
    * reasons when both are off, because fixing one and finding the other is a wasted
    * restart. Without a council, only the installation's switch can be answered.
    */
-  status(ctx?: EngineContext): { enabled: boolean; reason: string | null } {
+  status(ctx?: EngineContext): { enabled: boolean; reason: string | null; automatic: boolean } {
     const reasons: string[] = [];
     if (!this.config.enabled) reasons.push(this.config.reason ?? 'The mail assistant is switched off.');
     if (ctx && ctx.config.aiEnabled !== true) reasons.push(COUNCIL_AI_OFF_REASON);
-    return { enabled: reasons.length === 0, reason: reasons.length ? reasons.join(' ') : null };
+    const enabled = reasons.length === 0;
+    return {
+      enabled,
+      reason: enabled ? null : reasons.join(' '),
+      // On, but only when asked (MAIL_ASSISTANT=ask): the screens say so, so an empty
+      // tray of suggestions is not mistaken for the assistant being broken.
+      automatic: enabled && this.config.automatic,
+    };
   }
 
   /**
@@ -437,7 +444,10 @@ export class AssistantService implements MailAssistantHook {
    * after-response work) can.
    */
   suggestAfterSweep(ctx: EngineContext, mailMessageIds: string[]): Promise<void> {
-    if (mailMessageIds.length === 0 || !this.status(ctx).enabled) return Promise.resolve();
+    // In "ask" mode nothing is read unless the officer asks for that one message: the
+    // whole point of the mode is that the officer, not the arrival of mail, decides what
+    // is sent to the model.
+    if (mailMessageIds.length === 0 || !this.status(ctx).automatic) return Promise.resolve();
     const now = mailMessageIds.slice(0, this.config.perSweep);
     const left = mailMessageIds.length - now.length;
     if (left > 0) {
@@ -1157,6 +1167,7 @@ export class AssistantService implements MailAssistantHook {
     return {
       enabled: state.enabled,
       reason: state.reason,
+      automatic: state.automatic,
       model: this.config.model,
       month,
       totals,

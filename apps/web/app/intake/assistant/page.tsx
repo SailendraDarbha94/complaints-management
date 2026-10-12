@@ -111,6 +111,15 @@ export default async function AssistantReportPage({
       </nav>
 
       {!report.enabled && <SwitchedOff reason={report.reason ?? null} />}
+      {report.enabled && (
+        // Which of the two ways it is on, because the difference is what decides whose mail
+        // is sent to the model: everything new, or only what the officer chose.
+        <p className="rti-hint">
+          {report.automatic
+            ? 'The assistant is on and reads each new email in the tray by itself.'
+            : "The assistant is on, but reads only the emails you ask it about, from each email's page."}
+        </p>
+      )}
 
       {made === 0 ? (
         <div className="empty">

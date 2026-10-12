@@ -225,6 +225,8 @@ export interface SuggestionOverrides {
 /** GET /v1/assistant/report */
 export interface AssistantReport {
   enabled: boolean;
+  /** Reads new mail by itself (MAIL_ASSISTANT=on), or only when asked (=ask). */
+  automatic: boolean;
   /** Why it is off, in words for the officer - the setting to fix. Null when it is on. */
   reason: string | null;
   model: string;

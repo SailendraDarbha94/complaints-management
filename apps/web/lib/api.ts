@@ -608,11 +608,15 @@ export interface AssistantState {
   enabled: boolean;
   /** Why it is off, in plain words; null when it is on. */
   reason: string | null;
+  /** Reads new mail by itself (MAIL_ASSISTANT=on), or only the emails the officer asks about (=ask). */
+  automatic: boolean;
 }
 
 /** GET /v1/assistant/report */
 export interface AssistantReport {
   enabled: boolean;
+  /** Reads new mail by itself (MAIL_ASSISTANT=on), or only the emails the officer asks about (=ask). */
+  automatic: boolean;
   /** Why it is off - which setting to fix - in plain words; null when it is on. */
   reason: string | null;
   model: string;

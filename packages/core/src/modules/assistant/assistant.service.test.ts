@@ -117,6 +117,7 @@ function config(over: Partial<AssistantConfig> = {}): AssistantConfig {
   return {
     enabled: true,
     reason: null,
+    automatic: true,
     model: 'fake-model',
     effort: 'medium',
     dailyLimit: 10_000,
@@ -317,7 +318,7 @@ describe('whether the assistant is on', () => {
   it('is off by default, and says why', () => {
     const c = assistantConfigFromEnv({});
     expect(c.enabled).toBe(false);
-    expect(c.reason).toBe('MAIL_ASSISTANT is not set to on.');
+    expect(c.reason).toBe('MAIL_ASSISTANT is not set to on or ask.');
     expect(c).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'medium', dailyLimit: 50, perSweep: 5, maxToolCalls: 8 });
     expect(c.playbookVersion).toMatch(/^[0-9a-f]{64}$/);
   });
@@ -329,6 +330,15 @@ describe('whether the assistant is on', () => {
     expect(on).toMatchObject({ enabled: true, reason: null });
     // The key is checked, never kept: this object is logged and sent to screens.
     expect(JSON.stringify(on)).not.toContain(KEY.ANTHROPIC_API_KEY);
+  });
+
+  it('has an "ask" mode: on, but reading only what the officer asks about', () => {
+    const ask = assistantConfigFromEnv({ ...KEY, MAIL_ASSISTANT: 'ask' });
+    expect(ask).toMatchObject({ enabled: true, reason: null, automatic: false });
+    expect(assistantConfigFromEnv({ ...KEY, MAIL_ASSISTANT: 'on' }).automatic).toBe(true);
+    // Off is off, whichever way it is spelled wrongly.
+    expect(assistantConfigFromEnv({ ...KEY, MAIL_ASSISTANT: 'asked' })).toMatchObject({ enabled: false, automatic: false });
+    expect(assistantConfigFromEnv({ MAIL_ASSISTANT: 'ask' }).reason).toBe('ANTHROPIC_API_KEY is missing.');
   });
 
   it('takes its limits from the environment, and a setting it cannot read turns it off', () => {
@@ -432,19 +442,35 @@ describe('asking the assistant about a message', () => {
       mail,
       respondents,
       fakeTriage,
-      config({ enabled: false, reason: 'MAIL_ASSISTANT is not set to on.' }),
+      config({ enabled: false, automatic: false, reason: 'MAIL_ASSISTANT is not set to on or ask.' }),
     );
     const id = await arrive(ctx, person(), 'Bleeding gums', 'My gums bleed.');
 
     await expect(off.suggestFor(ctx, id)).rejects.toMatchObject({
       status: 409,
-      message: expect.stringMatching(/switched off.*MAIL_ASSISTANT is not set to on/),
+      message: expect.stringMatching(/switched off.*MAIL_ASSISTANT is not set to on or ask/),
     });
     await off.suggestAfterSweep(ctx, [id]);
 
     expect(seen).toHaveLength(0);
     expect(await suggestionRows(ctx, id)).toHaveLength(0);
-    expect(off.status()).toEqual({ enabled: false, reason: 'MAIL_ASSISTANT is not set to on.' });
+    expect(off.status()).toEqual({ enabled: false, reason: 'MAIL_ASSISTANT is not set to on or ask.', automatic: false });
+  });
+
+  it('in "ask" mode reads nothing by itself, but answers when the officer asks', async () => {
+    // For trying the assistant on mail the officer chose - their own made-up complaints -
+    // before the Council has agreed that real complainants' mail may go to the model.
+    const askOnly = new AssistantService(mail, respondents, fakeTriage, config({ automatic: false }));
+    const id = await arrive(ctx, person(), 'Loose crown', 'My crown came off twice.');
+
+    await askOnly.suggestAfterSweep(ctx, [id]);
+    expect(seen).toHaveLength(0);
+    expect(await suggestionRows(ctx, id)).toHaveLength(0);
+
+    const asked = await askOnly.suggestFor(ctx, id);
+    expect(seen).toHaveLength(1);
+    expect(asked.status).toBe('pending');
+    expect(askOnly.status(ctx)).toEqual({ enabled: true, reason: null, automatic: false });
   });
 
   it('stops at the daily limit, before calling the model, with a 429', async () => {
@@ -557,9 +583,9 @@ describe('asking the assistant about a message', () => {
     expect(await suggestionRows(ctx, id)).toHaveLength(0);
 
     expect(assistant.status(councilOff)).toMatchObject({ enabled: false, reason: expect.stringMatching(/aiEnabled/) });
-    expect(assistant.status(ctx)).toEqual({ enabled: true, reason: null });
+    expect(assistant.status(ctx)).toEqual({ enabled: true, reason: null, automatic: true });
     // Both switches off: both reasons, so one restart fixes both.
-    const bothOff = new AssistantService(mail, respondents, fakeTriage, config({ enabled: false, reason: 'ANTHROPIC_API_KEY is missing.' }));
+    const bothOff = new AssistantService(mail, respondents, fakeTriage, config({ enabled: false, automatic: false, reason: 'ANTHROPIC_API_KEY is missing.' }));
     expect(bothOff.status(councilOff).reason).toMatch(/ANTHROPIC_API_KEY is missing\..*aiEnabled/);
   });
 

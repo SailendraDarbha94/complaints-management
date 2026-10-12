@@ -124,6 +124,8 @@ export function AssistantPanel({
             The assistant has not read this message. It can suggest whether it is a new
             complaint, a letter about a case already open, or not a complaint at all. It only
             suggests: nothing changes until you accept.
+            {!assistant.automatic &&
+              ' It reads only the emails you ask it about: this one is sent to it only if you press the button.'}
           </p>
           {failed('/suggestion/refresh')}
           <div className="action-row">
