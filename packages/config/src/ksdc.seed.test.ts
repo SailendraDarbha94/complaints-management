@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FOLLOWUP_STAGES } from '@ksdc/contracts';
 import { councilConfigSchema, followupRuleFor } from './council-config.js';
-import { KSDC_CONFIG } from './ksdc.seed.js';
+import { KSDC_CONFIG, KSDC_COUNCIL } from './ksdc.seed.js';
 
 describe('the KSDC seed', () => {
   it('validates against the config schema', () => {
@@ -16,6 +16,19 @@ describe('the KSDC seed', () => {
 
   it('ships AI disabled', () => {
     expect(KSDC_CONFIG.aiEnabled).toBe(false);
+  });
+
+  it("takes complaints only from the Registrar's address", () => {
+    expect(KSDC_CONFIG.intakeSenders).toEqual([KSDC_COUNCIL.officialEmail]);
+  });
+
+  it('has no sender rule unless one is configured, and lower-cases the one that is', () => {
+    const { intakeSenders: _unused, ...withoutRule } = KSDC_CONFIG;
+    expect(councilConfigSchema.parse(withoutRule).intakeSenders).toEqual([]);
+    expect(
+      councilConfigSchema.parse({ ...KSDC_CONFIG, intakeSenders: [' Registrar@KSDC.in '] }).intakeSenders,
+    ).toEqual(['registrar@ksdc.in']);
+    expect(() => councilConfigSchema.parse({ ...KSDC_CONFIG, intakeSenders: ['registrar'] })).toThrow();
   });
 
   it('never lets the software mint an outward despatch number', () => {

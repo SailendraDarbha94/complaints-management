@@ -142,9 +142,17 @@ export {
   sweepMailbox,
   mailboxOrThrow,
   councilForMailbox,
+  forTheAssistant,
   type SweepResult,
   type SweepOptions,
 } from './modules/mail/sweep.js';
+export {
+  MAIL_PROVIDER_NAME,
+  TRUSTED_AUTHSERV_ID,
+  senderCheckOf,
+  senderVerified,
+} from './modules/mail/sender-check.js';
+export { applySenderRule, type SenderRuleOutcome } from './modules/mail/sender-rule.js';
 export type { MailAssistantHook, OfficerMailAction } from './modules/mail/mail-intake.service.js';
 
 // The mail assistant, stage 1: it suggests, the officer decides. See modules/assistant.

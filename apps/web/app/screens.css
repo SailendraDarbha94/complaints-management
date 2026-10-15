@@ -269,6 +269,11 @@ ul.plain > li + li {
   background: var(--moss-soft);
   color: var(--moss);
 }
+/* Mail carrying a Council address that Gmail could not confirm. Not filed by itself. */
+.chip-unconfirmed {
+  background: var(--seal-soft);
+  color: var(--seal);
+}
 
 /* ── Inner tables ─────────────────────────────────────────────────────── */
 

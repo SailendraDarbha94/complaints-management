@@ -24,7 +24,8 @@
     "keys": "pnpm build && node dist/scripts/keys.js",
     "daily": "pnpm build && node --env-file-if-exists=../../.env.dev dist/scripts/daily.js",
     "mail": "pnpm build && node --env-file-if-exists=../../.env.dev --env-file-if-exists=../../apps/web/.env.local dist/scripts/mail.js",
-    "assistant:eval": "pnpm build && node --env-file-if-exists=../../.env.dev --env-file-if-exists=../../apps/web/.env.local dist/scripts/assistant-eval.js"
+    "assistant:eval": "pnpm build && node --env-file-if-exists=../../.env.dev --env-file-if-exists=../../apps/web/.env.local dist/scripts/assistant-eval.js",
+    "mail:apply-sender-rule": "pnpm build && node --env-file-if-exists=../../.env.dev --env-file-if-exists=../../apps/web/.env.local dist/scripts/apply-sender-rule.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

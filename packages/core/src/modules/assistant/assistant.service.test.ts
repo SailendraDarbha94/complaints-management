@@ -49,8 +49,10 @@ const reportCouncilId = 'c0a53333-3333-4333-8333-333333333333';
 const reportOfficer = 'c0a54444-4444-4444-8444-444444444444';
 
 // The council's own AI switch on, as it will be once the Registrar has signed: the seed
-// ships it off (D16), and one test below checks that off means off.
-const AI_ON = { ...KSDC_CONFIG, aiEnabled: true };
+// ships it off (D16), and one test below checks that off means off. No sender rule
+// (intakeSenders): these messages come from test addresses, not the Registrar's; the rule's
+// own skip is tested in mail/sender-rule.test.ts and below, with the copies of our letters.
+const AI_ON ={ ...KSDC_CONFIG, aiEnabled: true, intakeSenders: [] };
 const ctx: EngineContext = { councilId, userId: officer, config: AI_ON };
 const reportCtx: EngineContext = { councilId: reportCouncilId, userId: reportOfficer, config: AI_ON };
 
@@ -2248,6 +2250,30 @@ describe("a copy of a letter the Council sent", () => {
     const email = seen.at(-1)!;
     expect(email.to).toBe(`${intake} ${OWN_MAILBOX_MARK}`);
     expect(email.forwardedBy).toMatch(/registrar@asst\.test/);
+  });
+});
+
+describe('a message from a listed sender the mail provider could not confirm', () => {
+  // The council's list switched on (intakeSenders, mail/sender-check.ts). Mail from the
+  // Registrar's address with no Authentication-Results from Gmail on it reads as
+  // unconfirmed: it waits in the tray, and whether it is genuine is the officer's question.
+  const ruled: EngineContext = { ...ctx, config: { ...AI_ON, intakeSenders: ['registrar@asst.test'] } };
+  const registrar = { name: 'Test Registrar', email: 'registrar@asst.test' };
+
+  it('is never read automatically - the sweep spends nothing on it - but the officer can still ask', async () => {
+    const sweeper = new AssistantService(mail, respondents, storage, fakeTriage, config({ perSweep: 5 }));
+    const unconfirmed = await arriveDirect(ruled, registrar, 'Fwd: A bridge that came loose', 'Please log this. The bridge came loose.');
+    const plain = await arrive(ctx, person(), 'A crown that came off', 'It came off.');
+
+    await sweeper.suggestAfterSweep(ruled, [unconfirmed, plain]);
+    await sweeper.whenIdle();
+    expect(seen).toHaveLength(1);
+    expect(await suggestionRows(ctx, unconfirmed)).toHaveLength(0);
+    expect((await suggestionRows(ctx, plain)).map((r) => r.status)).toEqual(['pending']);
+
+    // "Ask the assistant" on its page still reads it.
+    await assistant.suggestFor(ruled, unconfirmed);
+    expect((await suggestionRows(ctx, unconfirmed)).map((r) => r.status)).toEqual(['pending']);
   });
 });
 

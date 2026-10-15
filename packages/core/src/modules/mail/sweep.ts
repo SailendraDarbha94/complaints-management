@@ -4,7 +4,7 @@ import { parseCouncilConfig, type CouncilConfig } from '@ksdc/config';
 import { Logger } from '../../common/logger.js';
 import { DomainError } from '../../common/domain-error.js';
 import { Mailbox, mailboxConfigFromEnv, mailboxKey } from './mailbox.js';
-import { MAIL_ROBOT_USER_ID, type MailIntakeService } from './mail-intake.service.js';
+import { MAIL_ROBOT_USER_ID, type IngestResult, type MailIntakeService } from './mail-intake.service.js';
 
 /**
  * One pass of the mailbox.
@@ -28,8 +28,9 @@ export interface SweepResult {
   deferred: number;
   /**
    * The messages this sweep put in the tray - new, and neither filed by a case number nor
-   * set aside as an account notice, nor a copy of a letter the Council sent. What the mail
-   * assistant is asked about.
+   * set aside on arrival, nor a copy of a letter the Council sent, nor from a sender the
+   * mail provider could not confirm (forTheAssistant). What the mail assistant is asked
+   * about.
    */
   newInTray: string[];
 }
@@ -43,6 +44,30 @@ export interface SweepOptions {
    * after(), which a hosting platform can be told to wait for.
    */
   suggest?: boolean;
+}
+
+/**
+ * Whether a message just ingested is one the automatic assistant should read.
+ *
+ * Only what is waiting for the officer. A reply that filed itself by its case number, and
+ * mail set aside on arrival - an account notice, or mail from an address the council's
+ * complaints do not come from - are already decided; asking a model about them would spend
+ * money on a question nobody has. Nor is a copy of a letter the Council itself sent: the
+ * register already knows what it is, and the officer files it from its own panel on the
+ * message page (see council-copy.ts). Nor is mail from a listed address that the mail
+ * provider could not confirm (sender-check.ts): whether it is genuine is the officer's
+ * question, and the model cannot answer it from the words. The officer can still press
+ * "Ask the assistant" on any of these.
+ */
+export function forTheAssistant(
+  result: Pick<IngestResult, 'status' | 'duplicate' | 'councilCopy' | 'senderCheck'>,
+): boolean {
+  return (
+    !result.duplicate &&
+    result.status === 'unfiled' &&
+    !result.councilCopy &&
+    result.senderCheck !== 'unverified'
+  );
 }
 
 export function mailboxOrThrow() {
@@ -182,12 +207,7 @@ export async function sweepMailbox(
       if (result.duplicate) continue;
       ingested++;
       if (result.autoFiledTo) filed++;
-      // Only what is waiting for the officer. A reply that filed itself by its case number
-      // and an account notice set aside automatically are already decided; asking a model
-      // about them would spend money on a question nobody has. Nor is a copy of a letter the
-      // Council itself sent: the register already knows what it is, and the officer files
-      // it from its own panel on the message page (see council-copy.ts).
-      if (result.status === 'unfiled' && !result.councilCopy) newInTray.push(result.mailMessageId);
+      if (forTheAssistant(result)) newInTray.push(result.mailMessageId);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       const seen = failures.get(key) ?? { count: 0, since: Date.now() };

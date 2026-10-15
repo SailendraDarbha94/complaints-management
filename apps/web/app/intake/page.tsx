@@ -1,7 +1,7 @@
 import type { Route } from 'next';
 import { redirect } from 'next/navigation';
-import { fetchCases, fetchTray, isUnauthorized, type CaseListRow, type TrayCard } from '@/lib/api';
-import { FORWARD_KIND_LABEL, label } from '@/lib/labels';
+import { fetchCases, fetchTray, isUnauthorized, type CaseListRow, type TrayCard, type TrayList } from '@/lib/api';
+import { FORWARD_KIND_LABEL, UNCONFIRMED_SENDER_LABEL, UNCONFIRMED_SENDER_TEXT, label } from '@/lib/labels';
 import { PendingLink } from '@/app/components/pending-link';
 import { CardScope } from './card-scope';
 import { TrayActions } from './tray-actions';
@@ -27,7 +27,7 @@ export default async function TrayPage({
 }) {
   const { status = 'unfiled' } = await searchParams;
 
-  let tray: { status: string; messages: TrayCard[] };
+  let tray: TrayList;
   let cases: { cases: CaseListRow[] };
   try {
     [tray, cases] = await Promise.all([fetchTray(status), fetchCases()]);
@@ -80,6 +80,19 @@ export default async function TrayPage({
           Set aside
         </PendingLink>
       </nav>
+
+      {/* Mail from addresses complaints never come from is set aside on arrival (the
+          council's intakeSenders). Said here, quietly, so that an officer expecting an email
+          knows where it went rather than concluding it never came. */}
+      {status === 'unfiled' && (tray.setAsideToday ?? 0) > 0 && (
+        <p className="rti-hint">
+          {tray.setAsideToday === 1
+            ? '1 email from another sender was'
+            : `${tray.setAsideToday} emails from other senders were`}{' '}
+          set aside today &mdash; see{' '}
+          <PendingLink href="/intake?status=dismissed">Set aside</PendingLink>.
+        </p>
+      )}
 
       {tray.messages.length === 0 ? (
         <div className="empty">
@@ -141,6 +154,13 @@ function Card({
             {what}
           </PendingLink>
           {copy && <span className="chip">Copy of our letter</span>}
+          {/* One of the addresses complaints come from, but Gmail could not confirm it was
+              sent from there. It never filed itself; its note below says what to do. */}
+          {message.sender_check === 'unverified' && (
+            <span className="chip chip-unconfirmed" title={UNCONFIRMED_SENDER_TEXT}>
+              {UNCONFIRMED_SENDER_LABEL}
+            </span>
+          )}
           {message.attachment_count > 0 && (
             <span className="chip chip-verbatim">
               {message.attachment_count} file{message.attachment_count === 1 ? '' : 's'}
@@ -171,6 +191,11 @@ function Card({
           </span>
 
           {message.suggestion_note && <p className="action-why">{message.suggestion_note}</p>}
+          {/* Why it was set aside - by the officer, or on arrival because it did not come
+              from an address complaints come from. "Put back" beside it undoes either. */}
+          {message.status === 'dismissed' && message.dismissed_reason && (
+            <p className="action-why">Set aside: {message.dismissed_reason}</p>
+          )}
         </div>
 
         <TrayActions

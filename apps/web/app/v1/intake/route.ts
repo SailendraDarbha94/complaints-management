@@ -15,6 +15,10 @@ const query = z.enum(MAIL_STATUSES).catch('unfiled');
  *
  * Each card carries the mail assistant's latest suggestion for it, or null - in the same
  * request, so the tray is still one round trip however many cards it shows.
+ *
+ * The waiting tray also says how many emails from other senders were set aside on arrival
+ * today (intakeSenders in the council's configuration), so the officer knows they are in
+ * "Set aside" rather than wondering whether mail went missing.
  */
 export const GET = withAuth(async ({ req, tx, ctx, services }) => {
   const status = query.parse(new URL(req.url).searchParams.get('status') ?? 'unfiled');
@@ -27,5 +31,8 @@ export const GET = withAuth(async ({ req, tx, ctx, services }) => {
   return {
     status,
     messages: messages.map((m) => ({ ...m, suggestion: suggestions.get(m.id) ?? null })),
+    ...(status === 'unfiled'
+      ? { setAsideToday: await services.mail.setAsideFromOtherSendersToday(tx, ctx) }
+      : {}),
   };
 });

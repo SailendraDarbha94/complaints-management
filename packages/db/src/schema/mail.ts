@@ -9,6 +9,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
+import { MAIL_SENDER_CHECKS } from '@ksdc/contracts';
 import { appUser, council } from './platform.js';
 import { caseFile } from './cases.js';
 import { mailForwardKindEnum, mailMatchRungEnum, mailStatusEnum } from './enums.js';
@@ -104,6 +105,13 @@ export const mailMessage = pgTable(
      * addresses made it look like one (migration 0020). Set, it is ordinary mail.
      */
     notCouncilCopyAt: timestamp('not_council_copy_at', { withTimezone: true }),
+    /**
+     * The envelope sender against the council's intakeSenders list, on arrival (migration
+     * 0021): 'verified', 'unverified' (a listed address the mail provider could not confirm
+     * - it never files itself) or 'not_allowed' (set aside on arrival). NULL when no list was
+     * configured, including everything that arrived before the rule existed.
+     */
+    senderCheck: text('sender_check', { enum: MAIL_SENDER_CHECKS }),
 
     filedAt: timestamp('filed_at', { withTimezone: true }),
     filedBy: uuid('filed_by').references(() => appUser.id, { onDelete: 'set null' }),
@@ -134,6 +142,10 @@ export const mailMessage = pgTable(
     check(
       'mail_filed_needs_case',
       sql`status <> 'filed' OR (case_file_id IS NOT NULL AND filed_at IS NOT NULL)`,
+    ),
+    check(
+      'mail_message_sender_check_known',
+      sql`sender_check IN ('verified', 'unverified', 'not_allowed')`,
     ),
   ],
 );

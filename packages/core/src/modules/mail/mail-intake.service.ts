@@ -10,6 +10,7 @@ import type {
   IntakeSource,
   MailForwardKind,
   MailMatchRung,
+  MailSenderCheck,
   MailStatus,
   Milestone,
 } from '@ksdc/contracts';
@@ -32,6 +33,7 @@ import { returnedToTrayNote } from './cancelled-case.js';
 import { snippetOf, unwrapForward } from './forwarded.js';
 import { parseMessage } from './parse.js';
 import { imageSize } from './image-size.js';
+import { notFromListedReason, senderCheckOf, unconfirmedSenderNote } from './sender-check.js';
 import {
   casesByRecipient,
   findRecordedLetter,
@@ -170,6 +172,14 @@ const MAX_EMBED_DEPTH = 3;
 /** The fixed identity every automatic write is attributed to. Created in migration 0013. */
 export const MAIL_ROBOT_USER_ID = '00000000-0000-4000-8000-000000000001';
 
+/**
+ * The card text of a message that could not be read (recordUnreadable). Also how such a card
+ * is told apart later: the one-off sender rule (sender-rule.ts) must never set one aside - it
+ * is the only trace of a message that may have been a complaint, and its sender, when there
+ * is one at all, was never checked.
+ */
+export const UNREADABLE_SNIPPET = 'This message could not be read automatically. Open it in the mailbox.';
+
 export interface IngestMeta {
   mailbox: string;
   uid?: number | null;
@@ -193,6 +203,12 @@ export interface IngestResult {
    * assistant is not asked about these: the register already knows what they are.
    */
   councilCopy: boolean;
+  /**
+   * Who sent it, against the council's intakeSenders list (sender-check.ts); null when the
+   * council has no list. 'unverified' is not read by the automatic assistant either: it is
+   * the one kind of message in the tray whose sender is itself the question.
+   */
+  senderCheck: MailSenderCheck | null;
 }
 
 export type TrayRow = {
@@ -218,6 +234,13 @@ export type TrayRow = {
   complainant: SuggestedComplainant | null;
   /** Set when this is a copy of a letter the Council sent: who that letter went to. */
   councilCopy: CouncilCopy | null;
+  /**
+   * Who sent it, against the council's intakeSenders list (sender-check.ts). The card marks
+   * 'unverified'; null when the council had no list when it arrived.
+   */
+  sender_check: MailSenderCheck | null;
+  /** Why it was set aside - by the officer, or on arrival. Null unless it is. */
+  dismissed_reason: string | null;
 };
 
 /**
@@ -451,8 +474,8 @@ export class MailIntakeService {
   ): Promise<IngestResult> {
     const rawSha256 = createHash('sha256').update(meta.raw).digest('hex');
 
-    const seen = await tx.execute<{ id: string; status: MailStatus }>(sql`
-      SELECT id, status FROM mail_message
+    const seen = await tx.execute<{ id: string; status: MailStatus; sender_check: MailSenderCheck | null }>(sql`
+      SELECT id, status, sender_check FROM mail_message
       WHERE council_id = ${ctx.councilId}::uuid
         AND (raw_sha256 = ${rawSha256}
           OR (${meta.gmMsgId ?? null}::text IS NOT NULL AND gm_msg_id = ${meta.gmMsgId ?? null}))
@@ -468,6 +491,7 @@ export class MailIntakeService {
         attachmentsStored: 0,
         attachmentsSkipped: 0,
         councilCopy: false,
+        senderCheck: seen.rows[0].sender_check,
       };
     }
 
@@ -483,6 +507,27 @@ export class MailIntakeService {
     // The card should show the complainant's words, not the officer's covering note.
     const snippet = snippetOf(original.body ?? bodyText);
 
+    // Who sent it here, against the addresses this council's complaints come from (see
+    // intakeSenders in council-config.ts, and sender-check.ts). The ENVELOPE sender, never
+    // the unwrapped original: the Registrar forwards other people's mail, and the person
+    // inside the forward is on no list. Null when the council has no list - nothing below
+    // then differs from before the rule existed.
+    const intakeSenders = ctx.config.intakeSenders ?? [];
+    const senderCheck = senderCheckOf(intakeSenders, envelope?.address ?? null, parsed.headers);
+    const isAccountNotice = Boolean(
+      envelope?.address && ACCOUNT_NOTICE_SENDERS.has(envelope.address.toLowerCase()),
+    );
+    // Mail from any other address is set aside below, and is not looked at on the way: no
+    // case is matched to it, nothing is filed, it is not taken for a copy of a Council
+    // letter, and the assistant is not asked. An account notice is set aside by its own
+    // rule, first, with its own reason - exactly as before the list existed.
+    const turnedAway = senderCheck === 'not_allowed' && !isAccountNotice;
+    // From a listed address, but the mail provider could not confirm it (a From line can
+    // be written by anybody). It goes to the tray - never set aside, because a genuine
+    // complaint must not disappear because a signature broke on the way - but it never
+    // files itself, and the automatic assistant leaves it for the officer.
+    const unconfirmed = senderCheck === 'unverified';
+
     const council = await tx.execute<{ code: string }>(
       sql`SELECT code FROM council WHERE id = ${ctx.councilId}::uuid`,
     );
@@ -492,16 +537,18 @@ export class MailIntakeService {
     // address in Cc. It is matched and filed by its own rules below, never as a reply: see
     // council-copy.ts for what went wrong when it was treated as one.
     const envelopeTo = parsed.to && 'text' in parsed.to ? parsed.to.text : null;
-    const copy = councilCopyOf(
-      {
-        original_from: original.fromAddress,
-        original_to: original.to,
-        envelope_from: envelope?.address ?? null,
-        envelope_to: envelopeTo,
-        subject: parsed.subject ?? null,
-      },
-      own,
-    );
+    const copy = turnedAway
+      ? null
+      : councilCopyOf(
+          {
+            original_from: original.fromAddress,
+            original_to: original.to,
+            envelope_from: envelope?.address ?? null,
+            envelope_to: envelopeTo,
+            subject: parsed.subject ?? null,
+          },
+          own,
+        );
 
     // Both the forwarder and the original sender are offered to the matcher. The forwarder
     // is usually the officer and will match nothing, which is harmless; the original is
@@ -516,16 +563,39 @@ export class MailIntakeService {
           recipients: copy.recipients.map((r) => r.email),
         })
       : null;
-    const match: MatchResult = copyMatch
-      ? { autoFile: null, candidates: copyMatch.candidates, note: copyMatch.note }
-      : await matchMessage(tx, ctx, councilCode, {
-          ...searched,
-          // Never the Council's own addresses: the office forwards everything, and an address
-          // that is on every case says nothing about which one this is.
-          senderAddresses: [original.fromAddress, envelope?.address ?? null].filter(
-            (a): a is string => Boolean(a) && !isOwnAddress(a, own),
-          ),
-        });
+    const match: MatchResult = turnedAway
+      ? { autoFile: null, candidates: [], note: null }
+      : copyMatch
+        ? { autoFile: null, candidates: copyMatch.candidates, note: copyMatch.note }
+        : await matchMessage(tx, ctx, councilCode, {
+            ...searched,
+            // Never the Council's own addresses: the office forwards everything, and an
+            // address that is on every case says nothing about which one this is.
+            senderAddresses: [original.fromAddress, envelope?.address ?? null].filter(
+              (a): a is string => Boolean(a) && !isOwnAddress(a, own),
+            ),
+          });
+
+    // What an unconfirmed message would have filed itself onto, had its sender been
+    // confirmed. Still offered - the case is suggested, and the officer files it with one
+    // click once satisfied - but the note says why it did not file itself, in place of the
+    // matcher's "Filed automatically", which would now be untrue.
+    const heldBack = unconfirmed ? (match.autoFile ?? copyMatch?.autoFileCandidate ?? null) : null;
+    if (unconfirmed) {
+      const quoted = heldBack
+        ? match.candidates.find((c) => c.caseFileId === heldBack.caseFileId)?.caseNumber
+        : null;
+      match.note = [
+        unconfirmedSenderNote(envelope?.address?.toLowerCase() ?? 'unknown'),
+        quoted
+          ? `It quotes ${quoted}, but because of this it has not been filed there on its own - ` +
+            'file it yourself once you are satisfied it is genuine.'
+          : match.note,
+      ]
+        .filter(Boolean)
+        .join(' ');
+    }
+
     // Who passed it on before the Council did - a grievance cell, a police station - when the
     // unwrapper read through their forward to the complainant's own message. Said on the
     // card, so the officer still knows how it came, without that body being taken for the
@@ -549,7 +619,7 @@ export class MailIntakeService {
         in_reply_to, reference_ids, body_text, body_html, snippet,
         forward_kind, original_from, original_from_name, original_to, original_subject,
         original_date, original_date_text, original_body,
-        suggested_case_file_id, suggestion_note, created_by
+        suggested_case_file_id, suggestion_note, sender_check, created_by
       ) VALUES (
         ${id}::uuid, ${ctx.councilId}::uuid, ${meta.gmMsgId ?? null},
         ${noNul(parsed.messageId ?? null)}, ${rawSha256}, ${meta.mailbox},
@@ -563,15 +633,18 @@ export class MailIntakeService {
         ${original.kind}::mail_forward_kind, ${noNul(original.fromAddress)},
         ${noNul(original.fromName)}, ${noNul(original.to)}, ${noNul(original.subject)},
         ${original.date}, ${noNul(original.dateText)}, ${noNul(original.body)},
-        ${match.candidates[0]?.caseFileId ?? null}::uuid, ${noNul(match.note)}, ${ctx.userId ?? null}
+        ${match.candidates[0]?.caseFileId ?? null}::uuid, ${noNul(match.note)}, ${senderCheck},
+        ${ctx.userId ?? null}
       )
     `);
 
+    // Staged whatever happens next, a message set aside included: one brought back from
+    // "Set aside" must still have its files to go on a case with.
     const stored = await this.stageAttachments(tx, ctx, id, parsed);
 
     // The mailbox provider writing to its own account holder. Set aside with a reason rather
     // than left in the tray - see ACCOUNT_NOTICE_SENDERS.
-    if (envelope?.address && ACCOUNT_NOTICE_SENDERS.has(envelope.address.toLowerCase())) {
+    if (isAccountNotice) {
       await tx.execute(sql`
         UPDATE mail_message
         SET status = 'dismissed', dismissed_at = now(), dismissed_by = ${ctx.userId ?? null},
@@ -588,6 +661,35 @@ export class MailIntakeService {
         attachmentsStored: stored.stored,
         attachmentsSkipped: stored.skipped,
         councilCopy: false,
+        senderCheck,
+      };
+    }
+
+    // Not from an address this council's complaints come from. Set aside on arrival, like an
+    // account notice, and for the same reason: RECORDED with a reason, never dropped, so
+    // it can be brought back from "Set aside" if it is a complaint after all. Nothing was
+    // matched for it above, and nothing is filed - not even when it quotes a case number,
+    // which anybody can do. Brought back, it is an ordinary message in the tray, filed only
+    // by the officer: the register files mail by itself only on arrival (below), and this
+    // message has already arrived.
+    if (turnedAway) {
+      await tx.execute(sql`
+        UPDATE mail_message
+        SET status = 'dismissed', dismissed_at = now(), dismissed_by = ${ctx.userId ?? null},
+            dismissed_reason = ${notFromListedReason(intakeSenders)}
+        WHERE council_id = ${ctx.councilId}::uuid AND id = ${id}::uuid
+      `);
+      this.log.log(`ingested ${parsed.subject ?? '(no subject)'} -> set aside (not from a listed sender)`);
+      return {
+        mailMessageId: id,
+        status: 'dismissed',
+        duplicate: false,
+        autoFiledTo: null,
+        note: 'Not from a listed sender; set aside automatically.',
+        attachmentsStored: stored.stored,
+        attachmentsSkipped: stored.skipped,
+        councilCopy: false,
+        senderCheck,
       };
     }
 
@@ -600,7 +702,10 @@ export class MailIntakeService {
     // case-guard), and a message whose case has just gone goes to the tray instead of
     // failing: a message that fails to ingest does not reach the tray at all. Its page
     // re-runs the matcher live, and says there which cancelled case it quotes.
-    let autoFile = match.autoFile ?? copyMatch?.autoFileCandidate ?? null;
+    //
+    // And only for a sender the mail provider confirmed, when the council has a list: an
+    // unconfirmed one waits for the officer (heldBack, above), quoting a number or not.
+    let autoFile = unconfirmed ? null : (match.autoFile ?? copyMatch?.autoFileCandidate ?? null);
     if (autoFile) {
       try {
         await assertCaseLive(tx, ctx, autoFile.caseFileId);
@@ -676,7 +781,8 @@ export class MailIntakeService {
             ? ' -> auto-filed'
             : copy
               ? ' -> tray (a copy of a Council letter)'
-              : ' -> tray'),
+              : ' -> tray') +
+        (unconfirmed ? ' (sender not confirmed)' : ''),
     );
 
     return {
@@ -688,6 +794,7 @@ export class MailIntakeService {
       attachmentsStored: stored.stored,
       attachmentsSkipped: stored.skipped,
       councilCopy: copy !== null,
+      senderCheck,
     };
   }
 
@@ -720,7 +827,7 @@ export class MailIntakeService {
         ${meta.uid ?? null}, ${meta.uidValidity ?? null},
         ${noNul(envelope?.address?.toLowerCase() ?? 'unknown')}, ${noNul(envelope?.name || null)},
         ${parsed?.date ?? new Date()}, ${noNul(parsed?.subject ?? '(no subject)')},
-        ${'This message could not be read automatically. Open it in the mailbox.'},
+        ${UNREADABLE_SNIPPET},
         ${noNul(
           `Could not be read automatically (${reason.slice(0, 200)}). Nothing from it is on ` +
             'any case and its attachments were not kept - open it in the mailbox, and ' +
@@ -1133,6 +1240,36 @@ export class MailIntakeService {
   async isCouncilCopy(tx: Tx, ctx: EngineContext, mailMessageId: string): Promise<boolean> {
     const m = await this.find(tx, ctx, mailMessageId);
     return m ? this.copyOf(m, await this.ownAddresses(tx, ctx, m.mailbox)) !== null : false;
+  }
+
+  /**
+   * Whether a message came from a listed address the mail provider could not confirm
+   * (sender-check.ts). For the automatic assistant's skip: whether it is genuine at all is
+   * the officer's question, and a model reading its words cannot answer it. The officer can
+   * still press "Ask the assistant" on one.
+   */
+  async hasUnconfirmedSender(tx: Tx, ctx: EngineContext, mailMessageId: string): Promise<boolean> {
+    const m = await this.find(tx, ctx, mailMessageId);
+    return m?.sender_check === 'unverified';
+  }
+
+  /**
+   * How many messages that arrived today were set aside for not coming from a listed
+   * address - for the tray's quiet line pointing at "Set aside". "Today" in the council's
+   * own calendar. Only those still set aside: one the officer has brought back is not.
+   * Mostly those set aside on arrival; a message that arrived today and was set aside by
+   * the one-off script (sender-rule.ts, which marks what it sets aside the same way) counts
+   * too - it is in "Set aside" for the same reason, which is what the line points to.
+   */
+  async setAsideFromOtherSendersToday(tx: Tx, ctx: EngineContext): Promise<number> {
+    const rows = await tx.execute<{ n: number }>(sql`
+      SELECT count(*)::int AS n FROM mail_message
+      WHERE council_id = ${ctx.councilId}::uuid
+        AND status = 'dismissed' AND sender_check = 'not_allowed'
+        AND ingested_at >= (date_trunc('day', now() AT TIME ZONE ${ctx.config.calendar.timezone})
+                            AT TIME ZONE ${ctx.config.calendar.timezone})
+    `);
+    return rows.rows[0]?.n ?? 0;
   }
 
   /**
@@ -1978,7 +2115,7 @@ export class MailIntakeService {
              m.envelope_date, m.ingested_at, m.forward_kind, m.mailbox,
              m.original_from, m.original_from_name, m.original_subject, m.original_date_text,
              m.original_to, m.envelope_to, m.not_council_copy_at,
-             m.status,
+             m.status, m.sender_check, m.dismissed_reason,
              CASE WHEN m.suggested_case_file_id IS NOT NULL AND sc.id IS NULL THEN NULL
                   ELSE m.suggestion_note END AS suggestion_note,
              sc.id AS suggested_case_file_id,
@@ -2445,6 +2582,8 @@ export class MailIntakeService {
       mailbox: string | null;
       /** The officer said it is not a copy of the Council's letter (see copyOf). */
       not_council_copy_at: Date | null;
+      /** Who sent it, against the council's list (sender-check.ts). Null: no list. */
+      sender_check: MailSenderCheck | null;
     }>(sql`
       SELECT m.id, m.subject, m.body_text, m.body_html, m.snippet, m.message_id,
              m.envelope_from, m.envelope_from_name, m.envelope_to, m.envelope_date,
@@ -2453,7 +2592,8 @@ export class MailIntakeService {
              m.original_body, m.status, m.matched_rung, m.case_file_id,
              c.case_number, c.deleted_at AS case_deleted_at,
              c.deletion_reason AS case_deletion_reason,
-             m.suggestion_note, m.dismissed_reason, m.mailbox, m.not_council_copy_at
+             m.suggestion_note, m.dismissed_reason, m.mailbox, m.not_council_copy_at,
+             m.sender_check
       FROM mail_message m
       LEFT JOIN case_file c ON c.id = m.case_file_id
       WHERE m.council_id = ${ctx.councilId}::uuid AND m.id = ${id}::uuid

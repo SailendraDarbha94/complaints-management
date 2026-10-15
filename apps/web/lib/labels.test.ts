@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { CANCEL_EVENT, RESTORE_EVENT } from '@ksdc/core';
-import { EVENT_LABEL } from './labels';
+import { CANCEL_EVENT, MAIL_PROVIDER_NAME, RESTORE_EVENT } from '@ksdc/core';
+import { EVENT_LABEL, UNCONFIRMED_SENDER_TEXT } from './labels';
 
 /**
  * The history events that are not transitions.
@@ -18,5 +18,16 @@ describe('EVENT_LABEL', () => {
       expect(EVENT_LABEL[event]).toBeDefined();
       expect(EVENT_LABEL[event]).not.toBe(event);
     }
+  });
+});
+
+/**
+ * The line the message page shows for an unconfirmed sender names the mail provider, like
+ * the note the register writes on the message itself. If the intake mailbox moves and core
+ * names another provider, this says so here too.
+ */
+describe('UNCONFIRMED_SENDER_TEXT', () => {
+  it('names the same mail provider as the register does', () => {
+    expect(UNCONFIRMED_SENDER_TEXT.startsWith(`${MAIL_PROVIDER_NAME} could not confirm`)).toBe(true);
   });
 });

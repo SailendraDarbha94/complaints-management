@@ -34,7 +34,10 @@ const storage = new LocalStorage();
 const documents = new DocumentsService(storage);
 const mail = new MailIntakeService(storage, intake, correspondence, documents, followups);
 
-const config: CouncilConfig = KSDC_CONFIG;
+// No sender rule (intakeSenders) here: these messages come from test addresses, not the
+// Registrar's, and are about everything else the tray does. The rule has its own tests in
+// mail/sender-rule.test.ts.
+const config: CouncilConfig = { ...KSDC_CONFIG, intakeSenders: [] };
 const ctx: EngineContext = { councilId, userId: officer, config };
 
 beforeAll(async () => {

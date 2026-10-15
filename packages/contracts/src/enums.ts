@@ -448,6 +448,29 @@ export const MAIL_FORWARD_KINDS = tuple([
 export const mailForwardKindSchema = z.enum(MAIL_FORWARD_KINDS);
 export type MailForwardKind = z.infer<typeof mailForwardKindSchema>;
 
+/**
+ * What the register made of who SENT a message, when the council has said which addresses
+ * its complaints are forwarded from (intakeSenders in the council's configuration).
+ *
+ * The sender is the message's own From line - the person who sent it to the intake
+ * mailbox, not the complainant inside a forward. A From line can be written by anybody;
+ * what cannot be forged is the sending domain's signature, or its mail server's permission
+ * to send, as the receiving mail provider checked them on arrival (see sender-check.ts in
+ * core).
+ *
+ *   verified     from a listed address, and the mail provider confirmed it really was
+ *   unverified   from a listed address, but the provider could not confirm it. It is kept
+ *                in the tray - a complaint must not disappear because a signature broke -
+ *                but never files itself and is not read by the assistant on its own
+ *   not_allowed  from any other address. Set aside on arrival, with the reason
+ *
+ * Stored on mail_message.sender_check (migration 0021). NULL there means the message
+ * arrived before the rule existed, or while the council had no list.
+ */
+export const MAIL_SENDER_CHECKS = tuple(['verified', 'unverified', 'not_allowed'] as const);
+export const mailSenderCheckSchema = z.enum(MAIL_SENDER_CHECKS);
+export type MailSenderCheck = z.infer<typeof mailSenderCheckSchema>;
+
 // ─── The mail assistant (stage 1: it suggests, the officer decides) ──────────
 
 /**

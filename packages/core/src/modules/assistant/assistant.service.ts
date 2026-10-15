@@ -620,9 +620,20 @@ export class AssistantService implements MailAssistantHook {
         // register knows what it is already, and a model call would buy nothing. The sweep
         // leaves these out (sweep.ts); this holds for any other caller too. The officer can
         // still press "Ask the assistant" on one - that goes to suggestFor() directly.
+        //
+        // Nor is a message from a listed sender that the mail provider could not confirm
+        // (mail/sender-check.ts): whether it is genuine at all is the officer's question,
+        // and the model cannot answer it from the words. The sweep leaves these out too.
         const scope = { councilId: next.ctx.councilId, userId: next.ctx.userId ?? null };
-        if (await withCouncil(scope, (tx) => this.mail.isCouncilCopy(tx, next.ctx, next.id))) {
-          log.log(`message ${next.id} is a copy of a Council letter; not read automatically`);
+        const skip = await withCouncil(scope, async (tx) =>
+          (await this.mail.isCouncilCopy(tx, next.ctx, next.id))
+            ? 'is a copy of a Council letter'
+            : (await this.mail.hasUnconfirmedSender(tx, next.ctx, next.id))
+              ? 'is from a sender the mail provider could not confirm'
+              : null,
+        );
+        if (skip) {
+          log.log(`message ${next.id} ${skip}; not read automatically`);
           continue;
         }
         const view = await this.suggestFor(next.ctx, next.id);

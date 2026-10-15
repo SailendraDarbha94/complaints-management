@@ -48,7 +48,10 @@ const storage = new LocalStorage();
 const documents = new DocumentsService(storage);
 const mail = new MailIntakeService(storage, intake, correspondence, documents, followups);
 const rti = new RtiService();
-const ctx: EngineContext = { councilId, userId: officer, config: KSDC_CONFIG };
+// No sender rule (intakeSenders) here: these messages come from test addresses, not the
+// Registrar's, and are about everything else the tray does. The rule has its own tests in
+// mail/sender-rule.test.ts.
+const ctx: EngineContext = { councilId, userId: officer, config: { ...KSDC_CONFIG, intakeSenders: [] } };
 
 const RECEIVED = new Date('2026-09-01T05:30:00Z');
 const TODAY = '2026-09-29';

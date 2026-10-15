@@ -299,6 +299,10 @@ export const KSDC_CONFIG: CouncilConfig = {
   },
 
   aiEnabled: false,
+  // Complaints reach the intake mailbox only as forwards from the Registrar (measured on
+  // the real mailbox, 15 October 2026: 3 of its 21 messages were from this address, and
+  // none of the other 18 was a complaint). Everything else is set aside on arrival.
+  intakeSenders: ['registrar@ksdc.in'],
   memberSeesAllCases: true,
 
   retention: {

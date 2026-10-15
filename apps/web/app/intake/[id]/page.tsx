@@ -9,7 +9,15 @@ import {
   type CouncilCopyPlan,
   type TrayMessage,
 } from '@/lib/api';
-import { CANCELLED_LABEL, FORWARD_KIND_LABEL, MATCH_RUNG_LABEL, formatDate, label } from '@/lib/labels';
+import {
+  CANCELLED_LABEL,
+  FORWARD_KIND_LABEL,
+  MATCH_RUNG_LABEL,
+  UNCONFIRMED_SENDER_LABEL,
+  UNCONFIRMED_SENDER_TEXT,
+  formatDate,
+  label,
+} from '@/lib/labels';
 import { copyQueryOf, planErrorText } from '@/lib/council-copy';
 import { PendingLink } from '@/app/components/pending-link';
 import { MessageActions } from './message-actions';
@@ -93,6 +101,10 @@ export default async function MessagePage({
   // complaint. A green "Filed" over that case, and a promise that its files will reach it
   // "within a few minutes", would both be untrue; this page says what happened instead.
   const voided = Boolean(m.case_file_id && m.case_deleted_at);
+  // One of the addresses complaints come from (the council's intakeSenders), but Gmail could
+  // not confirm it was sent from there - anybody can type an address onto an email. It did
+  // not file itself, and the automatic assistant left it alone; the officer decides.
+  const unconfirmed = m.sender_check === 'unverified';
 
   // `??`: a route that does not send these yet means no suggestion and an assistant that is
   // off - which shows exactly the page there was before the assistant existed.
@@ -197,7 +209,15 @@ export default async function MessagePage({
           their details are usually in the letter below.
         </div>
       )}
-      {m.suggestion_note && m.status === 'unfiled' && (
+      {/* Its own note, written on arrival, begins by saying the same thing and goes on to say
+          which case it quoted, if any - so while it waits, the note is the warning. */}
+      {unconfirmed && (
+        <div className="rti-warn grave" role="status">
+          <strong>{UNCONFIRMED_SENDER_LABEL}.</strong>{' '}
+          {m.status === 'unfiled' && m.suggestion_note ? m.suggestion_note : UNCONFIRMED_SENDER_TEXT}
+        </div>
+      )}
+      {m.suggestion_note && m.status === 'unfiled' && !unconfirmed && (
         <div className="rti-warn">{m.suggestion_note}</div>
       )}
 

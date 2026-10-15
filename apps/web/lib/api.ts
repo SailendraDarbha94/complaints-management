@@ -471,6 +471,14 @@ export interface TrayCard {
    */
   councilCopy?: CouncilCopyInfo | null;
   /**
+   * Who sent it, against the addresses the council's complaints come from (intakeSenders):
+   * 'unverified' is one of those addresses that Gmail could not confirm - the card marks it.
+   * Null when the council had no list when it arrived. Optional on the wire, like the above.
+   */
+  sender_check?: 'verified' | 'unverified' | 'not_allowed' | null;
+  /** Why it was set aside, by the officer or on arrival. Null unless it was. */
+  dismissed_reason?: string | null;
+  /**
    * What the mail assistant suggests for this message, if it has read it. Null when it has
    * not - switched off, over its daily limit, or the message filed or set itself aside
    * before it was asked.
@@ -799,8 +807,18 @@ export interface RespondentCandidate {
   because: string;
 }
 
-export function fetchTray(status = 'unfiled'): Promise<{ status: string; messages: TrayCard[] }> {
-  return get<{ status: string; messages: TrayCard[] }>(`/intake?status=${status}`);
+export interface TrayList {
+  status: string;
+  messages: TrayCard[];
+  /**
+   * On the waiting tray: how many emails from other senders were set aside on arrival
+   * today, for the line pointing at "Set aside". Absent on the other lists.
+   */
+  setAsideToday?: number;
+}
+
+export function fetchTray(status = 'unfiled'): Promise<TrayList> {
+  return get<TrayList>(`/intake?status=${status}`);
 }
 
 export function fetchTrayMessage(id: string): Promise<TrayMessage> {

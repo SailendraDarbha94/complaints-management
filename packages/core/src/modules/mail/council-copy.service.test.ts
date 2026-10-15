@@ -35,7 +35,10 @@ const storage = new LocalStorage();
 const documents = new DocumentsService(storage);
 const mail = new MailIntakeService(storage, intake, correspondence, documents, followups);
 
-const config: CouncilConfig = KSDC_CONFIG;
+// No sender rule (intakeSenders) here: these messages come from test addresses, not the
+// Registrar's, and are about everything else the tray does. The rule has its own tests in
+// mail/sender-rule.test.ts.
+const config: CouncilConfig = { ...KSDC_CONFIG, intakeSenders: [] };
 const ctx: EngineContext = { councilId, userId: officer, config };
 
 /** A one-pixel PNG: what the officer attached to the letter from the case. */
@@ -247,6 +250,31 @@ describe('a copy of a letter the case already records as sent', () => {
       expect(att.rows[0]!.skipped_reason).toMatch(/Already on the case/);
       // And it is not left for the reader to retry.
       expect(await mail.fileHeldAttachments(tx, ctx)).toBe(0);
+    });
+  });
+
+  it('is NOT filed against that letter when the sender rule is on and Gmail could not confirm the sender', async () => {
+    await asOfficer(async (tx) => {
+      // The rule on (sender-rule.test.ts has the rest of it); this forward carries no
+      // Authentication-Results from Gmail, so its Registrar address is unconfirmed.
+      const ruleCtx: EngineContext = { ...ctx, config: { ...config, intakeSenders: ['registrar@ccpy.test'] } };
+      const email = someone('kavya');
+      const opened = await openCase(tx, email);
+      const draft = await sendDocumentsLetter(tx, opened.caseFileId);
+      const before = await letters(tx, opened.caseFileId);
+
+      const bytes = forwardedCopy({ subject: draft.subject, to: `Kavya Rao <${email}>` });
+      const out = await mail.ingest(tx, ruleCtx, await simpleParser(bytes), { mailbox: MAILBOX, uid: ++seq, uidValidity: '1', raw: bytes });
+
+      expect(out).toMatchObject({ councilCopy: true, status: 'unfiled', autoFiledTo: null, senderCheck: 'unverified' });
+      expect(out.note).toMatch(/^Gmail could not confirm that this came from the Council's own mail server/);
+      expect(out.note).toMatch(/has not been filed there on its own/);
+      const m = await stored(tx, out.mailMessageId);
+      expect(m).toMatchObject({ status: 'unfiled', case_file_id: null, correspondence_id: null, suggested_case_file_id: opened.caseFileId });
+      // Nothing on the case: no letter, no copy linked, and its reminder runs on.
+      expect(await letters(tx, opened.caseFileId)).toBe(before);
+      expect(await letters(tx, opened.caseFileId, 'in')).toBe(0);
+      expect(await waitingForDocuments(tx, opened.caseFileId)).toBe(true);
     });
   });
 });

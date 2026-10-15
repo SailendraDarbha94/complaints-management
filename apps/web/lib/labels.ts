@@ -292,6 +292,18 @@ export const MATCH_RUNG_LABEL: Record<string, string> = {
   officer: 'filed by the officer',
 };
 
+/**
+ * A message from one of the addresses complaints come from (the council's intakeSenders),
+ * which Gmail could not confirm was really sent from there: anybody can type an address
+ * onto an email. It waits in the tray and never files itself (see sender-check.ts in core).
+ * The chip on the card, and the line the message page shows when the message's own note
+ * is not on screen.
+ */
+export const UNCONFIRMED_SENDER_LABEL = 'Unconfirmed sender';
+export const UNCONFIRMED_SENDER_TEXT =
+  "Gmail could not confirm that this came from the Council's own mail server, although it " +
+  'carries a Council address. Check it before acting on it.';
+
 // ─── The mail assistant ──────────────────────────────────────────────────────
 
 /*

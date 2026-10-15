@@ -110,6 +110,35 @@ export const councilConfigSchema = z.object({
   aiEnabled: z.literal(false).or(z.boolean()).default(false),
 
   /**
+   * The only addresses complaints reach the intake mailbox from. Empty - the default - means
+   * there is no rule, and every sender is taken exactly as before.
+   *
+   * KSDC's complaints come to the intake mailbox only as forwards from the Registrar's
+   * address. Everything else that lands there - software marketing, the mail provider's
+   * notices - is clutter in the tray, and with the assistant reading automatically, a model
+   * call paid for to be told so. With a list set, at ingest (mail-intake.service.ts):
+   *
+   *   - mail from any other address is set aside on arrival, with a reason, and nothing
+   *     else is done with it: no matching, no filing, no assistant. It stays on the record
+   *     and can be brought back from "Set aside" like anything else set aside;
+   *   - mail from a listed address goes to the tray as before, but only files itself by a
+   *     case number when the mail provider confirmed it really came from that address's
+   *     domain - by a DKIM signature from that domain; an SPF pass alone is not enough,
+   *     because ksdc.in's SPF list takes in a shared hosting service. A From line can be
+   *     written by anybody; the domain's signature cannot (sender-check.ts). Unconfirmed,
+   *     it waits in the tray, marked, for the officer.
+   *
+   * The envelope sender - who sent it to the intake mailbox - not the complainant inside a
+   * forward: the Registrar forwards other people's mail, and those people are on no list.
+   *
+   * Lower-cased here, so a capital typed into the stored configuration cannot quietly turn
+   * the Registrar's own mail away. Changed on a live register with one line of SQL - see
+   * docs/mail-assistant.md, "Which mail reaches the tray" - not by editing the seed, which
+   * is only the starting value for a new installation.
+   */
+  intakeSenders: z.array(z.string().trim().toLowerCase().email()).default([]),
+
+  /**
    * The user's explicit requirement (Q26): members see all complaints. Kept as a setting
    * so it can be narrowed after a word with the Registrar rather than argued about now.
    */

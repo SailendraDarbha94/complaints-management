@@ -12,7 +12,7 @@ Letting it **read attachments** is a third switch, also off until you turn it on
 
 **It does:**
 
-- Read each new email that is waiting in Inward mail. It skips email that has already filed itself (because it quoted a case number) and Google's account notices, which are set aside automatically. It also skips **copies of the Council's own letters** that the register recognises by itself (see "Copies of the Council's own letters" below): the register already knows what they are, so reading them would only cost money. You can still press **Ask the assistant** on one.
+- Read each new email that is waiting in Inward mail. It skips email that has already filed itself (because it quoted a case number), Google's account notices and email from other senders, which are set aside automatically, and email carrying the Registrar's address that Gmail could not confirm (see "Which mail reaches the tray" below). It also skips **copies of the Council's own letters** that the register recognises by itself (see "Copies of the Council's own letters" below): the register already knows what they are, so reading them would only cost money. You can still press **Ask the assistant** on one.
 - **Not every email gets a suggestion by itself.** It reads at most five new emails each time the mailbox is checked, it stops for the day at the daily limit, and it does not go back to emails that arrived while it was switched off or over the limit. Those emails simply have no suggestion: it has not read them, rather than read them and found nothing to say. Open one and press **Ask the assistant** if you want its view.
 - Suggest one of five things, with a short reason. The suggestion appears on the email's card in the tray and on the email's own page.
 - Look things up in the register to help it decide: cases, complainants, patients and dentists. **It can only read the register. It cannot change it.**
@@ -225,6 +225,45 @@ So, **before switching it on** - and before turning on the Council's AI switch, 
 3. **The attachment reader needs its own sign-off.** A sign-off for the email alone does not cover it. The files people attach are where medical records, X-rays and bills usually are, so before you set `MAIL_ASSISTANT_ATTACHMENTS=on`, the Registrar's note should say in so many words that the contents of attached files may be sent. The line in the acknowledgement letter should then say "your email and its attachments".
 
 *This guide is not legal advice. If you are unsure, ask the Council's legal adviser.*
+
+---
+
+## Which mail reaches the tray
+
+Complaints reach the intake mailbox only as forwards from **registrar@ksdc.in**. Everything else that arrives there - software advertising, Google's notices - is not a complaint, and with the assistant reading automatically, each one would also be paid for. So the register looks at **who sent each email to the intake mailbox** (the Registrar, when the Registrar forwards a complaint - not the complainant inside the forward) and treats it as one of four kinds:
+
+| What arrived | What happens |
+|---|---|
+| Google writing about the intake mailbox's own account | Set aside automatically as an account notice, as before. |
+| From any address other than registrar@ksdc.in | **Set aside automatically**, with the reason "Not from registrar@ksdc.in, the only address complaints are forwarded from. Set aside automatically - bring it back if it is a complaint." Nothing else is done with it: no case is suggested, nothing is filed (even if it quotes a case number), and the assistant does not read it. Its attachments are kept. |
+| From registrar@ksdc.in, and Gmail confirmed it | Exactly as before: it waits in the tray, or files itself if it quotes a case number. |
+| From registrar@ksdc.in, but Gmail could **not** confirm it | It waits in the tray marked **Unconfirmed sender**, and is never set aside. It **never files itself**, even if it quotes a case number - the case is only suggested, and its reminders keep running - and the assistant does not read it by itself (you can still press **Ask the assistant**). Its note says Gmail could not confirm it came from the Council's mail server: check it before acting on it. |
+
+**How "confirmed" works, in plain words.** Anybody can type registrar@ksdc.in onto an email; that alone proves nothing. What cannot be faked is the check Gmail makes when the email arrives: whether it carries ksdc.in's own digital signature. Gmail writes the result at the top of every email it receives, and the register reads only that line - never a copy of it lower down, which a sender could have written themselves. The Registrar's real forwards all carry the signature. An email without it is most likely a fake, but could be genuine with a broken signature, which is why it is kept and marked rather than set aside.
+
+Gmail also checks whether the email came from a mail server ksdc.in lists as allowed to send its mail, but the register does **not** take that as enough on its own. ksdc.in's list includes its web host's shared mail service, which a great many unrelated customers also send from, and ksdc.in has no policy telling Gmail to refuse mail that fails its checks. Somebody on that shared service could pass the server check while using the Registrar's address, but could not add ksdc.in's signature. (Whoever looks after ksdc.in's web hosting may want to know this: it affects all mail sent as ksdc.in, not just this register.)
+
+**What you see.** The tray says, in a quiet line at the top, how many emails from other senders were set aside today, with a link to **Set aside**. There, each card shows why it was set aside. If one of them is a complaint after all, press **Put back**: it returns to the tray as an ordinary email, which you file yourself. Nothing files it automatically after that.
+
+**Changing the address list.** Like the AI switch, the list lives in the Council's stored configuration in the register's database (Supabase), not in a file. Run one of these lines in the Supabase SQL editor, then restart both programs:
+
+```
+UPDATE council_config SET config = jsonb_set(config, '{intakeSenders}', '["registrar@ksdc.in"]');   -- on: only the Registrar
+UPDATE council_config SET config = jsonb_set(config, '{intakeSenders}', '["registrar@ksdc.in", "another@ksdc.in"]');   -- more than one address
+UPDATE council_config SET config = jsonb_set(config, '{intakeSenders}', '[]');   -- off: every sender is accepted, as before
+```
+
+An empty list means there is no rule at all. (The copy in `packages/config/src/ksdc.seed.ts` is only the starting value for a brand-new installation.)
+
+**Tidying the mail already in the tray.** Switching the rule on changes what happens to mail that arrives afterwards. To apply it once to the emails already waiting, run:
+
+```
+pnpm --filter @ksdc/core mail:apply-sender-rule
+```
+
+On its own this changes nothing: it prints how many waiting emails it would set aside, counted by the address that sent them (never a subject or any of their words). Add `-- --confirm` to set them aside. It only touches emails still waiting in the tray from addresses not on the list; it never touches an email on a case, one already set aside, or one from the Registrar. It never sets aside an email you have put back from **Set aside**, so it is safe to run again. Nor does it set aside an email the register could not read: it says how many of those are waiting, so you can open each in the mailbox. Each email it does set aside is set aside with the same reason as above, ending "(set aside when the rule was switched on)", and can be put back like any other. It uses the same database as the web pages (`apps/web/.env.local`).
+
+**If the intake mailbox ever moves away from Gmail**, the register must be told the new provider's name for its check line (`TRUSTED_AUTHSERV_ID` in `packages/core/src/modules/mail/sender-check.ts`). Until it is, every email from the Registrar will show as Unconfirmed sender: still in the tray, just never filing itself.
 
 ---
 
