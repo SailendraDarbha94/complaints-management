@@ -6,6 +6,7 @@ import {
   type RtiRequest,
 } from '@/lib/api';
 import { RTI_CHANNEL_LABEL, RTI_STATE_LABEL, label } from '@/lib/labels';
+import { officerOnly } from '../components/officer-only';
 import { PendingLink } from '../components/pending-link';
 import { OfficersPanel } from './officers-panel';
 
@@ -26,6 +27,9 @@ type Row = RtiRequest & { clock: RtiClock };
  * rather than at the moment they try to send a letter.
  */
 export default async function RtiRegisterPage() {
+  const gate = await officerOnly();
+  if (gate.notice) return gate.notice;
+
   let data: { requests: Row[] };
   try {
     data = await fetchRtiRegister();

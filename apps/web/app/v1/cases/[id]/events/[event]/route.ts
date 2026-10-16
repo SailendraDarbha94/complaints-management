@@ -1,25 +1,27 @@
-import type { CaseEvent } from '@ksdc/contracts';
-import type { Services } from '@ksdc/core';
+import { todayIn } from '@ksdc/core';
+import { caseEventInput } from '@/lib/case-event';
 import { jsonBody, withAuth } from '@/lib/route';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * ApplyEventInput is not on the package's public index, so the body's shape is read off
- * the service rather than restated here - a second copy would drift from the engine.
+ * Record something on a case: a button on the case page's "Record what happened".
+ *
+ * The body is checked against what the engine takes (lib/case-event.ts) before anything is
+ * written, so a bad date or a missing service mode is a sentence for the officer rather
+ * than "Invalid Date" on its way to the database. "Today" is the council's own day, so a
+ * notice typed in as sent today is not refused as in the future by a server in UTC.
  */
-type ApplyEventBody = Omit<Parameters<Services['lifecycle']['apply']>[2], 'caseFileId' | 'event'>;
-
 export const POST = withAuth<{ id: string; event: string }>(
   async ({ req, params, tx, ctx, services }) => {
-    const body = (await jsonBody(req)) as ApplyEventBody;
-    return services.lifecycle.apply(tx, ctx, {
-      ...body,
-      caseFileId: params.id,
-      event: params.event as CaseEvent,
-      occurredAt: body.occurredAt ? new Date(body.occurredAt) : undefined,
-      notice: body.notice ? { ...body.notice, sentAt: new Date(body.notice.sentAt) } : undefined,
-    });
+    const now = new Date();
+    const input = caseEventInput(
+      params.event,
+      await jsonBody(req),
+      todayIn(ctx.config.calendar.timezone, now),
+      now,
+    );
+    return services.lifecycle.apply(tx, ctx, { ...input, caseFileId: params.id });
   },
 );

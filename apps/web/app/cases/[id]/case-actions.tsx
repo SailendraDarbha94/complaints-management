@@ -1,8 +1,10 @@
 'use client';
 
 import { useState } from 'react';
+import { SERVICE_MODES } from '@ksdc/contracts';
 import { BusyButton } from '@/app/components/busy-button';
 import { useAction } from '@/app/components/use-action';
+import { SERVICE_MODE_LABEL, dayInputValue } from '@/lib/labels';
 
 /**
  * What the officer can do to this case, right now.
@@ -49,6 +51,13 @@ export function CaseActions({
   const [reason, setReason] = useState('');
   const [closureReason, setClosureReason] = useState<string>('withdrawn');
   const [respondentId, setRespondentId] = useState<string>(respondents[0]?.id ?? '');
+  // For a notice sent outside the software: when it went and how. Today, in the Council's
+  // own calendar, is the usual answer; it is asked rather than assumed because the date is
+  // what the dentist's reply deadline runs from.
+  const [sentOn, setSentOn] = useState<string>(() => dayInputValue(null));
+  // No default. Proof of service, not the count, is what an ex parte finding rests on if
+  // it is challenged, so the mode is the officer's answer rather than a guess left in place.
+  const [serviceMode, setServiceMode] = useState<string>('');
   // Pending until the refreshed case - new state, new buttons - is on screen. Ending at
   // the response left "Record: Close the case" pressable over the old page.
   const action = useAction();
@@ -60,6 +69,8 @@ export function CaseActions({
     setReason('');
     action.setError(null);
     setRespondentId(respondents[0]?.id ?? '');
+    setSentOn(dayInputValue(null));
+    setServiceMode('');
   }
 
   function submit(e: React.FormEvent) {
@@ -74,6 +85,9 @@ export function CaseActions({
     // scope meant the picked dentist was collected and then thrown away.
     if (needsRespondent) body.caseRespondentId = respondentId;
     if (NEEDS_CLOSURE_REASON.has(event)) body.closureReason = closureReason;
+    // The engine moves the notice count only on the officer's word that the notice went
+    // out, and when. Without this the button was refused every time.
+    if (event === 'ISSUE_RESPONDENT_NOTICE') body.notice = { serviceMode, sentAt: sentOn };
 
     action.run(
       async () => {
@@ -184,11 +198,48 @@ export function CaseActions({
             )}
 
             {open.event === 'ISSUE_RESPONDENT_NOTICE' && (
-              <p className="form-note">
-                This records a notice as dispatched and moves that dentist&rsquo;s notice
-                count. If you have not actually sent it yet, draft the letter first and
-                confirm it from there.
-              </p>
+              <>
+                <label>
+                  Date it went out
+                  <input
+                    type="date"
+                    value={sentOn}
+                    // Today in the Council's calendar, read when the form renders: a notice
+                    // cannot have gone out on a day that has not come yet.
+                    max={dayInputValue(null)}
+                    required
+                    disabled={action.pending}
+                    onChange={(ev) => setSentOn(ev.target.value)}
+                  />
+                </label>
+
+                <label>
+                  How it was sent
+                  <select
+                    value={serviceMode}
+                    required
+                    disabled={action.pending}
+                    onChange={(ev) => setServiceMode(ev.target.value)}
+                  >
+                    <option value="" disabled>
+                      Choose how it went
+                    </option>
+                    {SERVICE_MODES.map((mode) => (
+                      <option key={mode} value={mode}>
+                        {SERVICE_MODE_LABEL[mode]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <p className="form-note">
+                  This button is for a notice you sent outside this software - typed and
+                  posted by hand, or emailed from somewhere else. It records the notice as
+                  dispatched on that date and moves that dentist&rsquo;s notice count. If you
+                  have not sent one yet, use &ldquo;Draft a letter&rdquo; under Letters
+                  instead: draft it there, send it, and confirm it from there.
+                </p>
+              </>
             )}
 
             {action.error && <p className="form-error">{action.error}</p>}

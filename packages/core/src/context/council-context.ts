@@ -92,6 +92,13 @@ export async function inCouncilScope<T>(
  * PostgREST caller has no server to ask. This is the same guarantee for the server path,
  * and the two now agree.
  *
+ * The role is part of the guarantee, not just the council. The website is the officer's
+ * alone (ADR-0003) and the role in the token decides that, so an officer re-appointed as a
+ * committee member must lose the website now, not when the token runs out. One person can
+ * hold a row per role, so "some live membership" is not enough: it has to be a live
+ * membership in the role the token claims. Signing in again gives them a token with the
+ * role they actually hold.
+ *
  * One indexed query per request, inside the transaction that was opening anyway. The
  * officer handles four complaints a month; this is not the thing that will be slow.
  */
@@ -101,6 +108,7 @@ async function assertMembershipLive(tx: Tx, identity: RequestIdentity): Promise<
       SELECT 1 FROM council_membership m
       WHERE m.app_user_id = ${identity.userId}::uuid
         AND m.council_id = ${identity.councilId}::uuid
+        AND m.role = ${identity.role}::council_role
         AND m.starts_on <= current_date
         AND (m.ends_on IS NULL OR m.ends_on >= current_date)
     ) AS ok

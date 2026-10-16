@@ -2,6 +2,7 @@ import type {
   MailSuggestionConfidence,
   MailSuggestionDecision,
   MailSuggestionStatus,
+  ServiceMode,
 } from '@ksdc/contracts';
 
 /**
@@ -123,6 +124,12 @@ export const EVENT_LABEL: Record<string, string> = {
   REOPEN: 'Reopen',
   REFER_TO_EXPERT: 'Refer to GDCRI',
   RECORD_EXPERT_REPORT: 'Record the GDCRI report',
+  // Never a button - nobody presses these - so they read as what happened, in the past
+  // tense, because the chronology is the only place they are printed. LOG_INTAKE is the
+  // case being opened; ALL_RESPONDENTS_RESOLVED is written by the system, with a reason,
+  // when the last dentist has replied, been declared ex parte or been dropped.
+  LOG_INTAKE: 'Case opened',
+  ALL_RESPONDENTS_RESOLVED: 'Every dentist replied or was dealt with',
   // Not transitions, but written to the same history (see CANCEL_EVENT and RESTORE_EVENT in
   // @ksdc/core), so the case page's chronology prints them from here - and without an
   // entry, label() would print the raw key into a record the officer reads and prints.
@@ -131,6 +138,21 @@ export const EVENT_LABEL: Record<string, string> = {
   // holds the two spellings together instead.
   CANCEL_OPENED_IN_ERROR: 'Cancelled - opened in error',
   RESTORE_CANCELLED_CASE: 'Restored after cancellation',
+};
+
+/**
+ * How a letter or notice went out. Asked in two places - the composer's "I have sent this"
+ * and the case page's "Issue a notice" - so the words live here, keyed by the contract's
+ * own type: a mode added in @ksdc/contracts fails the typecheck here rather than reaching
+ * either form without a name.
+ */
+export const SERVICE_MODE_LABEL: Record<ServiceMode, string> = {
+  email: 'Email',
+  registered_post_ad: 'Registered post with acknowledgement due',
+  speed_post: 'Speed post',
+  courier: 'Courier',
+  hand_delivery: 'By hand',
+  whatsapp: 'WhatsApp',
 };
 
 export const CLOSURE_REASON_LABEL: Record<string, string> = {

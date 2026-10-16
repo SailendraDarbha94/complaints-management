@@ -4,6 +4,7 @@ import { closeDb, initDb, withCouncil, type Db } from '@ksdc/db';
 import { KSDC_CONFIG } from '@ksdc/config';
 import { inCouncilScope, type RequestIdentity } from './council-context.js';
 import { seedCouncilAndOfficer } from '../test-support/fixtures.js';
+import { UnauthorizedError } from '../common/domain-error.js';
 
 /**
  * The membership check every request goes through.
@@ -61,12 +62,16 @@ afterAll(async () => {
   await closeDb();
 });
 
-/** Restores the membership afterwards, so the tests do not depend on their own order. */
+/**
+ * Ends the officer row and restores it afterwards, so the tests do not depend on their own
+ * order. Only the officer row: the re-appointment test below owns the committee row.
+ */
 async function withMembershipEnding<T>(endsOn: string | null, fn: () => Promise<T>): Promise<T> {
   await withCouncil({ councilId }, async (tx) => {
     await tx.execute(sql`
       UPDATE council_membership SET ends_on = ${endsOn}::date
       WHERE app_user_id = ${officerId}::uuid AND council_id = ${councilId}::uuid
+        AND role = 'officer'
     `);
   });
   try {
@@ -76,6 +81,33 @@ async function withMembershipEnding<T>(endsOn: string | null, fn: () => Promise<
       await tx.execute(sql`
         UPDATE council_membership SET ends_on = NULL
         WHERE app_user_id = ${officerId}::uuid AND council_id = ${councilId}::uuid
+          AND role = 'officer'
+      `);
+    });
+  }
+}
+
+/**
+ * The same person also holds a live committee_member row in this council for the length of
+ * fn, and that row is ended again afterwards. The application role has no DELETE grant, so
+ * ending it is how the test cleans up; the upsert makes a re-run start live again.
+ */
+async function withCommitteeSeat<T>(fn: () => Promise<T>): Promise<T> {
+  await withCouncil({ councilId }, async (tx) => {
+    await tx.execute(sql`
+      INSERT INTO council_membership (council_id, app_user_id, role, starts_on)
+      VALUES (${councilId}::uuid, ${officerId}::uuid, 'committee_member'::council_role, '2026-04-01')
+      ON CONFLICT (council_id, app_user_id, role) DO UPDATE SET ends_on = NULL
+    `);
+  });
+  try {
+    return await fn();
+  } finally {
+    await withCouncil({ councilId }, async (tx) => {
+      await tx.execute(sql`
+        UPDATE council_membership SET ends_on = '2026-09-10'
+        WHERE app_user_id = ${officerId}::uuid AND council_id = ${councilId}::uuid
+          AND role = 'committee_member'
       `);
     });
   }
@@ -136,5 +168,43 @@ describe('acting for a council', () => {
       ).rejects.toThrow();
     });
     expect(ran, 'the handler ran despite the membership being over').toBe(false);
+  });
+
+  it('refuses an officer token once the officer has been re-appointed as a committee member', async () => {
+    // The website is the officer's alone, and the role in the token decides that. The
+    // Registrar ends the officer row and seats the same person on the committee: they still
+    // hold a live membership of this council, but not the one the token claims, so the
+    // officer's website has to close now rather than when the token runs out.
+    await withCommitteeSeat(() =>
+      withMembershipEnding('2026-09-10', async () => {
+        await expect(
+          inCouncilScope(identity, null, async () => 'reached the handler'),
+        ).rejects.toThrow(UnauthorizedError);
+
+        // Their new seat works, with a token that says so.
+        const out = await inCouncilScope(
+          { ...identity, role: 'committee_member' },
+          null,
+          async (_tx, ctx) => ctx.councilId,
+        );
+        expect(out).toBe(councilId);
+      }),
+    );
+  });
+
+  it('lets a token through when its role matches one of two live memberships', async () => {
+    // Holding two roles in one council is allowed; each token is checked against its own.
+    await withCommitteeSeat(async () => {
+      await expect(inCouncilScope(identity, null, async () => 'officer')).resolves.toBe('officer');
+      await expect(
+        inCouncilScope({ ...identity, role: 'committee_member' }, null, async () => 'member'),
+      ).resolves.toBe('member');
+    });
+  });
+
+  it('refuses a role the holder never had in this council', async () => {
+    await expect(
+      inCouncilScope({ ...identity, role: 'auditor' }, null, async () => 'reached'),
+    ).rejects.toThrow(/not currently active/i);
   });
 });

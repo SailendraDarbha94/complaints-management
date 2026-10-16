@@ -1,7 +1,6 @@
-import { redirect } from 'next/navigation';
+import { redirect, unstable_rethrow } from 'next/navigation';
 import {
   API_URL,
-  fetchSession,
   fetchToday,
   isUnauthorized,
   type QueueGroup,
@@ -9,6 +8,7 @@ import {
   type Session,
   type TodayResponse,
 } from '@/lib/api';
+import { officerOnly } from '../components/officer-only';
 import { PendingLink } from '../components/pending-link';
 import { SignOutButton } from '../components/sign-out';
 import { RowActions, RowActionsScope } from './row-actions';
@@ -23,10 +23,20 @@ export const dynamic = 'force-dynamic';
  * the paper register could never tell them.
  */
 export default async function TodayPage() {
-  let data: TodayResponse;
-  let session: Session;
+  let gate: Awaited<ReturnType<typeof officerOnly>>;
   try {
-    [session, data] = await Promise.all([fetchSession(), fetchToday()]);
+    gate = await officerOnly();
+  } catch (err) {
+    // Its trip to /signin is passed on; an API that did not answer is said here, as before.
+    unstable_rethrow(err);
+    return <ErrorState error={err} />;
+  }
+  if (gate.notice) return gate.notice;
+  const session: Session = gate.session;
+
+  let data: TodayResponse;
+  try {
+    data = await fetchToday();
   } catch (err) {
     // An expired session is not an error to show the officer; it is a sign-in page.
     if (isUnauthorized(err)) redirect('/signin');

@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { officerOnly } from '@/app/components/officer-only';
 import { PendingLink } from '@/app/components/pending-link';
 import { fetchCases, isUnauthorized, type CaseListRow } from '@/lib/api';
 import { STATE_LABEL, WAITING_ON_LABEL, formatDate, label } from '@/lib/labels';
@@ -13,6 +14,9 @@ export const dynamic = 'force-dynamic';
  * case, so it is open cases first and the columns that help you recognise one.
  */
 export default async function CasesPage() {
+  const gate = await officerOnly();
+  if (gate.notice) return gate.notice;
+
   let data: { cases: CaseListRow[] };
   try {
     data = await fetchCases();

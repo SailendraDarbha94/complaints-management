@@ -1,5 +1,6 @@
 import { notFound, redirect } from 'next/navigation';
 import { RTI_EXEMPTIONS } from '@ksdc/contracts';
+import { officerOnly } from '@/app/components/officer-only';
 import { PendingLink } from '@/app/components/pending-link';
 import { fetchRtiFile, isUnauthorized, type RtiFile } from '@/lib/api';
 import {
@@ -24,6 +25,8 @@ export const dynamic = 'force-dynamic';
  * sit in the side column, out of the way until they are needed.
  */
 export default async function RtiFilePage({ params }: { params: Promise<{ id: string }> }) {
+  const gate = await officerOnly();
+  if (gate.notice) return gate.notice;
   const { id } = await params;
 
   let file: RtiFile;

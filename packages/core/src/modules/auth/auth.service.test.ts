@@ -272,6 +272,55 @@ describe('switching council', () => {
   });
 });
 
+describe('holding two roles in one council', () => {
+  // Someone who sat on the council's disciplinary committee and was then appointed its
+  // dental officer, keeping the seat. The committee row is older, so it is the one Postgres
+  // meets first; the order the rows were written in must not decide which token they get.
+  const dualId = '9a999999-9999-4999-8999-999999999999';
+  const dualEmail = 'dual@auth.test';
+
+  beforeAll(async () => {
+    await db.execute(sql`
+      INSERT INTO app_user (id, email, full_name)
+      VALUES (${dualId}::uuid, ${dualEmail}, 'Dr. Both Roles')
+      ON CONFLICT (id) DO NOTHING
+    `);
+    await withCouncil({ councilId: councilA }, async (tx) => {
+      await tx.execute(sql`
+        INSERT INTO council_membership (council_id, app_user_id, role, starts_on)
+        VALUES (${councilA}::uuid, ${dualId}::uuid, 'committee_member'::council_role, '2026-04-01')
+        ON CONFLICT DO NOTHING
+      `);
+      await tx.execute(sql`
+        INSERT INTO council_membership (council_id, app_user_id, role, starts_on)
+        VALUES (${councilA}::uuid, ${dualId}::uuid, 'officer'::council_role, '2026-04-01')
+        ON CONFLICT DO NOTHING
+      `);
+    });
+  });
+
+  it('gives the officer row, not the committee seat, on sign-in, refresh and switching', async () => {
+    // The website is the officer's alone, so whichever row the token is minted from
+    // decides whether they can do their job at all.
+    const tokens = new TokenService();
+
+    await auth.requestCode(dualEmail);
+    const session = await auth.verifyCode(dualEmail, mailer.lastCode());
+    expect(session.memberships.filter((m) => m.councilId === councilA)).toHaveLength(2);
+    expect(session.council.role).toBe('officer');
+    const claims = await tokens.verifyAccessToken(session.accessToken);
+    expect(claims.role).toBe('officer');
+
+    const refreshed = await auth.refresh(session.refreshToken);
+    expect(refreshed.council.role).toBe('officer');
+    expect((await tokens.verifyAccessToken(refreshed.accessToken)).role).toBe('officer');
+
+    const switched = await auth.switchCouncil(dualId, claims.sid, councilA);
+    expect(switched.council.role).toBe('officer');
+    expect((await tokens.verifyAccessToken(switched.accessToken)).role).toBe('officer');
+  });
+});
+
 describe('the shared-inbox guard', () => {
   it('refuses to send system mail to the inbox complaints arrive in', () => {
     // registrar@ksdc.in is the pile the officer is escaping. Adding system mail to it

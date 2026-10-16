@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { closeDb, initDb, withCouncil, type Db, type Tx } from '@ksdc/db';
 import { KSDC_CONFIG } from '@ksdc/config';
 import { CASE_STATES, parseCaseNumber } from '@ksdc/contracts';
+import { addDaysByBasis } from '../../common/working-days.js';
 import { FollowupService, type EngineContext } from '../followups/followup.service.js';
 import { CaseIntakeService } from './case-intake.service.js';
 import { CaseLifecycleService, TransitionNotAllowedError } from './case-lifecycle.service.js';
@@ -468,6 +469,97 @@ describe('the guards', () => {
       expect(notices.rows.map((n) => n.seq_no)).toEqual([1, 2, 3]);
       // Proof of service, not the count, is what sustains an ex parte finding on challenge.
       expect(notices.rows[2]!.service_mode).toBe('registered_post_ad');
+    });
+  });
+
+  it('records a notice sent outside the software as the case page now sends it', async () => {
+    // The case page's "Issue a notice" sent no notice and was refused every time. It now
+    // sends the service mode and the day it went (a bare date, read as 06:00 UTC - midday
+    // in Bengaluru - exactly as "I have sent this" reads it). This is that shape, through
+    // the engine, read back from the tables an ex parte finding would rest on.
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const { caseFileId } = await newComplaint(tx);
+      await lifecycle.apply(tx, ctx, { caseFileId, event: 'MARK_COMPLETE_ON_ARRIVAL' });
+      const resp = await makeRespondent(tx, { councilId, caseFileId });
+      const other = await makeRespondent(tx, { councilId, caseFileId, name: 'Dr P. Shetty' });
+      const sentAt = new Date('2026-10-12T06:00:00Z');
+
+      const r = await lifecycle.apply(tx, ctx, {
+        caseFileId,
+        event: 'ISSUE_RESPONDENT_NOTICE',
+        caseRespondentId: resp.caseRespondentId,
+        notice: { serviceMode: 'speed_post', sentAt },
+      });
+      expect(r.to).toBe('awaiting_respondent_reply');
+
+      const notices = await tx.execute<{ seq_no: number; service_mode: string; sent_at: Date }>(
+        sql`SELECT seq_no, service_mode, sent_at FROM respondent_notice
+            WHERE case_respondent_id = ${resp.caseRespondentId}::uuid`,
+      );
+      expect(notices.rows).toHaveLength(1);
+      expect(notices.rows[0]!.seq_no).toBe(1);
+      expect(notices.rows[0]!.service_mode).toBe('speed_post');
+      expect(new Date(notices.rows[0]!.sent_at).toISOString()).toBe(sentAt.toISOString());
+
+      // That dentist's count moved by one; the other dentist on the case did not move.
+      const counts = await tx.execute<{ id: string; notice_count: number; notice_state: string }>(
+        sql`SELECT id, notice_count, notice_state FROM case_respondent
+            WHERE case_file_id = ${caseFileId}::uuid`,
+      );
+      const byId = new Map(counts.rows.map((c) => [c.id, c]));
+      expect(byId.get(resp.caseRespondentId)).toMatchObject({
+        notice_count: 1,
+        notice_state: 'awaiting_reply',
+      });
+      expect(byId.get(other.caseRespondentId)!.notice_count).toBe(0);
+    });
+  });
+
+  it('runs the reply deadline from the day a notice recorded late actually went out', async () => {
+    // The officer records on 16 October a notice that went by speed post on 1 October. The
+    // route sends occurredAt equal to the notice's sentAt (as markSent does), so the follow
+    // up, the milestone, the history row and "days waiting" all start on 1 October - an
+    // honestly overdue deadline, not a fresh one that hides two weeks.
+    await withCouncil({ councilId, userId: officer }, async (tx) => {
+      const { caseFileId } = await newComplaint(tx);
+      await lifecycle.apply(tx, ctx, { caseFileId, event: 'MARK_COMPLETE_ON_ARRIVAL' });
+      const resp = await makeRespondent(tx, { councilId, caseFileId });
+      const sentAt = new Date('2026-10-01T06:00:00Z');
+
+      await lifecycle.apply(tx, ctx, {
+        caseFileId,
+        event: 'ISSUE_RESPONDENT_NOTICE',
+        caseRespondentId: resp.caseRespondentId,
+        occurredAt: sentAt,
+        notice: { serviceMode: 'speed_post', sentAt },
+      });
+
+      const due = await tx.execute<{ opened_on: string; due_on: string }>(sql`
+        SELECT opened_on::text AS opened_on, due_on::text AS due_on FROM follow_up
+        WHERE case_file_id = ${caseFileId}::uuid AND stage = 'await_respondent_explanation'
+      `);
+      expect(due.rows).toHaveLength(1);
+      expect(due.rows[0]!.opened_on).toBe('2026-10-01');
+      expect(due.rows[0]!.due_on).toBe(
+        addDaysByBasis('2026-10-01', 7, 'working_days', followups.calendarOf(ctx.config)),
+      );
+
+      const milestone = await tx.execute<{ occurred_at: Date }>(sql`
+        SELECT occurred_at FROM case_milestone
+        WHERE case_file_id = ${caseFileId}::uuid AND milestone = 'respondent_notice_despatched'
+      `);
+      expect(new Date(milestone.rows[0]!.occurred_at).toISOString()).toBe(sentAt.toISOString());
+
+      const history = await tx.execute<{ occurred_at: Date }>(sql`
+        SELECT occurred_at FROM case_state_history
+        WHERE case_file_id = ${caseFileId}::uuid AND event = 'ISSUE_RESPONDENT_NOTICE'
+      `);
+      expect(new Date(history.rows[0]!.occurred_at).toISOString()).toBe(sentAt.toISOString());
+
+      const file = await tx.execute<{ waiting_since: Date }>(
+        sql`SELECT waiting_since FROM case_file WHERE id = ${caseFileId}::uuid`,
+      );
+      expect(new Date(file.rows[0]!.waiting_since).toISOString()).toBe(sentAt.toISOString());
     });
   });
 });

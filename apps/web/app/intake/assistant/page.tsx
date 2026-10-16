@@ -5,6 +5,7 @@ import {
   MAIL_SUGGESTION_STATUSES,
   type MailSuggestionDecision,
 } from '@ksdc/contracts';
+import { officerOnly } from '@/app/components/officer-only';
 import { fetchAssistantReport, isUnauthorized, type AssistantReport } from '@/lib/api';
 import {
   RUPEES_PER_DOLLAR,
@@ -45,6 +46,8 @@ export default async function AssistantReportPage({
 }: {
   searchParams: Promise<{ month?: string }>;
 }) {
+  const gate = await officerOnly();
+  if (gate.notice) return gate.notice;
   const { month } = await searchParams;
   // A malformed month is dropped rather than sent: the route answers for the current month,
   // which is a better page than an error about a typo in an address bar.

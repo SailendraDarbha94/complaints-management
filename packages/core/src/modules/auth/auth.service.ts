@@ -220,6 +220,13 @@ export class AuthService {
    * policy keyed on this setting that exposes only this one person's own memberships.
    * Setting it transaction-locally means a pooled connection cannot carry it into the
    * next request.
+   *
+   * One person can hold two live roles in one council (an officer also seated on the
+   * committee). Within a council the most privileged role comes first, so sign-in, refresh
+   * and switching council - which all take the first row for a council - give the officer
+   * the officer's token. Left to chance, they could get the committee member's, and the
+   * website is the officer's alone (ADR-0003), so that would lock them out of it. This is
+   * the same rule as the Supabase sign-in hook (migration 0007), so both drivers agree.
    */
   private async membershipsFor(address: string): Promise<Membership[]> {
     return this.db().transaction(async (tx) => {
@@ -237,7 +244,8 @@ export class AuthService {
         WHERE lower(u.email) = ${address}
           AND m.starts_on <= current_date
           AND (m.ends_on IS NULL OR m.ends_on >= current_date)
-        ORDER BY c.code
+        ORDER BY c.code,
+                 CASE m.role WHEN 'officer' THEN 0 WHEN 'committee_member' THEN 1 ELSE 2 END
       `);
       return rows.rows.map((r) => ({
         councilId: r.council_id,

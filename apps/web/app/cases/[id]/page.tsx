@@ -1,4 +1,5 @@
 import { notFound, redirect } from 'next/navigation';
+import { officerOnly } from '@/app/components/officer-only';
 import { PendingLink } from '@/app/components/pending-link';
 import {
   PUBLIC_API_URL,
@@ -9,13 +10,13 @@ import {
   type CaseMail,
   type CaseMilestone,
 } from '@/lib/api';
+import { documentOpenHref } from '@/lib/document-link';
 import {
   CANCELLED_LABEL,
   CLOSURE_REASON_LABEL,
   DOCUMENT_CLASS_LABEL,
   EVENT_LABEL,
   FORWARD_KIND_LABEL,
-  LETTER_LABEL,
   MILESTONE_LABEL,
   NOTICE_STATE_LABEL,
   PARTY_ROLE_LABEL,
@@ -30,6 +31,7 @@ import { RespondentsPanel } from './add-respondent';
 import { CancelCasePanel, RestoreCase } from './cancel-case';
 import { CaseActions } from './case-actions';
 import { DocumentUpload } from './document-upload';
+import { LettersTable } from './letters-table';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +43,9 @@ export const dynamic = 'force-dynamic';
  * that explains how it got here.
  */
 export default async function CasePage({ params }: { params: Promise<{ id: string }> }) {
+  // Before the case is asked for: this page shows the parties' phone numbers and emails.
+  const gate = await officerOnly();
+  if (gate.notice) return gate.notice;
   const { id } = await params;
 
   let data: CaseDetail;
@@ -73,7 +78,9 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
   const complaint = data.mail.find((m) => !(m.council_copy ?? false)) ?? null;
 
   return (
-    <main className="shell">
+    // Wide, as the inward-mail message page is: at the narrow width the Letters table had
+    // about 575px beside the side column, and its dates broke over three lines.
+    <main className="shell shell-wide">
       <nav className="crumbs">
         <PendingLink href="/today">Today</PendingLink>
         <span aria-hidden="true">/</span>
@@ -249,52 +256,9 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
             {data.letters.length === 0 ? (
               <p className="muted">Nothing sent or received yet.</p>
             ) : (
-              <table className="inner-table">
-                <thead>
-                  <tr>
-                    <th>Letter</th>
-                    <th>To / from</th>
-                    <th>Sent</th>
-                    <th>Dispatch no.</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.letters.map((l) => (
-                    <tr key={l.id}>
-                      <td>
-                        {label(LETTER_LABEL, l.kind)}
-                        {l.direction === 'in' && <span className="chip chip-in">in</span>}
-                        {l.body?.trim() ? (
-                          // Every letter readable where it is listed, rather than a subject
-                          // line and nothing behind it.
-                          <details className="letter-body">
-                            <summary className="meta">{l.subject}</summary>
-                            <div className="rti-letter">{l.body}</div>
-                          </details>
-                        ) : (
-                          <span className="meta">{l.subject}</span>
-                        )}
-                      </td>
-                      <td>{l.to_name ?? l.from_email ?? '-'}</td>
-                      <td className="mono">
-                        {l.sent_at || l.received_at ? (
-                          formatDate(l.sent_at ?? l.received_at)
-                        ) : (
-                          <span className="chip chip-draft">draft</span>
-                        )}
-                        {l.copy_mail_id && (
-                          // A copy of this letter reached the intake mailbox and was filed
-                          // against it: the proof of what was sent.
-                          <PendingLink className="meta" href={`/intake/${l.copy_mail_id}`}>
-                            Copy on file, emailed {formatDate(l.copy_emailed_at)}
-                          </PendingLink>
-                        )}
-                      </td>
-                      <td className="mono">{l.despatch_no ?? '-'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              // Every letter readable where it is listed, rather than a subject line and
+              // nothing behind it - opened in a full-width row of its own (letters-table.tsx).
+              <LettersTable letters={data.letters} />
             )}
           </Section>
 
@@ -315,52 +279,57 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
             {data.documents.length === 0 ? (
               <p className="muted">No documents filed.</p>
             ) : (
-              <table className="inner-table">
-                <thead>
-                  <tr>
-                    <th>Document</th>
-                    <th>Kind</th>
-                    <th>Size</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.documents.map((d) => (
-                    <tr key={d.id} className={d.status === 'stored' ? '' : 'withdrawn'}>
-                      <td>
-                        {d.title}
-                        <span className="meta">
-                          {d.filename}
-                          {d.versionNo > 1 && ` · v${d.versionNo}`}
-                          {d.physicalOriginalHeld && !d.physicalReturnedAt && ' · original held'}
-                        </span>
-                      </td>
-                      <td>
-                        {label(DOCUMENT_CLASS_LABEL, d.documentClass)}
-                        {!d.mayBeSummarised && (
-                          <span className="chip chip-verbatim" title="Never summarised or extracted">
-                            verbatim
-                          </span>
-                        )}
-                      </td>
-                      <td className="mono">{formatBytes(d.sizeBytes)}</td>
-                      <td>
-                        {d.status === 'stored' ? (
-                          <a
-                            className="link-like"
-                            href={`${PUBLIC_API_URL}/v1/documents/${d.id}/download`}
-                            data-download={d.id}
-                          >
-                            Open
-                          </a>
-                        ) : (
-                          <span className="muted">withdrawn</span>
-                        )}
-                      </td>
+              // Scrolls inside the panel on a phone rather than widening the page; a long
+              // filename with no spaces in it breaks rather than stretching the first column.
+              <div className="table-scroll">
+                <table className="inner-table papers-table">
+                  <thead>
+                    <tr>
+                      <th>Document</th>
+                      <th>Kind</th>
+                      <th>Size</th>
+                      <th />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {data.documents.map((d) => (
+                      <tr key={d.id} className={d.status === 'stored' ? '' : 'withdrawn'}>
+                        <td className="wrap">
+                          {d.title}
+                          <span className="meta">
+                            {d.filename}
+                            {d.versionNo > 1 && ` · v${d.versionNo}`}
+                            {d.physicalOriginalHeld && !d.physicalReturnedAt && ' · original held'}
+                          </span>
+                        </td>
+                        <td>
+                          {label(DOCUMENT_CLASS_LABEL, d.documentClass)}
+                          {!d.mayBeSummarised && (
+                            <span
+                              className="chip chip-verbatim"
+                              title="Never summarised or extracted"
+                            >
+                              verbatim
+                            </span>
+                          )}
+                        </td>
+                        <td className="mono">{formatBytes(d.sizeBytes)}</td>
+                        <td>
+                          {d.status === 'stored' ? (
+                            // The file itself, not the JSON an API caller gets: see
+                            // documentOpenHref and the download route.
+                            <a className="link-like" href={documentOpenHref(PUBLIC_API_URL, d.id)}>
+                              Open
+                            </a>
+                          ) : (
+                            <span className="muted">withdrawn</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </Section>
 

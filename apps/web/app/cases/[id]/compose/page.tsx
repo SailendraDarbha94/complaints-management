@@ -1,4 +1,5 @@
 import { notFound, redirect } from 'next/navigation';
+import { officerOnly } from '@/app/components/officer-only';
 import { PendingLink } from '@/app/components/pending-link';
 import { PUBLIC_API_URL, fetchCase, fetchTemplates, isUnauthorized } from '@/lib/api';
 import { CANCELLED_LABEL, LETTER_LABEL, label } from '@/lib/labels';
@@ -14,6 +15,8 @@ export const dynamic = 'force-dynamic';
  * day clock, so it is the most consequential button on the screen.
  */
 export default async function ComposePage({ params }: { params: Promise<{ id: string }> }) {
+  const gate = await officerOnly();
+  if (gate.notice) return gate.notice;
   const { id } = await params;
 
   let data, templates;

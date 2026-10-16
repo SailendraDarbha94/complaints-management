@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { SERVICE_MODES } from '@ksdc/contracts';
 import { jsonBody, withAuth } from '@/lib/route';
+import { timestampOfTypedDate } from '@/lib/typed-date';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,10 +16,9 @@ const sentSchema = z.object({
 export const POST = withAuth<{ id: string }>(async ({ req, params, tx, ctx, services }) => {
   const input = sentSchema.parse(await jsonBody(req));
   // A bare date means "that day", read in the council's own calendar rather than the
-  // browser's: an officer in Bengaluru confirming at 11pm meant today, not tomorrow.
-  const sentAt = new Date(
-    /^\d{4}-\d{2}-\d{2}$/.test(input.sentAt) ? `${input.sentAt}T06:00:00Z` : input.sentAt,
-  );
+  // browser's: an officer in Bengaluru confirming at 11pm meant today, not tomorrow. The
+  // "Issue a notice" form reads its date through the same function (lib/typed-date.ts).
+  const sentAt = timestampOfTypedDate(input.sentAt);
   if (Number.isNaN(sentAt.getTime())) {
     throw new Error(`"${input.sentAt}" is not a date.`);
   }

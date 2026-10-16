@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { officerOnly } from '@/app/components/officer-only';
 import { PendingLink } from '@/app/components/pending-link';
 import { PUBLIC_API_URL, fetchRegister, isUnauthorized, type RegisterRow } from '@/lib/api';
 import { CANCELLED_LABEL } from '@/lib/labels';
@@ -20,6 +21,8 @@ export default async function RegisterPage({
 }: {
   searchParams: Promise<{ fy?: string }>;
 }) {
+  const gate = await officerOnly();
+  if (gate.notice) return gate.notice;
   const { fy } = await searchParams;
 
   let data: { rows: RegisterRow[] };

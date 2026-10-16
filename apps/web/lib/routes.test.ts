@@ -1,7 +1,7 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { guardKind } from './route';
+import { allowedRoles, guardKind } from './route';
 
 /**
  * The default-closed test.
@@ -19,6 +19,10 @@ import { guardKind } from './route';
  * The second test is the one that matters more: it enumerates every public endpoint, so
  * making something public is a visible, reviewed diff to a list in this file rather than a
  * quiet decision inside a route nobody reads again.
+ *
+ * The third holds the same line one step in: signed in is not the same as allowed. Every
+ * authenticated endpoint is the officer's alone unless it is listed, with its reason, in
+ * EXPECTED_NON_OFFICER. officer-only.test.ts then calls them as each role.
  */
 
 const V1 = join(process.cwd(), 'app', 'v1');
@@ -40,6 +44,30 @@ const EXPECTED_PUBLIC: Record<string, string> = {
   'storage/local:PUT': 'A signed URL carries its own authority; local-disk driver only.',
   'storage/local:GET': 'A signed URL carries its own authority; local-disk driver only.',
   'internal/jobs/daily:POST': 'Called by Cloud Scheduler with its own OIDC credential.',
+};
+
+/**
+ * Every signed-in endpoint that someone other than the officer may call, who, and why.
+ *
+ * The website is the officer's. Committee members and auditors read cases in the phone app,
+ * which reads Supabase under migration 0010's grants and calls this API only for the
+ * officer's own capture flow. So every authenticated route is officer-only unless it is
+ * here - and nothing that reads or changes the register belongs here. A new route that
+ * forgets is officer-only by default; one that opens itself up without a line here fails.
+ */
+const EXPECTED_NON_OFFICER: Record<string, { roles: string[]; reason: string }> = {
+  'auth/me:GET': {
+    roles: ['officer', 'committee_member', 'auditor'],
+    reason:
+      'Who is signed in. The website asks it to show a member the page sending them to the ' +
+      'phone app, naming who they are signed in as. Nothing from the register.',
+  },
+  'auth/council:POST': {
+    roles: ['officer', 'committee_member', 'auditor'],
+    reason:
+      'Switching council. A member here may be the officer of another council; the new ' +
+      "token's role then decides everything else. Nothing from the register.",
+  },
 };
 
 /**
@@ -116,6 +144,41 @@ describe('what is reachable without signing in', () => {
 
   it('states a reason for each, because someone has to review them', () => {
     for (const [endpoint, reason] of Object.entries(EXPECTED_PUBLIC)) {
+      expect(reason.length, `${endpoint} needs a real reason`).toBeGreaterThan(20);
+    }
+  });
+});
+
+describe('who may use a signed-in endpoint', () => {
+  it('is the officer alone, except for the endpoints listed in this file', async () => {
+    const opened: Record<string, string[]> = {};
+    let officerOnly = 0;
+
+    for (const file of files) {
+      const mod = await importRoute(file);
+      for (const method of METHODS) {
+        if (guardKind(mod[method]) !== 'auth') continue;
+        const endpoint = `${routePath(file)}:${method}`;
+        const roles = allowedRoles(mod[method]);
+
+        // Every authenticated handler states its roles; none is open by omission.
+        expect(roles, `${method} /v1/${routePath(file)} has no roles`).not.toBeNull();
+        if (roles!.length === 1 && roles![0] === 'officer') officerOnly++;
+        else opened[endpoint] = [...roles!].sort();
+      }
+    }
+
+    const expected = Object.fromEntries(
+      Object.entries(EXPECTED_NON_OFFICER).map(([endpoint, { roles }]) => [endpoint, [...roles].sort()]),
+    );
+    // Both directions: a route opened without a line here, and a line here whose route has
+    // since been closed (or renamed), each fail with the endpoint named.
+    expect(opened).toEqual(expected);
+    expect(officerOnly, 'a broken walk would make this vacuous').toBeGreaterThan(30);
+  });
+
+  it('states a reason for each, because someone has to review them', () => {
+    for (const [endpoint, { reason }] of Object.entries(EXPECTED_NON_OFFICER)) {
       expect(reason.length, `${endpoint} needs a real reason`).toBeGreaterThan(20);
     }
   });

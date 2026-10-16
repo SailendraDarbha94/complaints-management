@@ -2,6 +2,7 @@ import type { Route } from 'next';
 import { redirect } from 'next/navigation';
 import { fetchCases, fetchTray, isUnauthorized, type CaseListRow, type TrayCard, type TrayList } from '@/lib/api';
 import { FORWARD_KIND_LABEL, UNCONFIRMED_SENDER_LABEL, UNCONFIRMED_SENDER_TEXT, label } from '@/lib/labels';
+import { officerOnly } from '@/app/components/officer-only';
 import { PendingLink } from '@/app/components/pending-link';
 import { CardScope } from './card-scope';
 import { TrayActions } from './tray-actions';
@@ -25,6 +26,8 @@ export default async function TrayPage({
 }: {
   searchParams: Promise<{ status?: string }>;
 }) {
+  const gate = await officerOnly();
+  if (gate.notice) return gate.notice;
   const { status = 'unfiled' } = await searchParams;
 
   let tray: TrayList;

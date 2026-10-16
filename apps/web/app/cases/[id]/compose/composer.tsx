@@ -1,9 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import { SERVICE_MODES } from '@ksdc/contracts';
 import { BusyButton } from '@/app/components/busy-button';
 import { PendingLink } from '@/app/components/pending-link';
 import { useAction } from '@/app/components/use-action';
+import { documentOpenHref } from '@/lib/document-link';
+import { SERVICE_MODE_LABEL } from '@/lib/labels';
 
 /**
  * The draft composer.
@@ -28,15 +31,6 @@ interface Draft {
   attachments: Array<{ documentId: string; title: string; filename: string }>;
   requiresRegistrarSignature: boolean;
 }
-
-const SERVICE_MODES = [
-  ['email', 'Email'],
-  ['registered_post_ad', 'Registered post with acknowledgement due'],
-  ['speed_post', 'Speed post'],
-  ['courier', 'Courier'],
-  ['hand_delivery', 'By hand'],
-  ['whatsapp', 'WhatsApp'],
-] as const;
 
 const RESPONDENT_KINDS = new Set([
   'respondent_explanation_sought',
@@ -334,7 +328,11 @@ export function Composer({
                         </label>
                         <a
                           className="link-like"
-                          href={`${apiUrl}/v1/documents/${a.documentId}/download`}
+                          href={documentOpenHref(apiUrl, a.documentId)}
+                          // Its own tab: the draft on this screen is not saved anywhere,
+                          // and following the link here would leave it behind.
+                          target="_blank"
+                          rel="noopener noreferrer"
                         >
                           Open
                         </a>
@@ -376,9 +374,9 @@ export function Composer({
                     disabled={busy}
                     onChange={(e) => setServiceMode(e.target.value)}
                   >
-                    {SERVICE_MODES.map(([value, text]) => (
+                    {SERVICE_MODES.map((value) => (
                       <option key={value} value={value}>
-                        {text}
+                        {SERVICE_MODE_LABEL[value]}
                       </option>
                     ))}
                   </select>

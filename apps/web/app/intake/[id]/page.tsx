@@ -1,5 +1,6 @@
 import type { Route } from 'next';
 import { notFound, redirect } from 'next/navigation';
+import { officerOnly } from '@/app/components/officer-only';
 import {
   ApiError,
   fetchCases,
@@ -44,6 +45,8 @@ export default async function MessagePage({
    */
   searchParams: Promise<{ case?: string; kind?: string }>;
 }) {
+  const gate = await officerOnly();
+  if (gate.notice) return gate.notice;
   const { id } = await params;
   const { case: chosenCase, kind: chosenKind } = await searchParams;
 

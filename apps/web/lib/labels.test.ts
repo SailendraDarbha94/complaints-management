@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CASE_EVENTS, TRANSITIONS } from '@ksdc/contracts';
 import { CANCEL_EVENT, MAIL_PROVIDER_NAME, RESTORE_EVENT } from '@ksdc/core';
 import { EVENT_LABEL, UNCONFIRMED_SENDER_TEXT } from './labels';
 
@@ -18,6 +19,21 @@ describe('EVENT_LABEL', () => {
       expect(EVENT_LABEL[event]).toBeDefined();
       expect(EVENT_LABEL[event]).not.toBe(event);
     }
+  });
+
+  /**
+   * Every event the history can hold, not only the ones a button offers. The chronology
+   * printed ALL_RESPONDENTS_RESOLVED raw because it is written by the system and nobody
+   * presses it, so nobody had noticed it had no words. Walking the transition table means
+   * an event added to @ksdc/contracts fails here before it reaches the officer's record.
+   */
+  it('has words for every event in the transition table, and for cancel and restore', () => {
+    const events = [...new Set([...TRANSITIONS.map((t) => t.event), ...CASE_EVENTS])];
+    expect(events.length, 'a broken import would make this vacuous').toBeGreaterThan(15);
+    const missing = [...events, CANCEL_EVENT, RESTORE_EVENT].filter(
+      (event) => !EVENT_LABEL[event]?.trim() || EVENT_LABEL[event] === event,
+    );
+    expect(missing).toEqual([]);
   });
 });
 

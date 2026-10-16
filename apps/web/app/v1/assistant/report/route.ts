@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
  * did matched them, what it cost, and the latest cases where it was wrong.
  *
  * ?month=YYYY-MM, defaulting to the current month in the Council's own calendar. A read
- * like the tray itself, so open to anyone who can read the tray.
+ * like the tray itself, so the officer's alone, as the tray is (lib/route.ts).
  */
 const query = z
   .string()

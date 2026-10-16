@@ -954,12 +954,96 @@ label.checkbox {
   overflow-y: auto;
 }
 
-/* A letter in the case's Letters table, opened in place. */
-.letter-body summary {
+/*
+ * The case page's Letters table (letters-table.tsx). The row is what the officer scans;
+ * an opened letter gets a row of its own beneath, the table's full width, so its text
+ * no longer stretches the first column and pushes the dates and dispatch number away.
+ */
+.nowrap {
+  white-space: nowrap;
+}
+/*
+ * On a phone the table scrolls sideways inside its panel (.table-scroll) rather than
+ * crushing these two columns to a word per line; a long address still breaks (.wrap)
+ * rather than widening the table without end.
+ */
+.letters-table th:nth-child(1) {
+  min-width: 11em;
+}
+.letters-table th:nth-child(2) {
+  min-width: 9em;
+}
+/* Dates and dispatch numbers on one line: "12 Oct 2026", never "12 / Oct / 2026". */
+.letters-table .letter-date {
+  white-space: nowrap;
+}
+/* The "copy on file" line under a date may break, at its comma, rather than widen the column. */
+.letters-table .letter-date .meta {
+  white-space: normal;
+}
+.letter-toggle {
+  display: block;
+  margin-top: 2px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ink-3);
+  text-align: left;
   cursor: pointer;
 }
-.letter-body[open] .rti-letter {
-  margin-top: 8px;
+.letter-toggle:hover,
+.letter-toggle:focus-visible {
+  color: var(--stamp);
+  text-decoration: underline;
+}
+.letter-caret {
+  display: inline-block;
+  width: 1.1em;
+}
+/* The open letter's row and its text read as one entry: no rule between them. */
+.letters-table .letter-row.is-open td {
+  border-bottom: none;
+}
+.letters-table .letter-text-row td {
+  padding-top: 0;
+}
+/*
+ * A long unbroken line in a letter (a link, a reference) wraps rather than widening the table.
+ * contain: inline-size keeps the letter's own width out of the column sizing, so opening or
+ * closing a letter does not shift every column (and the dates) under the officer's eye.
+ */
+.letters-table .letter-text-row .rti-letter {
+  overflow-wrap: anywhere;
+  contain: inline-size;
+}
+/*
+ * On a phone the table is wider than its panel and scrolls sideways, and the opened letter
+ * spans the whole table - so each line ran past the visible edge. Held to the visible width
+ * and pinned to the left, it reads without scrolling. 96px is twice (shell 20 + panel
+ * border 1 + panel-body 15 + cell 12); below 940px the case grid is one column, so the
+ * panel is the shell's width.
+ */
+@media (max-width: 939px) {
+  .letters-table .letter-text-row .rti-letter {
+    position: sticky;
+    left: 0;
+    max-width: calc(100vw - 96px);
+  }
+}
+/*
+ * The papers table's Document column breaks a long filename (.wrap), but without a floor
+ * "anywhere" let it shrink to a few characters on a phone, so titles broke mid-word instead
+ * of the table scrolling inside its panel.
+ */
+.papers-table th:nth-child(1) {
+  min-width: 16em;
+}
+/* The closed text row is last in the table: the visible row above it is then the last rule. */
+.letters-table tbody tr:nth-last-child(2):has(+ tr[hidden]) td {
+  border-bottom: none;
 }
 
 .rti-letter {

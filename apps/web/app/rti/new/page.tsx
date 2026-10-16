@@ -1,3 +1,4 @@
+import { officerOnly } from '../../components/officer-only';
 import { PendingLink } from '../../components/pending-link';
 import { RtiIntakeForm } from './intake-form';
 
@@ -11,7 +12,11 @@ export const dynamic = 'force-dynamic';
  * arrives here already fourteen days old, and the form says so rather than quietly
  * starting the clock today.
  */
-export default function NewRtiPage() {
+export default async function NewRtiPage() {
+  // Nothing is fetched here, but the form posts to the register, and it is the officer's.
+  const gate = await officerOnly();
+  if (gate.notice) return gate.notice;
+
   return (
     <main className="shell">
       <nav className="crumbs">
